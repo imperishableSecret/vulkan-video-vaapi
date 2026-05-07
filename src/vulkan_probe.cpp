@@ -95,12 +95,25 @@ bool extension_present(const std::vector<VkExtensionProperties> &extensions, con
 }
 
 void assume_caps(VkvvVideoCaps *caps, const char *reason) {
+    const VkvvVideoProfileLimits fallback_limits = {
+        1,
+        1,
+        4096,
+        4096,
+        17,
+        16,
+    };
     caps->h264 = true;
     caps->h265 = true;
     caps->h265_10 = true;
     caps->vp9 = true;
     caps->av1 = true;
     caps->surface_export = true;
+    caps->h264_limits = fallback_limits;
+    caps->h265_limits = fallback_limits;
+    caps->h265_10_limits = fallback_limits;
+    caps->vp9_limits = fallback_limits;
+    caps->av1_limits = fallback_limits;
     std::snprintf(caps->summary, sizeof(caps->summary),
                   "assuming H264/H265/H265Main10/VP9/AV1 support: %s", reason);
 }
@@ -181,6 +194,7 @@ bool device_supports_video_profile(
         PFN_vkGetPhysicalDeviceVideoCapabilitiesKHR get_video_capabilities,
         VkPhysicalDevice device,
         const VideoProbeProfile &probe,
+        VkvvVideoProfileLimits *limits,
         char *reason,
         size_t reason_size) {
     if (!device_has_required_extensions(device, probe.extension)) {
@@ -220,6 +234,15 @@ bool device_supports_video_profile(
         return false;
     }
 
+    if (limits != nullptr) {
+        limits->min_width = capabilities.video.minCodedExtent.width;
+        limits->min_height = capabilities.video.minCodedExtent.height;
+        limits->max_width = capabilities.video.maxCodedExtent.width;
+        limits->max_height = capabilities.video.maxCodedExtent.height;
+        limits->max_dpb_slots = capabilities.video.maxDpbSlots;
+        limits->max_active_references = capabilities.video.maxActiveReferencePictures;
+    }
+
     std::snprintf(reason, reason_size, "ok");
     return true;
 }
@@ -230,6 +253,7 @@ bool probe_one_profile(
         PFN_vkGetPhysicalDeviceVideoCapabilitiesKHR get_video_capabilities,
         VkPhysicalDevice device,
         const VideoProbeProfile &probe,
+        VkvvVideoProfileLimits *limits,
         char *reason,
         size_t reason_size) {
     if (already_supported) {
@@ -238,7 +262,7 @@ bool probe_one_profile(
 
     return device_supports_video_profile(
         get_queue_family_properties2, get_video_capabilities, device, probe,
-        reason, reason_size);
+        limits, reason, reason_size);
 }
 
 bool probe_impl(VkvvVideoCaps *caps) {
@@ -368,19 +392,19 @@ bool probe_impl(VkvvVideoCaps *caps) {
     for (VkPhysicalDevice device : devices) {
         caps->h264 = probe_one_profile(
             caps->h264, get_queue_family_properties2, get_video_capabilities,
-            device, probes[0], h264_reason, sizeof(h264_reason));
+            device, probes[0], &caps->h264_limits, h264_reason, sizeof(h264_reason));
         caps->h265 = probe_one_profile(
             caps->h265, get_queue_family_properties2, get_video_capabilities,
-            device, probes[1], h265_reason, sizeof(h265_reason));
+            device, probes[1], &caps->h265_limits, h265_reason, sizeof(h265_reason));
         caps->h265_10 = probe_one_profile(
             caps->h265_10, get_queue_family_properties2, get_video_capabilities,
-            device, probes[2], h265_10_reason, sizeof(h265_10_reason));
+            device, probes[2], &caps->h265_10_limits, h265_10_reason, sizeof(h265_10_reason));
         caps->vp9 = probe_one_profile(
             caps->vp9, get_queue_family_properties2, get_video_capabilities,
-            device, probes[3], vp9_reason, sizeof(vp9_reason));
+            device, probes[3], &caps->vp9_limits, vp9_reason, sizeof(vp9_reason));
         caps->av1 = probe_one_profile(
             caps->av1, get_queue_family_properties2, get_video_capabilities,
-            device, probes[4], av1_reason, sizeof(av1_reason));
+            device, probes[4], &caps->av1_limits, av1_reason, sizeof(av1_reason));
         if (!caps->surface_export &&
             device_has_surface_export_extensions(device) &&
             device_has_required_extensions(device, VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME) &&

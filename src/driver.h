@@ -26,12 +26,26 @@ typedef enum {
 } VkvvObjectType;
 
 typedef struct {
+    unsigned int min_width;
+    unsigned int min_height;
+    unsigned int max_width;
+    unsigned int max_height;
+    unsigned int max_dpb_slots;
+    unsigned int max_active_references;
+} VkvvVideoProfileLimits;
+
+typedef struct {
     bool h264;
     bool h265;
     bool h265_10;
     bool vp9;
     bool av1;
     bool surface_export;
+    VkvvVideoProfileLimits h264_limits;
+    VkvvVideoProfileLimits h265_limits;
+    VkvvVideoProfileLimits h265_10_limits;
+    VkvvVideoProfileLimits vp9_limits;
+    VkvvVideoProfileLimits av1_limits;
     char summary[512];
 } VkvvVideoCaps;
 
@@ -39,7 +53,27 @@ typedef struct VkvvConfig {
     VAProfile profile;
     VAEntrypoint entrypoint;
     unsigned int rt_format;
+    unsigned int fourcc;
+    unsigned int bit_depth;
+    unsigned int min_width;
+    unsigned int min_height;
+    unsigned int max_width;
+    unsigned int max_height;
+    bool exportable;
 } VkvvConfig;
+
+typedef struct {
+    VAProfile profile;
+    VAEntrypoint entrypoint;
+    unsigned int rt_format;
+    unsigned int fourcc;
+    unsigned int bit_depth;
+    unsigned int min_width;
+    unsigned int min_height;
+    unsigned int max_width;
+    unsigned int max_height;
+    bool exportable;
+} VkvvProfileCapability;
 
 typedef enum {
     VKVV_SURFACE_WORK_READY = 0,
@@ -92,6 +126,8 @@ typedef struct {
     std::mutex object_mutex;
     std::mutex state_mutex;
     VkvvVideoCaps caps;
+    VkvvProfileCapability profile_caps[VKVV_MAX_PROFILES];
+    unsigned int profile_cap_count;
     VkvvObject *objects;
     unsigned int next_id;
     void *h264_export_session;

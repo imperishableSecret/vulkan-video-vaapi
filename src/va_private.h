@@ -45,36 +45,20 @@ inline bool vkvv_profile_is_h264(VAProfile profile) {
            profile == VAProfileH264ConstrainedBaseline;
 }
 
-inline bool vkvv_profile_supported(const VkvvDriver *drv, VAProfile profile) {
-    switch (profile) {
-        case VAProfileH264Main:
-        case VAProfileH264High:
-        case VAProfileH264ConstrainedBaseline:
-            return drv->caps.h264;
-        default:
-            return false;
-    }
-}
-
-inline unsigned int vkvv_default_rt_format_for_profile(VAProfile profile) {
-    switch (profile) {
-        case VAProfileHEVCMain10:
-            return VA_RT_FORMAT_YUV420_10;
-        default:
-            return VA_RT_FORMAT_YUV420;
-    }
-}
-
-inline unsigned int vkvv_surface_fourcc_for_format(unsigned int rt_format) {
-    if (rt_format & VA_RT_FORMAT_YUV420_10) {
-        return VA_FOURCC_P010;
-    }
-    return VA_FOURCC_NV12;
-}
-
 void vkvv_log(const char *fmt, ...);
 void *vkvv_get_or_create_vulkan_runtime(char *reason, size_t reason_size);
 void vkvv_release_context_payload(VkvvDriver *drv, VkvvContext *vctx);
+void vkvv_init_profile_capabilities(VkvvDriver *drv);
+const VkvvProfileCapability *vkvv_profile_capability(const VkvvDriver *drv, VAProfile profile);
+bool vkvv_profile_supported(const VkvvDriver *drv, VAProfile profile);
+unsigned int vkvv_surface_fourcc_for_format(unsigned int rt_format);
+unsigned int vkvv_rt_format_bit_depth(unsigned int rt_format);
+unsigned int vkvv_select_rt_format(const VkvvProfileCapability *cap, unsigned int requested);
+unsigned int vkvv_select_driver_rt_format(const VkvvDriver *drv, unsigned int requested);
+unsigned int vkvv_config_attribute_count(void);
+void vkvv_fill_config_attribute(const VkvvProfileCapability *cap, VAConfigAttrib *attrib);
+bool vkvv_fill_config_attribute_by_index(const VkvvProfileCapability *cap, unsigned int index, VAConfigAttrib *attrib);
+unsigned int vkvv_query_image_formats(const VkvvDriver *drv, VAImageFormat *format_list, unsigned int max_formats);
 void vkvv_surface_begin_work(VkvvSurface *surface);
 void vkvv_surface_complete_work(VkvvSurface *surface, VAStatus status);
 bool vkvv_surface_has_pending_work(const VkvvSurface *surface);

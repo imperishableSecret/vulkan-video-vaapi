@@ -37,6 +37,7 @@ h264_vulkan_sources = files(
 )
 
 driver_sources = files(
+  'src/caps.cpp',
   'src/driver.cpp',
   'src/va_buffers.cpp',
   'src/va_config.cpp',
@@ -117,6 +118,13 @@ sync_smoke = executable(
   install: false,
 )
 
+capability_smoke = executable(
+  'vkvv-capability-smoke',
+  files('tests/smoke/capability_smoke.cpp'),
+  dependencies: [libva_dep, libva_drm_dep],
+  install: false,
+)
+
 driver_test_env = environment()
 driver_test_env.set('LIBVA_DRIVER_NAME', 'nvidia_vulkan')
 driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
@@ -126,3 +134,4 @@ test('smoke-export', export_smoke, is_parallel: false, timeout: 30)
 test('smoke-lifetime', lifetime_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-multi-context', multi_context_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-sync', sync_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
+test('smoke-capability', capability_smoke, env: driver_test_env, is_parallel: false, timeout: 30)

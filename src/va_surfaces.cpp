@@ -5,8 +5,6 @@
 
 namespace {
 
-constexpr int min_surface_dimension = 1;
-constexpr int max_decode_surface_dimension = 4096;
 constexpr unsigned int surface_attribute_count = 7;
 
 struct LockedSurface {
@@ -94,7 +92,8 @@ VAStatus vkvvCreateSurfaces2(
     (void) num_attribs;
 
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
-    if ((format & (VA_RT_FORMAT_YUV420 | VA_RT_FORMAT_YUV420_10)) == 0) {
+    const unsigned int selected_format = vkvv_select_driver_rt_format(drv, format);
+    if (selected_format == 0) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
 
@@ -103,10 +102,10 @@ VAStatus vkvvCreateSurfaces2(
         if (surface == NULL) {
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
-        surface->rt_format = format;
+        surface->rt_format = selected_format;
         surface->width = width;
         surface->height = height;
-        surface->fourcc = vkvv_surface_fourcc_for_format(format);
+        surface->fourcc = vkvv_surface_fourcc_for_format(selected_format);
         surface->dpb_slot = -1;
         surface->work_state = VKVV_SURFACE_WORK_READY;
         surface->sync_status = VA_STATUS_SUCCESS;
@@ -202,16 +201,9 @@ VAStatus vkvvQuerySurfaceError(VADriverContextP ctx, VASurfaceID render_target, 
 }
 
 VAStatus vkvvQueryImageFormats(VADriverContextP ctx, VAImageFormat *format_list, int *num_formats) {
-    (void) ctx;
-    format_list[0] = {};
-    format_list[0].fourcc = VA_FOURCC_NV12;
-    format_list[0].byte_order = VA_LSB_FIRST;
-    format_list[0].bits_per_pixel = 12;
-    format_list[1] = {};
-    format_list[1].fourcc = VA_FOURCC_P010;
-    format_list[1].byte_order = VA_LSB_FIRST;
-    format_list[1].bits_per_pixel = 24;
-    *num_formats = 2;
+    VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
+    *num_formats = static_cast<int>(
+        vkvv_query_image_formats(drv, format_list, VKVV_MAX_IMAGE_FORMATS));
     return VA_STATUS_SUCCESS;
 }
 
@@ -234,17 +226,17 @@ VAStatus vkvvQuerySurfaceAttributes(
         return VA_STATUS_ERROR_MAX_NUM_EXCEEDED;
     }
 
-    set_integer_attrib(&attrib_list[0], VASurfaceAttribMinWidth, 0, min_surface_dimension);
-    set_integer_attrib(&attrib_list[1], VASurfaceAttribMinHeight, 0, min_surface_dimension);
-    set_integer_attrib(&attrib_list[2], VASurfaceAttribMaxWidth, 0, max_decode_surface_dimension);
-    set_integer_attrib(&attrib_list[3], VASurfaceAttribMaxHeight, 0, max_decode_surface_dimension);
+    set_integer_attrib(&attrib_list[0], VASurfaceAttribMinWidth, 0, static_cast<int>(cfg->min_width));
+    set_integer_attrib(&attrib_list[1], VASurfaceAttribMinHeight, 0, static_cast<int>(cfg->min_height));
+    set_integer_attrib(&attrib_list[2], VASurfaceAttribMaxWidth, 0, static_cast<int>(cfg->max_width));
+    set_integer_attrib(&attrib_list[3], VASurfaceAttribMaxHeight, 0, static_cast<int>(cfg->max_height));
     set_integer_attrib(&attrib_list[4], VASurfaceAttribPixelFormat,
                        VA_SURFACE_ATTRIB_GETTABLE | VA_SURFACE_ATTRIB_SETTABLE,
-                       static_cast<int>(vkvv_surface_fourcc_for_format(cfg->rt_format)));
+                       static_cast<int>(cfg->fourcc));
     set_integer_attrib(&attrib_list[5], VASurfaceAttribMemoryType,
                        VA_SURFACE_ATTRIB_GETTABLE,
                        VA_SURFACE_ATTRIB_MEM_TYPE_VA |
-                           (drv->caps.surface_export ? VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2 : 0));
+                           (cfg->exportable ? VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2 : 0));
 
     attrib_list[6] = {};
     attrib_list[6].type = VASurfaceAttribExternalBufferDescriptor;

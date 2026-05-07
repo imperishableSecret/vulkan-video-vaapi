@@ -181,6 +181,7 @@ static VAStatus vkvvDriverInit(VADriverContextP ctx) {
             drv->caps.surface_export = false;
         }
     }
+    vkvv_init_profile_capabilities(drv);
 
     ctx->pDriverData = drv;
     *ctx->vtable = vtable;
