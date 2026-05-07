@@ -189,10 +189,14 @@ bool extension_present(const std::vector<VkExtensionProperties> &extensions, con
 uint32_t round_up_16(uint32_t value);
 VkDeviceSize align_up(VkDeviceSize value, VkDeviceSize alignment);
 bool find_memory_type(const VkPhysicalDeviceMemoryProperties &properties, uint32_t type_bits, VkMemoryPropertyFlags required, uint32_t *type_index);
+bool enumerate_drm_format_modifiers(VulkanRuntime *runtime, VkFormat format, VkFormatFeatureFlags2 required, std::vector<uint64_t> *modifiers);
 
 void destroy_video_session(VulkanRuntime *runtime, VideoSession *session);
 void destroy_h264_video_session(VulkanRuntime *runtime, H264VideoSession *session);
 bool bind_video_session_memory(VulkanRuntime *runtime, VideoSession *session, char *reason, size_t reason_size);
+void destroy_export_resource(VulkanRuntime *runtime, ExportResource *resource);
+VkDeviceSize export_memory_bytes(const SurfaceResource *resource);
+void retire_export_resource(SurfaceResource *resource);
 void destroy_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface);
 bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExtent2D extent, char *reason, size_t reason_size);
 void destroy_upload_buffer(VulkanRuntime *runtime, UploadBuffer *upload);

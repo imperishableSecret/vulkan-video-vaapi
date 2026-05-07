@@ -18,6 +18,16 @@ vulkan_dep = dependency('vulkan')
 exports_map = meson.current_source_dir() / 'src' / 'exports.map'
 src_inc = include_directories('src')
 
+vulkan_runtime_sources = files(
+  'src/vulkan_runtime.cpp',
+  'src/vulkan/common.cpp',
+  'src/vulkan/command.cpp',
+  'src/vulkan/export.cpp',
+  'src/vulkan/session.cpp',
+  'src/vulkan/surface_resource.cpp',
+  'src/vulkan/upload.cpp',
+)
+
 driver_sources = files(
   'src/driver.cpp',
   'src/va_buffers.cpp',
@@ -26,10 +36,9 @@ driver_sources = files(
   'src/va_surfaces.cpp',
   'src/h264.cpp',
   'src/object.cpp',
-  'src/vulkan_runtime.cpp',
   'src/vulkan_h264.cpp',
   'src/vulkan_probe.cpp',
-)
+) + vulkan_runtime_sources
 
 shared_module(
   'nvidia_vulkan_drv_video',
@@ -63,9 +72,8 @@ session_smoke = executable(
   files(
     'tests/smoke/session_smoke.cpp',
     'src/object.cpp',
-    'src/vulkan_runtime.cpp',
     'src/vulkan_h264.cpp',
-  ),
+  ) + vulkan_runtime_sources,
   include_directories: src_inc,
   dependencies: [libva_dep, libdrm_dep, vulkan_dep],
   install: false,
@@ -76,9 +84,8 @@ export_smoke = executable(
   files(
     'tests/smoke/export_smoke.cpp',
     'src/object.cpp',
-    'src/vulkan_runtime.cpp',
     'src/vulkan_h264.cpp',
-  ),
+  ) + vulkan_runtime_sources,
   include_directories: src_inc,
   dependencies: [libva_dep, libdrm_dep, vulkan_dep],
   install: false,
