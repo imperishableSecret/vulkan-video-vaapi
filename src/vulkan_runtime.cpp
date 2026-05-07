@@ -3,9 +3,31 @@
 #include <cstdio>
 #include <cstring>
 #include <new>
+#include <string>
 #include <vector>
 
 namespace vkvv {
+
+struct RuntimeDecodeCodec {
+    const char *name;
+    VkVideoCodecOperationFlagBitsKHR operation;
+    const char *extension;
+};
+
+// Codecs listed here are runtime-wired. VA advertising is still controlled by
+// the driver capability model, so adding hardware probing alone is not enough.
+constexpr RuntimeDecodeCodec wired_decode_codecs[] = {
+    {
+        "h264",
+        VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+        VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME,
+    },
+};
+
+struct DecodeQueueSelection {
+    uint32_t family = invalid_queue_family;
+    VkVideoCodecOperationFlagsKHR operations = 0;
+};
 
 bool extension_present(const std::vector<VkExtensionProperties> &extensions, const char *name) {
     for (const VkExtensionProperties &extension : extensions) {
@@ -34,11 +56,66 @@ bool enumerate_device_extensions(VkPhysicalDevice device, std::vector<VkExtensio
     return true;
 }
 
-uint32_t find_decode_queue_family(VulkanRuntime *runtime, VkPhysicalDevice device) {
+bool has_video_decode_base_extensions(const std::vector<VkExtensionProperties> &extensions) {
+    return extension_present(extensions, VK_KHR_VIDEO_QUEUE_EXTENSION_NAME) &&
+           extension_present(extensions, VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME);
+}
+
+VkVideoCodecOperationFlagsKHR device_wired_decode_operations(const std::vector<VkExtensionProperties> &extensions) {
+    if (!has_video_decode_base_extensions(extensions)) {
+        return 0;
+    }
+
+    VkVideoCodecOperationFlagsKHR operations = 0;
+    for (const RuntimeDecodeCodec &codec : wired_decode_codecs) {
+        if (extension_present(extensions, codec.extension)) {
+            operations |= codec.operation;
+        }
+    }
+    return operations;
+}
+
+uint32_t count_decode_operations(VkVideoCodecOperationFlagsKHR operations) {
+    uint32_t count = 0;
+    for (const RuntimeDecodeCodec &codec : wired_decode_codecs) {
+        if ((operations & codec.operation) != 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
+std::string codec_operation_names(VkVideoCodecOperationFlagsKHR operations) {
+    std::string names;
+    for (const RuntimeDecodeCodec &codec : wired_decode_codecs) {
+        if ((operations & codec.operation) == 0) {
+            continue;
+        }
+        if (!names.empty()) {
+            names += ",";
+        }
+        names += codec.name;
+    }
+    return names.empty() ? "none" : names;
+}
+
+void push_unique_extension(std::vector<const char *> *extensions, const char *extension) {
+    for (const char *existing : *extensions) {
+        if (std::strcmp(existing, extension) == 0) {
+            return;
+        }
+    }
+    extensions->push_back(extension);
+}
+
+DecodeQueueSelection find_decode_queue_family(
+        VulkanRuntime *runtime,
+        VkPhysicalDevice device,
+        VkVideoCodecOperationFlagsKHR device_operations) {
     uint32_t count = 0;
     runtime->get_queue_family_properties2(device, &count, nullptr);
     if (count == 0) {
-        return invalid_queue_family;
+        return {};
     }
 
     std::vector<VkQueueFamilyProperties2> queue_props(count);
@@ -50,14 +127,24 @@ uint32_t find_decode_queue_family(VulkanRuntime *runtime, VkPhysicalDevice devic
     }
     runtime->get_queue_family_properties2(device, &count, queue_props.data());
 
+    DecodeQueueSelection best{};
+    uint32_t best_score = 0;
     for (uint32_t i = 0; i < count; i++) {
         const bool has_decode_queue = (queue_props[i].queueFamilyProperties.queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR) != 0;
-        const bool has_h264 = (video_props[i].videoCodecOperations & VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) != 0;
-        if (has_decode_queue && has_h264) {
-            return i;
+        if (!has_decode_queue) {
+            continue;
+        }
+
+        const VkVideoCodecOperationFlagsKHR queue_operations =
+            video_props[i].videoCodecOperations & device_operations;
+        const uint32_t score = count_decode_operations(queue_operations);
+        if (score > best_score) {
+            best.family = i;
+            best.operations = queue_operations;
+            best_score = score;
         }
     }
-    return invalid_queue_family;
+    return best;
 }
 
 bool pick_physical_device(VulkanRuntime *runtime, char *reason, size_t reason_size) {
@@ -76,19 +163,31 @@ bool pick_physical_device(VulkanRuntime *runtime, char *reason, size_t reason_si
     }
     devices.resize(count);
 
+    struct DeviceCandidate {
+        VkPhysicalDevice device = VK_NULL_HANDLE;
+        DecodeQueueSelection queue{};
+        bool video_maintenance2 = false;
+        bool external_memory_fd = false;
+        bool external_memory_dma_buf = false;
+        bool image_drm_format_modifier = false;
+        bool surface_export = false;
+        uint32_t score = 0;
+    };
+
+    DeviceCandidate best{};
     for (VkPhysicalDevice device : devices) {
         std::vector<VkExtensionProperties> extensions;
         if (!enumerate_device_extensions(device, extensions, reason, reason_size)) {
             continue;
         }
-        if (!extension_present(extensions, VK_KHR_VIDEO_QUEUE_EXTENSION_NAME) ||
-            !extension_present(extensions, VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME) ||
-            !extension_present(extensions, VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME)) {
+        const VkVideoCodecOperationFlagsKHR device_operations =
+            device_wired_decode_operations(extensions);
+        if (device_operations == 0) {
             continue;
         }
 
-        const uint32_t queue_family = find_decode_queue_family(runtime, device);
-        if (queue_family == invalid_queue_family) {
+        const DecodeQueueSelection queue = find_decode_queue_family(runtime, device, device_operations);
+        if (queue.family == invalid_queue_family || queue.operations == 0) {
             continue;
         }
 
@@ -103,21 +202,40 @@ bool pick_physical_device(VulkanRuntime *runtime, char *reason, size_t reason_si
         features2.pNext = &maintenance2_features;
         vkGetPhysicalDeviceFeatures2(device, &features2);
 
-        runtime->physical_device = device;
-        runtime->decode_queue_family = queue_family;
-        runtime->video_maintenance2 = has_video_maintenance2 && maintenance2_features.videoMaintenance2;
-        runtime->external_memory_fd = has_external_memory_fd;
-        runtime->external_memory_dma_buf = has_external_memory_dma_buf;
-        runtime->image_drm_format_modifier = has_image_drm_format_modifier;
-        runtime->surface_export = has_external_memory_fd &&
-                                  has_external_memory_dma_buf &&
-                                  has_image_drm_format_modifier;
-        vkGetPhysicalDeviceMemoryProperties(device, &runtime->memory_properties);
-        return true;
+        const bool surface_export = has_external_memory_fd &&
+                                    has_external_memory_dma_buf &&
+                                    has_image_drm_format_modifier;
+        const uint32_t score = count_decode_operations(queue.operations) * 10 +
+                               (surface_export ? 1 : 0);
+        if (score <= best.score) {
+            continue;
+        }
+
+        best.device = device;
+        best.queue = queue;
+        best.video_maintenance2 = has_video_maintenance2 && maintenance2_features.videoMaintenance2;
+        best.external_memory_fd = has_external_memory_fd;
+        best.external_memory_dma_buf = has_external_memory_dma_buf;
+        best.image_drm_format_modifier = has_image_drm_format_modifier;
+        best.surface_export = surface_export;
+        best.score = score;
     }
 
-    std::snprintf(reason, reason_size, "no physical device exposes H.264 Vulkan Video decode queue");
-    return false;
+    if (best.device == VK_NULL_HANDLE) {
+        std::snprintf(reason, reason_size, "no physical device exposes a wired Vulkan Video decode queue");
+        return false;
+    }
+
+    runtime->physical_device = best.device;
+    runtime->decode_queue_family = best.queue.family;
+    runtime->enabled_decode_operations = best.queue.operations;
+    runtime->video_maintenance2 = best.video_maintenance2;
+    runtime->external_memory_fd = best.external_memory_fd;
+    runtime->external_memory_dma_buf = best.external_memory_dma_buf;
+    runtime->image_drm_format_modifier = best.image_drm_format_modifier;
+    runtime->surface_export = best.surface_export;
+    vkGetPhysicalDeviceMemoryProperties(best.device, &runtime->memory_properties);
+    return true;
 }
 
 bool create_device(VulkanRuntime *runtime, char *reason, size_t reason_size) {
@@ -128,22 +246,25 @@ bool create_device(VulkanRuntime *runtime, char *reason, size_t reason_size) {
     queue_info.queueCount = 1;
     queue_info.pQueuePriorities = &priority;
 
-    std::vector<const char *> extensions = {
-        VK_KHR_VIDEO_QUEUE_EXTENSION_NAME,
-        VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME,
-        VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME,
-    };
+    std::vector<const char *> extensions;
+    push_unique_extension(&extensions, VK_KHR_VIDEO_QUEUE_EXTENSION_NAME);
+    push_unique_extension(&extensions, VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME);
+    for (const RuntimeDecodeCodec &codec : wired_decode_codecs) {
+        if ((runtime->enabled_decode_operations & codec.operation) != 0) {
+            push_unique_extension(&extensions, codec.extension);
+        }
+    }
     if (runtime->video_maintenance2) {
-        extensions.push_back(VK_KHR_VIDEO_MAINTENANCE_2_EXTENSION_NAME);
+        push_unique_extension(&extensions, VK_KHR_VIDEO_MAINTENANCE_2_EXTENSION_NAME);
     }
     if (runtime->external_memory_fd) {
-        extensions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+        push_unique_extension(&extensions, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
     }
     if (runtime->external_memory_dma_buf) {
-        extensions.push_back(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
+        push_unique_extension(&extensions, VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
     }
     if (runtime->image_drm_format_modifier) {
-        extensions.push_back(VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME);
+        push_unique_extension(&extensions, VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME);
     }
 
     VkPhysicalDeviceVideoMaintenance2FeaturesKHR maintenance2{};
@@ -267,7 +388,9 @@ void *vkvv_vulkan_runtime_create(char *reason, size_t reason_size) {
             return nullptr;
         }
 
-        std::snprintf(reason, reason_size, "Vulkan Video runtime ready: queue_family=%u", runtime->decode_queue_family);
+        const std::string codec_names = codec_operation_names(runtime->enabled_decode_operations);
+        std::snprintf(reason, reason_size, "Vulkan Video runtime ready: queue_family=%u codecs=%s",
+                      runtime->decode_queue_family, codec_names.c_str());
         return runtime;
     } catch (const std::bad_alloc &) {
         std::snprintf(reason, reason_size, "out of memory creating Vulkan runtime");

@@ -63,6 +63,13 @@ int main(void) {
     if (runtime == nullptr) {
         return 1;
     }
+    auto *typed_runtime = static_cast<vkvv::VulkanRuntime *>(runtime);
+    bool ok = check(
+        typed_runtime->decode_queue_family != vkvv::invalid_queue_family,
+        "runtime did not select a decode queue family");
+    ok = check(
+        (typed_runtime->enabled_decode_operations & VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) != 0,
+        "runtime did not enable H.264 through codec-driven selection") && ok;
 
     void *session = vkvv_vulkan_h264_session_create();
     if (session == nullptr) {
@@ -70,7 +77,7 @@ int main(void) {
         return 1;
     }
 
-    bool ok = ensure_session(runtime, session, 64, 64, 256, 256);
+    ok = ensure_session(runtime, session, 64, 64, 256, 256) && ok;
     auto *typed_session = static_cast<vkvv::H264VideoSession *>(session);
 
     ok = ensure_session(runtime, session, 640, 360, 640, 368) && ok;

@@ -17,13 +17,39 @@ inline constexpr uint32_t max_h264_dpb_slots = 17;
 
 struct VideoCapabilitiesChain {
     VkVideoDecodeH264CapabilitiesKHR h264{};
+    VkVideoDecodeH265CapabilitiesKHR h265{};
+    VkVideoDecodeVP9CapabilitiesKHR vp9{};
+    VkVideoDecodeAV1CapabilitiesKHR av1{};
     VkVideoDecodeCapabilitiesKHR decode{};
     VkVideoCapabilitiesKHR video{};
 
-    VideoCapabilitiesChain() {
+    explicit VideoCapabilitiesChain(
+            VkVideoCodecOperationFlagBitsKHR operation = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) {
         h264.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_CAPABILITIES_KHR;
+        h265.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_CAPABILITIES_KHR;
+        vp9.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_CAPABILITIES_KHR;
+        av1.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR;
+
+        void *codec_caps = nullptr;
+        switch (operation) {
+            case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR:
+                codec_caps = &h264;
+                break;
+            case VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR:
+                codec_caps = &h265;
+                break;
+            case VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR:
+                codec_caps = &vp9;
+                break;
+            case VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR:
+                codec_caps = &av1;
+                break;
+            default:
+                break;
+        }
+
         decode.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR;
-        decode.pNext = &h264;
+        decode.pNext = codec_caps;
         video.sType = VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR;
         video.pNext = &decode;
     }
@@ -31,24 +57,58 @@ struct VideoCapabilitiesChain {
 
 struct VideoProfileChain {
     VkVideoDecodeH264ProfileInfoKHR h264{};
+    VkVideoDecodeH265ProfileInfoKHR h265{};
+    VkVideoDecodeVP9ProfileInfoKHR vp9{};
+    VkVideoDecodeAV1ProfileInfoKHR av1{};
     VkVideoDecodeUsageInfoKHR usage{};
     VkVideoProfileInfoKHR profile{};
 
-    VideoProfileChain() {
+    explicit VideoProfileChain(
+            VkVideoCodecOperationFlagBitsKHR operation = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+            VkVideoComponentBitDepthFlagsKHR bit_depth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR) {
         h264.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_PROFILE_INFO_KHR;
         h264.stdProfileIdc = STD_VIDEO_H264_PROFILE_IDC_HIGH;
         h264.pictureLayout = VK_VIDEO_DECODE_H264_PICTURE_LAYOUT_PROGRESSIVE_KHR;
+        h265.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_PROFILE_INFO_KHR;
+        h265.stdProfileIdc = bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR ?
+                             STD_VIDEO_H265_PROFILE_IDC_MAIN_10 :
+                             STD_VIDEO_H265_PROFILE_IDC_MAIN;
+        vp9.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_PROFILE_INFO_KHR;
+        vp9.stdProfile = bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR ?
+                         STD_VIDEO_VP9_PROFILE_2 :
+                         STD_VIDEO_VP9_PROFILE_0;
+        av1.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_PROFILE_INFO_KHR;
+        av1.stdProfile = STD_VIDEO_AV1_PROFILE_MAIN;
+        av1.filmGrainSupport = VK_FALSE;
+
+        void *codec_profile = nullptr;
+        switch (operation) {
+            case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR:
+                codec_profile = &h264;
+                break;
+            case VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR:
+                codec_profile = &h265;
+                break;
+            case VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR:
+                codec_profile = &vp9;
+                break;
+            case VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR:
+                codec_profile = &av1;
+                break;
+            default:
+                break;
+        }
 
         usage.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_USAGE_INFO_KHR;
-        usage.pNext = &h264;
+        usage.pNext = codec_profile;
         usage.videoUsageHints = VK_VIDEO_DECODE_USAGE_STREAMING_BIT_KHR;
 
         profile.sType = VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR;
         profile.pNext = &usage;
-        profile.videoCodecOperation = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR;
+        profile.videoCodecOperation = operation;
         profile.chromaSubsampling = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR;
-        profile.lumaBitDepth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
-        profile.chromaBitDepth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
+        profile.lumaBitDepth = bit_depth;
+        profile.chromaBitDepth = bit_depth;
     }
 };
 
@@ -141,6 +201,7 @@ class VulkanRuntime {
     VkDevice device = VK_NULL_HANDLE;
     VkQueue decode_queue = VK_NULL_HANDLE;
     uint32_t decode_queue_family = invalid_queue_family;
+    VkVideoCodecOperationFlagsKHR enabled_decode_operations = 0;
     VkPhysicalDeviceMemoryProperties memory_properties{};
 
     PFN_vkGetPhysicalDeviceQueueFamilyProperties2 get_queue_family_properties2 = nullptr;
