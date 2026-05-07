@@ -61,6 +61,7 @@ struct ExportResource {
     uint32_t plane_count = 0;
     uint64_t drm_format_modifier = 0;
     bool has_drm_format_modifier = false;
+    bool exported = false;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 };
 
@@ -69,6 +70,11 @@ struct SurfaceResource {
     VkImageView view = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkExtent2D extent{};
+    VkExtent2D coded_extent{};
+    VkExtent2D visible_extent{};
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    unsigned int va_rt_format = 0;
+    unsigned int va_fourcc = 0;
     VkDeviceSize allocation_size = 0;
     VkSubresourceLayout plane_layouts[2]{};
     uint32_t plane_count = 0;
@@ -76,6 +82,7 @@ struct SurfaceResource {
     bool exportable = false;
     bool has_drm_format_modifier = false;
     ExportResource export_resource{};
+    std::vector<ExportResource> retired_exports;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 };
 
@@ -83,6 +90,7 @@ struct UploadBuffer {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkDeviceSize size = 0;
+    VkDeviceSize allocation_size = 0;
 };
 
 struct VideoSessionKey {

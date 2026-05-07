@@ -408,7 +408,34 @@ void destroy_export_resource(VulkanRuntime *runtime, ExportResource *resource) {
     resource->plane_count = 0;
     resource->drm_format_modifier = 0;
     resource->has_drm_format_modifier = false;
+    resource->exported = false;
     resource->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+}
+
+VkDeviceSize retired_export_memory_bytes(const SurfaceResource *resource) {
+    VkDeviceSize bytes = 0;
+    if (resource == nullptr) {
+        return 0;
+    }
+    for (const ExportResource &retired : resource->retired_exports) {
+        bytes += retired.allocation_size;
+    }
+    return bytes;
+}
+
+VkDeviceSize export_memory_bytes(const SurfaceResource *resource) {
+    if (resource == nullptr) {
+        return 0;
+    }
+    return resource->export_resource.allocation_size + retired_export_memory_bytes(resource);
+}
+
+void retire_export_resource(SurfaceResource *resource) {
+    if (resource == nullptr || resource->export_resource.image == VK_NULL_HANDLE) {
+        return;
+    }
+    resource->retired_exports.push_back(resource->export_resource);
+    resource->export_resource = {};
 }
 
 void destroy_surface_resource_raw(VulkanRuntime *runtime, SurfaceResource *resource) {
@@ -417,6 +444,10 @@ void destroy_surface_resource_raw(VulkanRuntime *runtime, SurfaceResource *resou
     }
 
     destroy_export_resource(runtime, &resource->export_resource);
+    for (ExportResource &retired : resource->retired_exports) {
+        destroy_export_resource(runtime, &retired);
+    }
+    resource->retired_exports.clear();
     if (resource->view != VK_NULL_HANDLE) {
         vkDestroyImageView(runtime->device, resource->view, nullptr);
     }
@@ -448,8 +479,12 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
 
     auto *existing = static_cast<SurfaceResource *>(surface->vulkan);
     if (existing != nullptr &&
-        existing->extent.width >= extent.width &&
-        existing->extent.height >= extent.height) {
+        existing->coded_extent.width >= extent.width &&
+        existing->coded_extent.height >= extent.height &&
+        existing->format == runtime->h264_picture_format &&
+        existing->va_rt_format == surface->rt_format &&
+        existing->va_fourcc == surface->fourcc) {
+        existing->visible_extent = {surface->width, surface->height};
         return true;
     }
     if (existing != nullptr && surface->decoded) {
@@ -588,6 +623,11 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
     }
 
     resource->extent = extent;
+    resource->coded_extent = extent;
+    resource->visible_extent = {surface->width, surface->height};
+    resource->format = runtime->h264_picture_format;
+    resource->va_rt_format = surface->rt_format;
+    resource->va_fourcc = surface->fourcc;
     resource->allocation_size = requirements.size;
     if (request_exportable) {
         VkImageSubresource plane0{};
@@ -630,6 +670,7 @@ void destroy_upload_buffer(VulkanRuntime *runtime, UploadBuffer *upload) {
         upload->memory = VK_NULL_HANDLE;
     }
     upload->size = 0;
+    upload->allocation_size = 0;
 }
 
 bool create_upload_buffer(
@@ -663,6 +704,7 @@ bool create_upload_buffer(
 
     VkMemoryRequirements requirements{};
     vkGetBufferMemoryRequirements(runtime->device, upload->buffer, &requirements);
+    upload->allocation_size = requirements.size;
 
     uint32_t memory_type_index = 0;
     bool coherent = true;
@@ -998,20 +1040,20 @@ bool create_export_resource_with_tiling(
 bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, char *reason, size_t reason_size) {
     ExportResource *resource = &source->export_resource;
     if (resource->image != VK_NULL_HANDLE &&
-        resource->extent.width >= source->extent.width &&
-        resource->extent.height >= source->extent.height) {
+        resource->extent.width >= source->coded_extent.width &&
+        resource->extent.height >= source->coded_extent.height) {
         return true;
     }
 
     destroy_export_resource(runtime, resource);
     if (runtime->image_drm_format_modifier &&
-        create_export_resource_with_tiling(runtime, resource, source->extent,
+        create_export_resource_with_tiling(runtime, resource, source->coded_extent,
                                            VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
                                            reason, reason_size)) {
         return true;
     }
     destroy_export_resource(runtime, resource);
-    return create_export_resource_with_tiling(runtime, resource, source->extent,
+    return create_export_resource_with_tiling(runtime, resource, source->coded_extent,
                                              VK_IMAGE_TILING_LINEAR,
                                              reason, reason_size);
 }
@@ -1048,6 +1090,9 @@ void add_raw_image_barrier(
 }
 
 bool copy_surface_to_export_resource(VulkanRuntime *runtime, SurfaceResource *source, char *reason, size_t reason_size) {
+    if (source->export_resource.exported) {
+        retire_export_resource(source);
+    }
     if (!ensure_export_resource(runtime, source, reason, reason_size)) {
         return false;
     }
@@ -1110,13 +1155,13 @@ bool copy_surface_to_export_resource(VulkanRuntime *runtime, SurfaceResource *so
     regions[0].srcSubresource.layerCount = 1;
     regions[0].dstSubresource.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT;
     regions[0].dstSubresource.layerCount = 1;
-    regions[0].extent = {source->extent.width, source->extent.height, 1};
+    regions[0].extent = {source->coded_extent.width, source->coded_extent.height, 1};
 
     regions[1].srcSubresource.aspectMask = VK_IMAGE_ASPECT_PLANE_1_BIT;
     regions[1].srcSubresource.layerCount = 1;
     regions[1].dstSubresource.aspectMask = VK_IMAGE_ASPECT_PLANE_1_BIT;
     regions[1].dstSubresource.layerCount = 1;
-    regions[1].extent = {(source->extent.width + 1) / 2, (source->extent.height + 1) / 2, 1};
+    regions[1].extent = {(source->coded_extent.width + 1) / 2, (source->coded_extent.height + 1) / 2, 1};
 
     vkCmdCopyImage(runtime->command_buffer,
                    source->image,
@@ -1265,9 +1310,14 @@ VAStatus vkvv_vulkan_prepare_surface_export(
     }
 
     std::snprintf(reason, reason_size,
-                  "surface export resource ready: %ux%u exportable=%u shadow=%u",
-                  surface->width, surface->height, resource->exportable,
-                  resource->export_resource.image != VK_NULL_HANDLE);
+                  "surface export resource ready: visible=%ux%u coded=%ux%u format=%d va_fourcc=0x%x exportable=%u shadow=%u decode_mem=%llu export_mem=%llu retired=%zu",
+                  surface->width, surface->height,
+                  resource->coded_extent.width, resource->coded_extent.height,
+                  resource->format, resource->va_fourcc, resource->exportable,
+                  resource->export_resource.image != VK_NULL_HANDLE,
+                  static_cast<unsigned long long>(resource->allocation_size),
+                  static_cast<unsigned long long>(export_memory_bytes(resource)),
+                  resource->retired_exports.size());
     return VA_STATUS_SUCCESS;
 }
 
@@ -1301,7 +1351,10 @@ VAStatus vkvv_vulkan_refresh_surface_export(
     if (!copy_surface_to_export_resource(runtime, resource, reason, reason_size)) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
-    std::snprintf(reason, reason_size, "refreshed exported NV12 shadow image after decode");
+    std::snprintf(reason, reason_size,
+                  "refreshed exported NV12 shadow image after decode: export_mem=%llu retired=%zu",
+                  static_cast<unsigned long long>(export_memory_bytes(resource)),
+                  resource->retired_exports.size());
     return VA_STATUS_SUCCESS;
 }
 
@@ -1346,6 +1399,7 @@ VAStatus vkvv_vulkan_export_surface(
     uint64_t export_modifier = resource->drm_format_modifier;
     bool export_has_modifier = resource->has_drm_format_modifier;
     bool copied_to_shadow = false;
+    ExportResource *exported_shadow = nullptr;
 
     if (!resource->exportable) {
         if (surface->decoded) {
@@ -1363,6 +1417,7 @@ VAStatus vkvv_vulkan_export_surface(
         export_plane_count = shadow->plane_count;
         export_modifier = shadow->drm_format_modifier;
         export_has_modifier = shadow->has_drm_format_modifier;
+        exported_shadow = shadow;
     }
 
     if (export_memory == VK_NULL_HANDLE || export_plane_count != 2) {
@@ -1415,13 +1470,19 @@ VAStatus vkvv_vulkan_export_surface(
     descriptor->layers[1].object_index[0] = 0;
     descriptor->layers[1].offset[0] = static_cast<uint32_t>(export_plane_layouts[1].offset);
     descriptor->layers[1].pitch[0] = static_cast<uint32_t>(export_plane_layouts[1].rowPitch);
+    if (exported_shadow != nullptr) {
+        exported_shadow->exported = true;
+    }
 
     std::snprintf(reason, reason_size,
-                  "exported NV12 dma-buf%s: %ux%u fd=%d size=%u modifier=0x%llx y_pitch=%u uv_pitch=%u",
+                  "exported NV12 dma-buf%s: %ux%u fd=%d size=%u modifier=0x%llx y_pitch=%u uv_pitch=%u decode_mem=%llu export_mem=%llu retired=%zu",
                   copied_to_shadow ? " via shadow copy" : "",
                   surface->width, surface->height, fd, descriptor->objects[0].size,
                   static_cast<unsigned long long>(descriptor->objects[0].drm_format_modifier),
-                  descriptor->layers[0].pitch[0], descriptor->layers[1].pitch[0]);
+                  descriptor->layers[0].pitch[0], descriptor->layers[1].pitch[0],
+                  static_cast<unsigned long long>(resource->allocation_size),
+                  static_cast<unsigned long long>(export_memory_bytes(resource)),
+                  resource->retired_exports.size());
     return VA_STATUS_SUCCESS;
 }
 

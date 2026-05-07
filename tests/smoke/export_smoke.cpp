@@ -1,6 +1,7 @@
 #include "vulkan_runtime_internal.h"
 
 #include <cstdio>
+#include <fcntl.h>
 #include <unistd.h>
 
 int main(void) {
@@ -68,36 +69,91 @@ int main(void) {
                 descriptor.layers[1].pitch[0],
                 static_cast<unsigned long long>(descriptor.objects[0].drm_format_modifier));
 
-    if (descriptor.objects[0].fd >= 0) {
-        close(descriptor.objects[0].fd);
+    auto *resource = static_cast<vkvv::SurfaceResource *>(surface.vulkan);
+    if (resource == nullptr ||
+        resource->coded_extent.width != 64 ||
+        resource->coded_extent.height != 64 ||
+        resource->visible_extent.width != 64 ||
+        resource->visible_extent.height != 64 ||
+        resource->va_fourcc != VA_FOURCC_NV12 ||
+        resource->allocation_size == 0 ||
+        resource->export_resource.allocation_size == 0 ||
+        !resource->export_resource.exported) {
+        std::fprintf(stderr, "surface resource tracking/accounting is incomplete\n");
+        if (descriptor.objects[0].fd >= 0) {
+            close(descriptor.objects[0].fd);
+        }
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
     }
+    VkDeviceMemory first_export_memory = resource->export_resource.memory;
+    const int first_fd = descriptor.objects[0].fd;
 
     surface.decoded = true;
     status = vkvv_vulkan_refresh_surface_export(runtime, &surface, reason, sizeof(reason));
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    if (first_fd < 0 || fcntl(first_fd, F_GETFD) < 0 ||
+        resource->retired_exports.size() != 1 ||
+        resource->retired_exports[0].memory != first_export_memory ||
+        resource->export_resource.memory == first_export_memory ||
+        resource->export_resource.allocation_size == 0) {
+        std::fprintf(stderr, "export refresh did not preserve the previously exported shadow image\n");
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
         vkvv_vulkan_surface_destroy(runtime, &surface);
         vkvv_vulkan_h264_session_destroy(runtime, session);
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
 
-    descriptor = {};
+    VADRMPRIMESurfaceDescriptor refreshed_descriptor{};
     status = vkvv_vulkan_export_surface(
         runtime, &surface, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
-        &descriptor, reason, sizeof(reason));
+        &refreshed_descriptor, reason, sizeof(reason));
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
         vkvv_vulkan_surface_destroy(runtime, &surface);
         vkvv_vulkan_h264_session_destroy(runtime, session);
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
-    if (descriptor.objects[0].fd >= 0) {
-        close(descriptor.objects[0].fd);
+    const int refreshed_fd = refreshed_descriptor.objects[0].fd;
+    vkvv_vulkan_surface_destroy(runtime, &surface);
+    if ((first_fd >= 0 && fcntl(first_fd, F_GETFD) < 0) ||
+        (refreshed_fd >= 0 && fcntl(refreshed_fd, F_GETFD) < 0)) {
+        std::fprintf(stderr, "destroying the VA surface closed an exported dma-buf fd\n");
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
+        if (refreshed_fd >= 0) {
+            close(refreshed_fd);
+        }
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    if (first_fd >= 0) {
+        close(first_fd);
+    }
+    if (refreshed_fd >= 0) {
+        close(refreshed_fd);
     }
 
-    vkvv_vulkan_surface_destroy(runtime, &surface);
     vkvv_vulkan_h264_session_destroy(runtime, session);
     vkvv_vulkan_runtime_destroy(runtime);
     return 0;

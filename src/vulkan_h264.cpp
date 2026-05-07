@@ -827,6 +827,7 @@ VAStatus vkvv_vulkan_decode_h264(
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
+    const VkDeviceSize upload_allocation_size = upload.allocation_size;
     const bool submitted = submit_command_buffer_and_wait(runtime, reason, reason_size, "H.264 decode");
     destroy_upload_buffer(runtime, &upload);
     runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
@@ -835,8 +836,12 @@ VAStatus vkvv_vulkan_decode_h264(
     }
 
     target->decoded = true;
-    std::snprintf(reason, reason_size, "submitted H.264 Vulkan decode: %ux%u slices=%u bytes=%zu refs=%u slot=%d",
+    std::snprintf(reason, reason_size,
+                  "submitted H.264 Vulkan decode: %ux%u slices=%u bytes=%zu refs=%u slot=%d decode_mem=%llu upload_mem=%llu session_mem=%llu",
                   coded_extent.width, coded_extent.height, input->slice_count, input->bitstream_size,
-                  reference_count, target->dpb_slot);
+                  reference_count, target->dpb_slot,
+                  static_cast<unsigned long long>(target_resource->allocation_size),
+                  static_cast<unsigned long long>(upload_allocation_size),
+                  static_cast<unsigned long long>(session->video.memory_bytes));
     return VA_STATUS_SUCCESS;
 }
