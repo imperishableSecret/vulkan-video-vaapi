@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <vector>
 #include <vulkan/vulkan.h>
 
@@ -84,10 +85,38 @@ struct UploadBuffer {
     VkDeviceSize size = 0;
 };
 
+struct VideoSessionKey {
+    VkVideoCodecOperationFlagsKHR codec_operation = 0;
+    uint32_t codec_profile = 0;
+    VkFormat picture_format = VK_FORMAT_UNDEFINED;
+    VkFormat reference_picture_format = VK_FORMAT_UNDEFINED;
+    VkExtent2D max_coded_extent{};
+    VkVideoChromaSubsamplingFlagsKHR chroma_subsampling = 0;
+    VkVideoComponentBitDepthFlagsKHR luma_bit_depth = 0;
+    VkVideoComponentBitDepthFlagsKHR chroma_bit_depth = 0;
+};
+
+struct VideoSession {
+    VkVideoSessionKHR session = VK_NULL_HANDLE;
+    std::vector<VkDeviceMemory> memory;
+    VkDeviceSize memory_bytes = 0;
+    VideoSessionKey key{};
+    bool initialized = false;
+};
+
+struct H264VideoSession {
+    VideoSession video;
+    VkDeviceSize bitstream_offset_alignment = 1;
+    VkDeviceSize bitstream_size_alignment = 1;
+    StdVideoH264LevelIdc max_level = STD_VIDEO_H264_LEVEL_IDC_5_2;
+    VkVideoDecodeCapabilityFlagsKHR decode_flags = 0;
+    uint32_t max_dpb_slots = 0;
+    uint32_t max_active_reference_pictures = 0;
+};
+
 class VulkanRuntime {
   public:
     ~VulkanRuntime() {
-        destroy_h264_session();
         destroy_command_resources();
         if (device != VK_NULL_HANDLE) {
             vkDestroyDevice(device, nullptr);
@@ -125,22 +154,15 @@ class VulkanRuntime {
     bool image_drm_format_modifier = false;
     bool surface_export = false;
 
-    VkVideoSessionKHR h264_session = VK_NULL_HANDLE;
-    std::vector<VkDeviceMemory> h264_session_memory;
     VkFormat h264_picture_format = VK_FORMAT_UNDEFINED;
     VkImageCreateFlags h264_image_create_flags = 0;
     VkImageTiling h264_image_tiling = VK_IMAGE_TILING_OPTIMAL;
-    VkExtent2D h264_extent{};
-    VkDeviceSize h264_bitstream_offset_alignment = 1;
-    VkDeviceSize h264_bitstream_size_alignment = 1;
-    StdVideoH264LevelIdc h264_max_level = STD_VIDEO_H264_LEVEL_IDC_5_2;
-    VkVideoDecodeCapabilityFlagsKHR h264_decode_flags = 0;
-    bool h264_session_initialized = false;
     bool video_maintenance2 = false;
 
     VkCommandPool command_pool = VK_NULL_HANDLE;
     VkCommandBuffer command_buffer = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
+    std::mutex command_mutex;
 
     void destroy_command_resources() {
         if (fence != VK_NULL_HANDLE) {
@@ -153,22 +175,6 @@ class VulkanRuntime {
             command_buffer = VK_NULL_HANDLE;
         }
     }
-
-    void destroy_h264_session() {
-        if (h264_session != VK_NULL_HANDLE && destroy_video_session != nullptr) {
-            destroy_video_session(device, h264_session, nullptr);
-            h264_session = VK_NULL_HANDLE;
-        }
-        for (VkDeviceMemory memory : h264_session_memory) {
-            vkFreeMemory(device, memory, nullptr);
-        }
-        h264_session_memory.clear();
-        h264_picture_format = VK_FORMAT_UNDEFINED;
-        h264_image_create_flags = 0;
-        h264_image_tiling = VK_IMAGE_TILING_OPTIMAL;
-        h264_extent = {};
-        h264_session_initialized = false;
-    }
 };
 
 bool extension_present(const std::vector<VkExtensionProperties> &extensions, const char *name);
@@ -176,14 +182,16 @@ uint32_t round_up_16(uint32_t value);
 VkDeviceSize align_up(VkDeviceSize value, VkDeviceSize alignment);
 bool find_memory_type(const VkPhysicalDeviceMemoryProperties &properties, uint32_t type_bits, VkMemoryPropertyFlags required, uint32_t *type_index);
 
-bool bind_h264_session_memory(VulkanRuntime *runtime, char *reason, size_t reason_size);
+void destroy_video_session(VulkanRuntime *runtime, VideoSession *session);
+void destroy_h264_video_session(VulkanRuntime *runtime, H264VideoSession *session);
+bool bind_video_session_memory(VulkanRuntime *runtime, VideoSession *session, char *reason, size_t reason_size);
 void destroy_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface);
 bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExtent2D extent, char *reason, size_t reason_size);
 void destroy_upload_buffer(VulkanRuntime *runtime, UploadBuffer *upload);
-bool create_upload_buffer(VulkanRuntime *runtime, const VkvvH264DecodeInput *input, UploadBuffer *upload, char *reason, size_t reason_size);
+bool create_upload_buffer(VulkanRuntime *runtime, const H264VideoSession *session, const VkvvH264DecodeInput *input, UploadBuffer *upload, char *reason, size_t reason_size);
 bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reason_size);
 bool submit_command_buffer_and_wait(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation);
-bool reset_h264_session(VulkanRuntime *runtime, VkVideoSessionParametersKHR parameters, char *reason, size_t reason_size);
+bool reset_h264_session(VulkanRuntime *runtime, H264VideoSession *session, VkVideoSessionParametersKHR parameters, char *reason, size_t reason_size);
 void add_image_layout_barrier(std::vector<VkImageMemoryBarrier2> *barriers, SurfaceResource *resource, VkImageLayout new_layout, VkAccessFlags2 dst_access);
 VkVideoPictureResourceInfoKHR make_picture_resource(SurfaceResource *resource, VkExtent2D coded_extent);
 

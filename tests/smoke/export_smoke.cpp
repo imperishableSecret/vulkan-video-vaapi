@@ -10,10 +10,16 @@ int main(void) {
     if (runtime == nullptr) {
         return 1;
     }
+    void *session = vkvv_vulkan_h264_session_create();
+    if (session == nullptr) {
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
 
-    VAStatus status = vkvv_vulkan_ensure_h264_session(runtime, 64, 64, reason, sizeof(reason));
+    VAStatus status = vkvv_vulkan_ensure_h264_session(runtime, session, 64, 64, reason, sizeof(reason));
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
+        vkvv_vulkan_h264_session_destroy(runtime, session);
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
@@ -34,6 +40,7 @@ int main(void) {
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
         std::printf("%s\n", reason);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
@@ -45,6 +52,7 @@ int main(void) {
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
         vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
@@ -69,6 +77,7 @@ int main(void) {
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
         vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
@@ -80,6 +89,7 @@ int main(void) {
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
         vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
@@ -88,6 +98,7 @@ int main(void) {
     }
 
     vkvv_vulkan_surface_destroy(runtime, &surface);
+    vkvv_vulkan_h264_session_destroy(runtime, session);
     vkvv_vulkan_runtime_destroy(runtime);
     return 0;
 }

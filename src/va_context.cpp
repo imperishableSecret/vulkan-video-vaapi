@@ -4,14 +4,16 @@
 
 #include <cstdlib>
 
-void vkvv_release_context_payload(VkvvContext *vctx) {
+void vkvv_release_context_payload(VkvvDriver *drv, VkvvContext *vctx) {
     if (vctx == NULL) {
         return;
     }
     if (vkvv_profile_is_h264(vctx->profile)) {
         vkvv_h264_state_destroy(vctx->codec_state);
+        vkvv_vulkan_h264_session_destroy(drv != NULL ? drv->vulkan : NULL, vctx->codec_session);
     }
     vctx->codec_state = NULL;
+    vctx->codec_session = NULL;
 }
 
 VAStatus vkvvCreateContext(
@@ -43,9 +45,12 @@ VAStatus vkvvCreateContext(
     vctx->width = (unsigned int) picture_width;
     vctx->height = (unsigned int) picture_height;
     vctx->render_target = VA_INVALID_ID;
+    vctx->next_dpb_slot = 0;
     if (vkvv_profile_is_h264(vctx->profile)) {
         vctx->codec_state = vkvv_h264_state_create();
-        if (vctx->codec_state == NULL) {
+        vctx->codec_session = vkvv_vulkan_h264_session_create();
+        if (vctx->codec_state == NULL || vctx->codec_session == NULL) {
+            vkvv_release_context_payload(drv, vctx);
             std::free(vctx);
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
@@ -53,7 +58,7 @@ VAStatus vkvvCreateContext(
 
     *context = vkvv_object_add(drv, VKVV_OBJECT_CONTEXT, vctx);
     if (*context == VA_INVALID_ID) {
-        vkvv_release_context_payload(vctx);
+        vkvv_release_context_payload(drv, vctx);
         std::free(vctx);
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
@@ -66,7 +71,7 @@ VAStatus vkvvDestroyContext(VADriverContextP ctx, VAContextID context) {
     if (vctx == NULL) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
-    vkvv_release_context_payload(vctx);
+    vkvv_release_context_payload(drv, vctx);
     return vkvv_object_remove(drv, context, VKVV_OBJECT_CONTEXT) ?
            VA_STATUS_SUCCESS : VA_STATUS_ERROR_INVALID_CONTEXT;
 }
@@ -145,13 +150,15 @@ VAStatus vkvvEndPicture(VADriverContextP ctx, VAContextID context) {
         }
     }
 
-    status = vkvv_vulkan_ensure_h264_session(drv->vulkan, width, height, reason, sizeof(reason));
+    status = vkvv_vulkan_ensure_h264_session(drv->vulkan, vctx->codec_session, width, height, reason, sizeof(reason));
     vkvv_log("%s", reason);
     if (status != VA_STATUS_SUCCESS) {
         return status;
     }
 
-    status = vkvv_vulkan_decode_h264(drv->vulkan, drv, target, vctx->profile, &decode_input, reason, sizeof(reason));
+    status = vkvv_vulkan_decode_h264(
+        drv->vulkan, vctx->codec_session, drv, vctx, target,
+        vctx->profile, &decode_input, reason, sizeof(reason));
     vkvv_log("%s", reason);
     if (status != VA_STATUS_SUCCESS) {
         return status;

@@ -58,6 +58,8 @@ typedef struct VkvvContext {
     unsigned int height;
     VASurfaceID render_target;
     void *codec_state;
+    void *codec_session;
+    unsigned int next_dpb_slot;
 } VkvvContext;
 
 typedef struct VkvvBuffer {
@@ -79,7 +81,7 @@ typedef struct {
     VkvvVideoCaps caps;
     VkvvObject *objects;
     unsigned int next_id;
-    unsigned int next_dpb_slot;
+    void *h264_export_session;
     void *vulkan;
 } VkvvDriver;
 

@@ -12,12 +12,16 @@ extern "C" {
 void *vkvv_vulkan_runtime_create(char *reason, size_t reason_size);
 void vkvv_vulkan_runtime_destroy(void *runtime);
 bool vkvv_vulkan_supports_surface_export(void *runtime);
-VAStatus vkvv_vulkan_ensure_h264_session(void *runtime, unsigned int width, unsigned int height, char *reason, size_t reason_size);
+void *vkvv_vulkan_h264_session_create(void);
+void vkvv_vulkan_h264_session_destroy(void *runtime, void *session);
+VAStatus vkvv_vulkan_ensure_h264_session(void *runtime, void *session, unsigned int width, unsigned int height, char *reason, size_t reason_size);
 VAStatus vkvv_vulkan_prepare_surface_export(void *runtime, VkvvSurface *surface, char *reason, size_t reason_size);
 VAStatus vkvv_vulkan_refresh_surface_export(void *runtime, VkvvSurface *surface, char *reason, size_t reason_size);
 VAStatus vkvv_vulkan_decode_h264(
         void *runtime,
+        void *session,
         VkvvDriver *drv,
+        VkvvContext *vctx,
         VkvvSurface *target,
         VAProfile profile,
         const VkvvH264DecodeInput *input,

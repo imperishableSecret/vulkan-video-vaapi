@@ -53,7 +53,7 @@ static void release_owned_payloads(VkvvDriver *drv) {
     for (VkvvObject *object = drv->objects; object != NULL; object = object->next) {
         switch (object->type) {
             case VKVV_OBJECT_CONTEXT:
-                vkvv_release_context_payload(static_cast<VkvvContext *>(object->payload));
+                vkvv_release_context_payload(drv, static_cast<VkvvContext *>(object->payload));
                 break;
             case VKVV_OBJECT_BUFFER: {
                 auto *buffer = static_cast<VkvvBuffer *>(object->payload);
@@ -79,6 +79,7 @@ static VAStatus vkvvTerminate(VADriverContextP ctx) {
     if (drv != NULL) {
         release_owned_payloads(drv);
         vkvv_object_clear(drv);
+        vkvv_vulkan_h264_session_destroy(drv->vulkan, drv->h264_export_session);
         std::free(drv);
         ctx->pDriverData = NULL;
     }
@@ -167,7 +168,6 @@ static VAStatus vkvvDriverInit(VADriverContextP ctx) {
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
     drv->next_id = 1;
-    drv->next_dpb_slot = 0;
     vkvv_probe_vulkan_video(&drv->caps);
     if (drv->caps.h264) {
         char reason[512] = {};

@@ -289,9 +289,41 @@ bool enumerate_h264_drm_format_modifiers(VulkanRuntime *runtime, std::vector<uin
         modifiers);
 }
 
-bool bind_h264_session_memory(VulkanRuntime *runtime, char *reason, size_t reason_size) {
+void destroy_video_session(VulkanRuntime *runtime, VideoSession *session) {
+    if (session == nullptr) {
+        return;
+    }
+    if (runtime != nullptr && session->session != VK_NULL_HANDLE && runtime->destroy_video_session != nullptr) {
+        runtime->destroy_video_session(runtime->device, session->session, nullptr);
+        session->session = VK_NULL_HANDLE;
+    }
+    if (runtime != nullptr) {
+        for (VkDeviceMemory memory : session->memory) {
+            vkFreeMemory(runtime->device, memory, nullptr);
+        }
+    }
+    session->memory.clear();
+    session->memory_bytes = 0;
+    session->key = {};
+    session->initialized = false;
+}
+
+void destroy_h264_video_session(VulkanRuntime *runtime, H264VideoSession *session) {
+    if (session == nullptr) {
+        return;
+    }
+    destroy_video_session(runtime, &session->video);
+    session->bitstream_offset_alignment = 1;
+    session->bitstream_size_alignment = 1;
+    session->max_level = STD_VIDEO_H264_LEVEL_IDC_5_2;
+    session->decode_flags = 0;
+    session->max_dpb_slots = 0;
+    session->max_active_reference_pictures = 0;
+}
+
+bool bind_video_session_memory(VulkanRuntime *runtime, VideoSession *session, char *reason, size_t reason_size) {
     uint32_t count = 0;
-    VkResult result = runtime->get_video_session_memory_requirements(runtime->device, runtime->h264_session, &count, nullptr);
+    VkResult result = runtime->get_video_session_memory_requirements(runtime->device, session->session, &count, nullptr);
     if (result != VK_SUCCESS) {
         std::snprintf(reason, reason_size, "vkGetVideoSessionMemoryRequirementsKHR failed: %d", result);
         return false;
@@ -304,7 +336,7 @@ bool bind_h264_session_memory(VulkanRuntime *runtime, char *reason, size_t reaso
     for (VkVideoSessionMemoryRequirementsKHR &requirement : requirements) {
         requirement.sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_MEMORY_REQUIREMENTS_KHR;
     }
-    result = runtime->get_video_session_memory_requirements(runtime->device, runtime->h264_session, &count, requirements.data());
+    result = runtime->get_video_session_memory_requirements(runtime->device, session->session, &count, requirements.data());
     if (result != VK_SUCCESS) {
         std::snprintf(reason, reason_size, "vkGetVideoSessionMemoryRequirementsKHR failed: %d", result);
         return false;
@@ -313,7 +345,7 @@ bool bind_h264_session_memory(VulkanRuntime *runtime, char *reason, size_t reaso
 
     std::vector<VkBindVideoSessionMemoryInfoKHR> binds;
     binds.reserve(requirements.size());
-    runtime->h264_session_memory.reserve(requirements.size());
+    session->memory.reserve(requirements.size());
 
     for (const VkVideoSessionMemoryRequirementsKHR &requirement : requirements) {
         uint32_t memory_type_index = 0;
@@ -335,7 +367,7 @@ bool bind_h264_session_memory(VulkanRuntime *runtime, char *reason, size_t reaso
             std::snprintf(reason, reason_size, "vkAllocateMemory for H.264 session failed: %d", result);
             return false;
         }
-        runtime->h264_session_memory.push_back(memory);
+        session->memory.push_back(memory);
 
         VkBindVideoSessionMemoryInfoKHR bind{};
         bind.sType = VK_STRUCTURE_TYPE_BIND_VIDEO_SESSION_MEMORY_INFO_KHR;
@@ -344,9 +376,10 @@ bool bind_h264_session_memory(VulkanRuntime *runtime, char *reason, size_t reaso
         bind.memoryOffset = 0;
         bind.memorySize = requirement.memoryRequirements.size;
         binds.push_back(bind);
+        session->memory_bytes += requirement.memoryRequirements.size;
     }
 
-    result = runtime->bind_video_session_memory(runtime->device, runtime->h264_session,
+    result = runtime->bind_video_session_memory(runtime->device, session->session,
                                                static_cast<uint32_t>(binds.size()), binds.data());
     if (result != VK_SUCCESS) {
         std::snprintf(reason, reason_size, "vkBindVideoSessionMemoryKHR failed: %d", result);
@@ -599,7 +632,13 @@ void destroy_upload_buffer(VulkanRuntime *runtime, UploadBuffer *upload) {
     upload->size = 0;
 }
 
-bool create_upload_buffer(VulkanRuntime *runtime, const VkvvH264DecodeInput *input, UploadBuffer *upload, char *reason, size_t reason_size) {
+bool create_upload_buffer(
+        VulkanRuntime *runtime,
+        const H264VideoSession *session,
+        const VkvvH264DecodeInput *input,
+        UploadBuffer *upload,
+        char *reason,
+        size_t reason_size) {
     VideoProfileChain profile_chain;
     VkVideoProfileListInfoKHR profile_list{};
     profile_list.sType = VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR;
@@ -607,7 +646,7 @@ bool create_upload_buffer(VulkanRuntime *runtime, const VkvvH264DecodeInput *inp
     profile_list.pProfiles = &profile_chain.profile;
 
     const VkDeviceSize requested_size = std::max<VkDeviceSize>(1, input->bitstream_size);
-    upload->size = align_up(requested_size, runtime->h264_bitstream_size_alignment);
+    upload->size = align_up(requested_size, session->bitstream_size_alignment);
 
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -740,9 +779,11 @@ bool submit_command_buffer_and_wait(VulkanRuntime *runtime, char *reason, size_t
 
 bool reset_h264_session(
         VulkanRuntime *runtime,
+        H264VideoSession *session,
         VkVideoSessionParametersKHR parameters,
         char *reason,
         size_t reason_size) {
+    std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
     if (!ensure_command_resources(runtime, reason, reason_size)) {
         return false;
     }
@@ -769,7 +810,7 @@ bool reset_h264_session(
 
     VkVideoBeginCodingInfoKHR video_begin{};
     video_begin.sType = VK_STRUCTURE_TYPE_VIDEO_BEGIN_CODING_INFO_KHR;
-    video_begin.videoSession = runtime->h264_session;
+    video_begin.videoSession = session->video.session;
     video_begin.videoSessionParameters = parameters;
     runtime->cmd_begin_video_coding(runtime->command_buffer, &video_begin);
 
@@ -792,7 +833,7 @@ bool reset_h264_session(
         return false;
     }
 
-    runtime->h264_session_initialized = true;
+    session->video.initialized = true;
     return true;
 }
 
@@ -1010,6 +1051,8 @@ bool copy_surface_to_export_resource(VulkanRuntime *runtime, SurfaceResource *so
     if (!ensure_export_resource(runtime, source, reason, reason_size)) {
         return false;
     }
+
+    std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
     if (!ensure_command_resources(runtime, reason, reason_size)) {
         return false;
     }

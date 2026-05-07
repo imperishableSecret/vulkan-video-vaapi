@@ -16,6 +16,7 @@ libva_drm_dep = dependency('libva-drm')
 libdrm_dep = dependency('libdrm')
 vulkan_dep = dependency('vulkan')
 exports_map = meson.current_source_dir() / 'src' / 'exports.map'
+src_inc = include_directories('src')
 
 driver_sources = files(
   'src/driver.cpp',
@@ -57,21 +58,51 @@ executable(
   install: false,
 )
 
-executable(
-  'vkvv-export-smoke',
+session_smoke = executable(
+  'vkvv-session-smoke',
   files(
-    'src/export_smoke.cpp',
+    'tests/smoke/session_smoke.cpp',
     'src/object.cpp',
     'src/vulkan_runtime.cpp',
     'src/vulkan_h264.cpp',
   ),
+  include_directories: src_inc,
   dependencies: [libva_dep, libdrm_dep, vulkan_dep],
   install: false,
 )
 
-executable(
+export_smoke = executable(
+  'vkvv-export-smoke',
+  files(
+    'tests/smoke/export_smoke.cpp',
+    'src/object.cpp',
+    'src/vulkan_runtime.cpp',
+    'src/vulkan_h264.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [libva_dep, libdrm_dep, vulkan_dep],
+  install: false,
+)
+
+lifetime_smoke = executable(
   'vkvv-lifetime-smoke',
-  files('src/lifetime_smoke.cpp'),
+  files('tests/smoke/lifetime_smoke.cpp'),
   dependencies: [libva_dep, libva_drm_dep],
   install: false,
 )
+
+multi_context_smoke = executable(
+  'vkvv-multi-context-smoke',
+  files('tests/smoke/multi_context_smoke.cpp'),
+  dependencies: [libva_dep, libva_drm_dep],
+  install: false,
+)
+
+driver_test_env = environment()
+driver_test_env.set('LIBVA_DRIVER_NAME', 'nvidia_vulkan')
+driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
+
+test('smoke-session', session_smoke, is_parallel: false, timeout: 30)
+test('smoke-export', export_smoke, is_parallel: false, timeout: 30)
+test('smoke-lifetime', lifetime_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
+test('smoke-multi-context', multi_context_smoke, env: driver_test_env, is_parallel: false, timeout: 30)

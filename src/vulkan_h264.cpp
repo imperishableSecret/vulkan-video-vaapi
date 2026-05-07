@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <mutex>
+#include <new>
 #include <vector>
 
 namespace vkvv {
@@ -81,11 +83,11 @@ bool h264_picture_is_invalid(const VAPictureH264 &picture) {
            picture.picture_id == VA_INVALID_ID;
 }
 
-int allocate_dpb_slot(VkvvDriver *drv, const bool used_slots[max_h264_dpb_slots]) {
+int allocate_dpb_slot(VkvvContext *vctx, const bool used_slots[max_h264_dpb_slots]) {
     for (uint32_t attempt = 0; attempt < max_h264_dpb_slots; attempt++) {
-        const uint32_t slot = (drv->next_dpb_slot + attempt) % max_h264_dpb_slots;
+        const uint32_t slot = (vctx->next_dpb_slot + attempt) % max_h264_dpb_slots;
         if (!used_slots[slot]) {
-            drv->next_dpb_slot = (slot + 1) % max_h264_dpb_slots;
+            vctx->next_dpb_slot = (slot + 1) % max_h264_dpb_slots;
             return static_cast<int>(slot);
         }
     }
@@ -177,6 +179,16 @@ bool choose_h264_format(VulkanRuntime *runtime, const VkVideoProfileInfoKHR *pro
     return true;
 }
 
+VkExtent2D h264_session_extent(VkExtent2D requested, const VkVideoCapabilitiesKHR &capabilities) {
+    constexpr uint32_t min_nvidia_h264_session_dimension = 256;
+    return {
+        std::min(std::max({requested.width, capabilities.minCodedExtent.width, min_nvidia_h264_session_dimension}),
+                 capabilities.maxCodedExtent.width),
+        std::min(std::max({requested.height, capabilities.minCodedExtent.height, min_nvidia_h264_session_dimension}),
+                 capabilities.maxCodedExtent.height),
+    };
+}
+
 struct H264StdParameters {
     StdVideoH264SequenceParameterSet sps{};
     StdVideoH264SequenceParameterSetVui vui{};
@@ -187,7 +199,7 @@ struct H264StdParameters {
 };
 
 void build_h264_std_parameters(
-        VulkanRuntime *runtime,
+        H264VideoSession *session,
         VAProfile profile,
         const VkvvH264DecodeInput *input,
         H264StdParameters *std_params) {
@@ -238,7 +250,7 @@ void build_h264_std_parameters(
     sps.profile_idc = std_profile_from_va(profile);
     sps.level_idc = derive_h264_level_idc(pic->picture_width_in_mbs_minus1 + 1,
                                           pic_height_in_map_units_minus1 + 1,
-                                          runtime->h264_max_level);
+                                          session->max_level);
     sps.chroma_format_idc = std_chroma_from_va(pic->seq_fields.bits.chroma_format_idc);
     sps.seq_parameter_set_id = 0;
     sps.bit_depth_luma_minus8 = pic->bit_depth_luma_minus8;
@@ -309,6 +321,7 @@ void build_h264_std_parameters(
 
 bool create_h264_session_parameters(
         VulkanRuntime *runtime,
+        H264VideoSession *session,
         const H264StdParameters *std_params,
         VkVideoSessionParametersKHR *parameters,
         char *reason,
@@ -329,7 +342,7 @@ bool create_h264_session_parameters(
     VkVideoSessionParametersCreateInfoKHR create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_PARAMETERS_CREATE_INFO_KHR;
     create_info.pNext = &h264_info;
-    create_info.videoSession = runtime->h264_session;
+    create_info.videoSession = session->video.session;
 
     VkResult result = runtime->create_video_session_parameters(runtime->device, &create_info, nullptr, parameters);
     if (result != VK_SUCCESS) {
@@ -341,6 +354,7 @@ bool create_h264_session_parameters(
 
 bool create_empty_h264_session_parameters(
         VulkanRuntime *runtime,
+        H264VideoSession *session,
         VkVideoSessionParametersKHR *parameters,
         char *reason,
         size_t reason_size) {
@@ -350,7 +364,7 @@ bool create_empty_h264_session_parameters(
     VkVideoSessionParametersCreateInfoKHR create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_PARAMETERS_CREATE_INFO_KHR;
     create_info.pNext = &h264_info;
-    create_info.videoSession = runtime->h264_session;
+    create_info.videoSession = session->video.session;
 
     VkResult result = runtime->create_video_session_parameters(runtime->device, &create_info, nullptr, parameters);
     if (result != VK_SUCCESS) {
@@ -364,10 +378,32 @@ bool create_empty_h264_session_parameters(
 
 using namespace vkvv;
 
-VAStatus vkvv_vulkan_ensure_h264_session(void *runtime_ptr, unsigned int width, unsigned int height, char *reason, size_t reason_size) {
+void *vkvv_vulkan_h264_session_create(void) {
+    try {
+        return new H264VideoSession();
+    } catch (const std::bad_alloc &) {
+        return nullptr;
+    }
+}
+
+void vkvv_vulkan_h264_session_destroy(void *runtime_ptr, void *session_ptr) {
     auto *runtime = static_cast<VulkanRuntime *>(runtime_ptr);
-    if (runtime == nullptr) {
-        std::snprintf(reason, reason_size, "missing Vulkan runtime");
+    auto *session = static_cast<H264VideoSession *>(session_ptr);
+    destroy_h264_video_session(runtime, session);
+    delete session;
+}
+
+VAStatus vkvv_vulkan_ensure_h264_session(
+        void *runtime_ptr,
+        void *session_ptr,
+        unsigned int width,
+        unsigned int height,
+        char *reason,
+        size_t reason_size) {
+    auto *runtime = static_cast<VulkanRuntime *>(runtime_ptr);
+    auto *session = static_cast<H264VideoSession *>(session_ptr);
+    if (runtime == nullptr || session == nullptr) {
+        std::snprintf(reason, reason_size, "missing Vulkan H.264 session state");
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
 
@@ -375,16 +411,20 @@ VAStatus vkvv_vulkan_ensure_h264_session(void *runtime_ptr, unsigned int width, 
         .width = round_up_16(width),
         .height = round_up_16(height),
     };
-    if (runtime->h264_session != VK_NULL_HANDLE &&
-        runtime->h264_extent.width >= extent.width &&
-        runtime->h264_extent.height >= extent.height) {
-        std::snprintf(reason, reason_size, "H.264 video session ready: %ux%u format=%d inline_params=%u",
-                      runtime->h264_extent.width, runtime->h264_extent.height,
-                      runtime->h264_picture_format, runtime->video_maintenance2);
+    if (session->video.session != VK_NULL_HANDLE &&
+        session->video.key.max_coded_extent.width >= extent.width &&
+        session->video.key.max_coded_extent.height >= extent.height) {
+        std::snprintf(reason, reason_size,
+                      "H.264 video session ready: codec=h264 actual=%ux%u format=%d mem=%llu inline_params=%u",
+                      session->video.key.max_coded_extent.width,
+                      session->video.key.max_coded_extent.height,
+                      runtime->h264_picture_format,
+                      static_cast<unsigned long long>(session->video.memory_bytes),
+                      runtime->video_maintenance2);
         return VA_STATUS_SUCCESS;
     }
 
-    runtime->destroy_h264_session();
+    destroy_h264_video_session(runtime, session);
 
     VideoProfileChain profile_chain;
     VideoCapabilitiesChain capabilities;
@@ -393,10 +433,10 @@ VAStatus vkvv_vulkan_ensure_h264_session(void *runtime_ptr, unsigned int width, 
         std::snprintf(reason, reason_size, "vkGetPhysicalDeviceVideoCapabilitiesKHR(H.264) failed: %d", result);
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
-    runtime->h264_bitstream_offset_alignment = std::max<VkDeviceSize>(1, capabilities.video.minBitstreamBufferOffsetAlignment);
-    runtime->h264_bitstream_size_alignment = std::max<VkDeviceSize>(1, capabilities.video.minBitstreamBufferSizeAlignment);
-    runtime->h264_decode_flags = capabilities.decode.flags;
-    runtime->h264_max_level = capabilities.h264.maxLevelIdc;
+    session->bitstream_offset_alignment = std::max<VkDeviceSize>(1, capabilities.video.minBitstreamBufferOffsetAlignment);
+    session->bitstream_size_alignment = std::max<VkDeviceSize>(1, capabilities.video.minBitstreamBufferSizeAlignment);
+    session->decode_flags = capabilities.decode.flags;
+    session->max_level = capabilities.h264.maxLevelIdc;
     if (extent.width > capabilities.video.maxCodedExtent.width ||
         extent.height > capabilities.video.maxCodedExtent.height) {
         std::snprintf(reason, reason_size, "H.264 coded extent %ux%u exceeds Vulkan limit %ux%u",
@@ -411,7 +451,7 @@ VAStatus vkvv_vulkan_ensure_h264_session(void *runtime_ptr, unsigned int width, 
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
 
-    const VkExtent2D session_extent = capabilities.video.maxCodedExtent;
+    const VkExtent2D session_extent = h264_session_extent(extent, capabilities.video);
 
     VkVideoSessionCreateInfoKHR session_info{};
     session_info.sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_CREATE_INFO_KHR;
@@ -427,40 +467,58 @@ VAStatus vkvv_vulkan_ensure_h264_session(void *runtime_ptr, unsigned int width, 
         session_info.flags |= VK_VIDEO_SESSION_CREATE_INLINE_SESSION_PARAMETERS_BIT_KHR;
     }
 
-    result = runtime->create_video_session(runtime->device, &session_info, nullptr, &runtime->h264_session);
+    result = runtime->create_video_session(runtime->device, &session_info, nullptr, &session->video.session);
     if (result != VK_SUCCESS) {
         std::snprintf(reason, reason_size, "vkCreateVideoSessionKHR(H.264) failed: %d", result);
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
 
-    if (!bind_h264_session_memory(runtime, reason, reason_size)) {
-        runtime->destroy_h264_session();
+    session->video.key = {
+        .codec_operation = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+        .codec_profile = static_cast<uint32_t>(profile_chain.h264.stdProfileIdc),
+        .picture_format = picture_format,
+        .reference_picture_format = picture_format,
+        .max_coded_extent = session_extent,
+        .chroma_subsampling = profile_chain.profile.chromaSubsampling,
+        .luma_bit_depth = profile_chain.profile.lumaBitDepth,
+        .chroma_bit_depth = profile_chain.profile.chromaBitDepth,
+    };
+
+    if (!bind_video_session_memory(runtime, &session->video, reason, reason_size)) {
+        destroy_h264_video_session(runtime, session);
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
 
-    runtime->h264_extent = session_extent;
     runtime->h264_picture_format = picture_format;
-    std::snprintf(reason, reason_size, "H.264 video session ready: %ux%u format=%d dpb=%u refs=%u inline_params=%u",
-                  session_extent.width, session_extent.height, picture_format,
+    session->max_dpb_slots = session_info.maxDpbSlots;
+    session->max_active_reference_pictures = session_info.maxActiveReferencePictures;
+    std::snprintf(reason, reason_size,
+                  "H.264 video session ready: codec=h264 requested=%ux%u actual=%ux%u format=%d dpb=%u refs=%u mem=%llu inline_params=%u",
+                  extent.width, extent.height, session_extent.width, session_extent.height, picture_format,
                   session_info.maxDpbSlots, session_info.maxActiveReferencePictures,
+                  static_cast<unsigned long long>(session->video.memory_bytes),
                   runtime->video_maintenance2);
     return VA_STATUS_SUCCESS;
 }
 
 VAStatus vkvv_vulkan_decode_h264(
         void *runtime_ptr,
+        void *session_ptr,
         VkvvDriver *drv,
+        VkvvContext *vctx,
         VkvvSurface *target,
         VAProfile profile,
         const VkvvH264DecodeInput *input,
         char *reason,
         size_t reason_size) {
     auto *runtime = static_cast<VulkanRuntime *>(runtime_ptr);
-    if (runtime == nullptr || drv == nullptr || target == nullptr || input == nullptr || input->pic == nullptr) {
+    auto *session = static_cast<H264VideoSession *>(session_ptr);
+    if (runtime == nullptr || session == nullptr || drv == nullptr || vctx == nullptr ||
+        target == nullptr || input == nullptr || input->pic == nullptr) {
         std::snprintf(reason, reason_size, "missing H.264 decode state");
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
-    if (runtime->h264_session == VK_NULL_HANDLE) {
+    if (session->video.session == VK_NULL_HANDLE) {
         std::snprintf(reason, reason_size, "missing H.264 video session");
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
@@ -476,7 +534,7 @@ VAStatus vkvv_vulkan_decode_h264(
         std::snprintf(reason, reason_size, "H.264 Vulkan path currently supports only progressive pictures");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
-    if ((runtime->h264_decode_flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR) == 0) {
+    if ((session->decode_flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR) == 0) {
         std::snprintf(reason, reason_size, "H.264 decode requires coincident DPB/output support in this prototype");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
@@ -551,7 +609,7 @@ VAStatus vkvv_vulkan_decode_h264(
     const int32_t current_top_poc = input->pic->CurrPic.TopFieldOrderCnt;
     const int32_t current_bottom_poc = input->pic->CurrPic.BottomFieldOrderCnt;
     if (target->dpb_slot < 0 || target->dpb_slot >= static_cast<int>(max_h264_dpb_slots) || used_slots[target->dpb_slot]) {
-        const int slot = allocate_dpb_slot(drv, used_slots);
+        const int slot = allocate_dpb_slot(vctx, used_slots);
         if (slot < 0) {
             std::snprintf(reason, reason_size, "no free H.264 DPB slot for current picture");
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
@@ -561,26 +619,26 @@ VAStatus vkvv_vulkan_decode_h264(
     used_slots[target->dpb_slot] = true;
 
     H264StdParameters std_params{};
-    build_h264_std_parameters(runtime, profile, input, &std_params);
+    build_h264_std_parameters(session, profile, input, &std_params);
 
     const bool use_inline_parameters = runtime->video_maintenance2;
     VkVideoSessionParametersKHR parameters = VK_NULL_HANDLE;
     if (!use_inline_parameters &&
-        !create_h264_session_parameters(runtime, &std_params, &parameters, reason, reason_size)) {
+        !create_h264_session_parameters(runtime, session, &std_params, &parameters, reason, reason_size)) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
-    if (!runtime->h264_session_initialized) {
+    if (!session->video.initialized) {
         VkVideoSessionParametersKHR reset_parameters = VK_NULL_HANDLE;
         bool created_reset_parameters = false;
         if (!use_inline_parameters) {
-            if (!create_empty_h264_session_parameters(runtime, &reset_parameters, reason, reason_size)) {
+            if (!create_empty_h264_session_parameters(runtime, session, &reset_parameters, reason, reason_size)) {
                 runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
                 return VA_STATUS_ERROR_OPERATION_FAILED;
             }
             created_reset_parameters = true;
         }
-        const bool reset = reset_h264_session(runtime, reset_parameters, reason, reason_size);
+        const bool reset = reset_h264_session(runtime, session, reset_parameters, reason, reason_size);
         if (created_reset_parameters) {
             runtime->destroy_video_session_parameters(runtime->device, reset_parameters, nullptr);
         }
@@ -591,11 +649,12 @@ VAStatus vkvv_vulkan_decode_h264(
     }
 
     UploadBuffer upload{};
-    if (!create_upload_buffer(runtime, input, &upload, reason, reason_size)) {
+    if (!create_upload_buffer(runtime, session, input, &upload, reason, reason_size)) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
 
+    std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
     if (!ensure_command_resources(runtime, reason, reason_size)) {
         destroy_upload_buffer(runtime, &upload);
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
@@ -675,7 +734,7 @@ VAStatus vkvv_vulkan_decode_h264(
 
     VkVideoBeginCodingInfoKHR video_begin{};
     video_begin.sType = VK_STRUCTURE_TYPE_VIDEO_BEGIN_CODING_INFO_KHR;
-    video_begin.videoSession = runtime->h264_session;
+    video_begin.videoSession = session->video.session;
     video_begin.videoSessionParameters = parameters;
     video_begin.referenceSlotCount = begin_reference_count;
     video_begin.pReferenceSlots = begin_reference_count > 0 ? begin_reference_slots.data() : nullptr;
