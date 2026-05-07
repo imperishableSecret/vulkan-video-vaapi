@@ -80,6 +80,10 @@ typedef struct {
     unsigned int max_width;
     unsigned int max_height;
     bool exportable;
+    bool hardware_supported;
+    bool decode_wired;
+    bool export_wired;
+    bool advertise;
 } VkvvProfileCapability;
 
 typedef enum {

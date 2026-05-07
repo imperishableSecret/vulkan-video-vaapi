@@ -29,13 +29,15 @@ VkvvVideoProfileLimits normalized_limits(VkvvVideoProfileLimits limits) {
     return limits;
 }
 
-bool add_profile_capability(
+bool add_profile_record(
         VkvvDriver *drv,
         VAProfile profile,
         VAEntrypoint entrypoint,
         unsigned int rt_format,
         VkvvVideoProfileLimits limits,
-        bool exportable) {
+        bool hardware_supported,
+        bool decode_wired,
+        bool export_wired) {
     if (drv->profile_cap_count >= VKVV_MAX_PROFILES) {
         return false;
     }
@@ -52,7 +54,11 @@ bool add_profile_capability(
     cap->min_height = limits.min_height;
     cap->max_width = limits.max_width;
     cap->max_height = limits.max_height;
-    cap->exportable = exportable;
+    cap->hardware_supported = hardware_supported;
+    cap->decode_wired = decode_wired;
+    cap->export_wired = export_wired;
+    cap->advertise = hardware_supported && decode_wired && export_wired;
+    cap->exportable = cap->advertise && export_wired;
     return true;
 }
 
@@ -80,17 +86,34 @@ void vkvv_init_profile_capabilities(VkvvDriver *drv) {
     }
 
     drv->profile_cap_count = 0;
-    if (drv->caps.h264 && drv->caps.surface_export) {
-        add_profile_capability(
-            drv, VAProfileH264ConstrainedBaseline, VAEntrypointVLD,
-            VA_RT_FORMAT_YUV420, drv->caps.h264_limits, true);
-        add_profile_capability(
-            drv, VAProfileH264Main, VAEntrypointVLD,
-            VA_RT_FORMAT_YUV420, drv->caps.h264_limits, true);
-        add_profile_capability(
-            drv, VAProfileH264High, VAEntrypointVLD,
-            VA_RT_FORMAT_YUV420, drv->caps.h264_limits, true);
-    }
+    add_profile_record(
+        drv, VAProfileH264ConstrainedBaseline, VAEntrypointVLD,
+        VA_RT_FORMAT_YUV420, drv->caps.h264_limits,
+        drv->caps.h264, true, drv->caps.surface_export);
+    add_profile_record(
+        drv, VAProfileH264Main, VAEntrypointVLD,
+        VA_RT_FORMAT_YUV420, drv->caps.h264_limits,
+        drv->caps.h264, true, drv->caps.surface_export);
+    add_profile_record(
+        drv, VAProfileH264High, VAEntrypointVLD,
+        VA_RT_FORMAT_YUV420, drv->caps.h264_limits,
+        drv->caps.h264, true, drv->caps.surface_export);
+    add_profile_record(
+        drv, VAProfileHEVCMain, VAEntrypointVLD,
+        VA_RT_FORMAT_YUV420, drv->caps.h265_limits,
+        drv->caps.h265, false, drv->caps.surface_export);
+    add_profile_record(
+        drv, VAProfileHEVCMain10, VAEntrypointVLD,
+        VA_RT_FORMAT_YUV420_10, drv->caps.h265_10_limits,
+        drv->caps.h265_10, false, false);
+    add_profile_record(
+        drv, VAProfileVP9Profile0, VAEntrypointVLD,
+        VA_RT_FORMAT_YUV420, drv->caps.vp9_limits,
+        drv->caps.vp9, false, drv->caps.surface_export);
+    add_profile_record(
+        drv, VAProfileAV1Profile0, VAEntrypointVLD,
+        VA_RT_FORMAT_YUV420, drv->caps.av1_limits,
+        drv->caps.av1, false, drv->caps.surface_export);
 }
 
 const VkvvProfileCapability *vkvv_profile_capability(const VkvvDriver *drv, VAProfile profile) {
@@ -98,7 +121,7 @@ const VkvvProfileCapability *vkvv_profile_capability(const VkvvDriver *drv, VAPr
         return NULL;
     }
     for (unsigned int i = 0; i < drv->profile_cap_count; i++) {
-        if (drv->profile_caps[i].profile == profile) {
+        if (drv->profile_caps[i].advertise && drv->profile_caps[i].profile == profile) {
             return &drv->profile_caps[i];
         }
     }
@@ -144,6 +167,9 @@ unsigned int vkvv_select_driver_rt_format(const VkvvDriver *drv, unsigned int re
     }
 
     for (unsigned int i = 0; i < drv->profile_cap_count; i++) {
+        if (!drv->profile_caps[i].advertise) {
+            continue;
+        }
         const unsigned int selected = vkvv_select_rt_format(&drv->profile_caps[i], requested);
         if (selected != 0) {
             return selected;
@@ -208,6 +234,9 @@ unsigned int vkvv_query_image_formats(
     unsigned int count = 0;
     for (unsigned int i = 0; i < drv->profile_cap_count && count < max_formats; i++) {
         const VkvvProfileCapability *cap = &drv->profile_caps[i];
+        if (!cap->advertise) {
+            continue;
+        }
         if (!image_format_seen(format_list, count, cap->fourcc)) {
             fill_image_format(&format_list[count++], cap->fourcc, cap->bit_depth);
         }

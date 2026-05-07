@@ -4,11 +4,15 @@
 
 VAStatus vkvvQueryConfigProfiles(VADriverContextP ctx, VAProfile *profile_list, int *num_profiles) {
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
+    unsigned int count = 0;
     for (unsigned int i = 0; i < drv->profile_cap_count; i++) {
-        profile_list[i] = drv->profile_caps[i].profile;
+        if (!drv->profile_caps[i].advertise) {
+            continue;
+        }
+        profile_list[count++] = drv->profile_caps[i].profile;
     }
 
-    *num_profiles = static_cast<int>(drv->profile_cap_count);
+    *num_profiles = static_cast<int>(count);
     return VA_STATUS_SUCCESS;
 }
 

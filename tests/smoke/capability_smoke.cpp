@@ -151,6 +151,32 @@ bool check_h264_profile(VADisplay display, VAProfile profile) {
     return ok;
 }
 
+bool check_profile_not_advertised(VADisplay display, VAProfile profile, const char *name) {
+    bool ok = true;
+
+    VAEntrypoint entrypoints[4] = {};
+    int entrypoint_count = 0;
+    ok = expect_status(
+             vaQueryConfigEntrypoints(display, profile, entrypoints, &entrypoint_count),
+             VA_STATUS_ERROR_UNSUPPORTED_PROFILE,
+             name) && ok;
+
+    VAConfigAttrib attrib{};
+    attrib.type = VAConfigAttribRTFormat;
+    ok = expect_status(
+             vaGetConfigAttributes(display, profile, VAEntrypointVLD, &attrib, 1),
+             VA_STATUS_ERROR_UNSUPPORTED_PROFILE,
+             name) && ok;
+
+    VAConfigID config = VA_INVALID_ID;
+    ok = expect_status(
+             vaCreateConfig(display, profile, VAEntrypointVLD, nullptr, 0, &config),
+             VA_STATUS_ERROR_UNSUPPORTED_PROFILE,
+             name) && ok;
+
+    return ok;
+}
+
 } // namespace
 
 int main(void) {
@@ -196,13 +222,10 @@ int main(void) {
     ok = check_h264_profile(display, VAProfileH264Main) && ok;
     ok = check_h264_profile(display, VAProfileH264High) && ok;
 
-    VAEntrypoint unsupported_entrypoints[4] = {};
-    int unsupported_entrypoint_count = 0;
-    ok = expect_status(
-             vaQueryConfigEntrypoints(display, VAProfileHEVCMain,
-                                      unsupported_entrypoints, &unsupported_entrypoint_count),
-             VA_STATUS_ERROR_UNSUPPORTED_PROFILE,
-             "vaQueryConfigEntrypoints(HEVC)") && ok;
+    ok = check_profile_not_advertised(display, VAProfileHEVCMain, "HEVC Main advertising") && ok;
+    ok = check_profile_not_advertised(display, VAProfileHEVCMain10, "HEVC Main10 advertising") && ok;
+    ok = check_profile_not_advertised(display, VAProfileVP9Profile0, "VP9 Profile0 advertising") && ok;
+    ok = check_profile_not_advertised(display, VAProfileAV1Profile0, "AV1 Profile0 advertising") && ok;
 
     VAImageFormat image_formats[4] = {};
     int image_format_count = 0;
