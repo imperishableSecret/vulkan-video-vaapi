@@ -50,7 +50,22 @@ VAStatus vkvv_vulkan_decode_h264(
         round_up_16(static_cast<uint32_t>(input->pic->picture_width_in_mbs_minus1 + 1) * 16),
         round_up_16(static_cast<uint32_t>(input->pic->picture_height_in_mbs_minus1 + 1) * 16),
     };
-    if (!ensure_surface_resource(runtime, target, coded_extent, reason, reason_size)) {
+    const DecodeImageKey decode_key = {
+        .codec_operation = session->video.key.codec_operation,
+        .codec_profile = session->video.key.codec_profile,
+        .picture_format = session->video.key.picture_format,
+        .reference_picture_format = session->video.key.reference_picture_format,
+        .va_rt_format = target->rt_format,
+        .va_fourcc = target->fourcc,
+        .coded_extent = coded_extent,
+        .usage = h264_surface_image_usage(),
+        .create_flags = runtime->h264_image_create_flags,
+        .tiling = runtime->h264_image_tiling,
+        .chroma_subsampling = session->video.key.chroma_subsampling,
+        .luma_bit_depth = session->video.key.luma_bit_depth,
+        .chroma_bit_depth = session->video.key.chroma_bit_depth,
+    };
+    if (!ensure_surface_resource(runtime, target, decode_key, reason, reason_size)) {
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
 

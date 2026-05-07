@@ -5,6 +5,32 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+namespace {
+
+vkvv::DecodeImageKey h264_decode_key(
+        const vkvv::VulkanRuntime *runtime,
+        const vkvv::H264VideoSession *session,
+        const VkvvSurface *surface,
+        VkExtent2D coded_extent) {
+    return {
+        .codec_operation = session->video.key.codec_operation,
+        .codec_profile = session->video.key.codec_profile,
+        .picture_format = session->video.key.picture_format,
+        .reference_picture_format = session->video.key.reference_picture_format,
+        .va_rt_format = surface->rt_format,
+        .va_fourcc = surface->fourcc,
+        .coded_extent = coded_extent,
+        .usage = vkvv::h264_surface_image_usage(),
+        .create_flags = runtime->h264_image_create_flags,
+        .tiling = runtime->h264_image_tiling,
+        .chroma_subsampling = session->video.key.chroma_subsampling,
+        .luma_bit_depth = session->video.key.luma_bit_depth,
+        .chroma_bit_depth = session->video.key.chroma_bit_depth,
+    };
+}
+
+} // namespace
+
 int main(void) {
     char reason[512] = {};
     void *runtime = vkvv_vulkan_runtime_create(reason, sizeof(reason));
@@ -162,7 +188,9 @@ int main(void) {
         return 1;
     }
 
-    if (!vkvv::ensure_surface_resource(typed_runtime, &surface, {64, 64}, reason, sizeof(reason))) {
+    auto *typed_session = static_cast<vkvv::H264VideoSession *>(session);
+    const vkvv::DecodeImageKey decode_key = h264_decode_key(typed_runtime, typed_session, &surface, {64, 64});
+    if (!vkvv::ensure_surface_resource(typed_runtime, &surface, decode_key, reason, sizeof(reason))) {
         std::fprintf(stderr, "%s\n", reason);
         if (first_fd >= 0) {
             close(first_fd);
@@ -176,7 +204,12 @@ int main(void) {
     if (resource == nullptr ||
         resource->image == VK_NULL_HANDLE ||
         resource->allocation_size == 0 ||
-        resource->export_resource.memory != first_export_memory) {
+        resource->export_resource.memory != first_export_memory ||
+        resource->decode_key.codec_operation != VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR ||
+        resource->decode_key.picture_format != typed_session->video.key.picture_format ||
+        resource->decode_key.va_fourcc != VA_FOURCC_NV12 ||
+        resource->decode_key.coded_extent.width != 64 ||
+        resource->decode_key.coded_extent.height != 64) {
         std::fprintf(stderr, "decode image creation did not preserve the pre-exported shadow image\n");
         if (first_fd >= 0) {
             close(first_fd);
@@ -188,6 +221,19 @@ int main(void) {
     }
 
     surface.decoded = true;
+    vkvv::DecodeImageKey larger_key = decode_key;
+    larger_key.coded_extent = {128, 64};
+    if (vkvv::ensure_surface_resource(typed_runtime, &surface, larger_key, reason, sizeof(reason))) {
+        std::fprintf(stderr, "decoded reference accepted a changed decode image key\n");
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+
     status = vkvv_vulkan_refresh_surface_export(runtime, &surface, reason, sizeof(reason));
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {

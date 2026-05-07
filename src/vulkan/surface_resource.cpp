@@ -43,13 +43,30 @@ bool enumerate_drm_format_modifiers(
     return !modifiers->empty();
 }
 
-bool enumerate_h264_drm_format_modifiers(VulkanRuntime *runtime, std::vector<uint64_t> *modifiers) {
+bool enumerate_decode_drm_format_modifiers(VulkanRuntime *runtime, const DecodeImageKey &key, std::vector<uint64_t> *modifiers) {
     return enumerate_drm_format_modifiers(
         runtime,
-        runtime->h264_picture_format,
+        key.picture_format,
         VK_FORMAT_FEATURE_2_VIDEO_DECODE_OUTPUT_BIT_KHR |
             VK_FORMAT_FEATURE_2_VIDEO_DECODE_DPB_BIT_KHR,
         modifiers);
+}
+
+bool decode_image_key_matches(const DecodeImageKey &existing, const DecodeImageKey &requested) {
+    return existing.codec_operation == requested.codec_operation &&
+           existing.codec_profile == requested.codec_profile &&
+           existing.picture_format == requested.picture_format &&
+           existing.reference_picture_format == requested.reference_picture_format &&
+           existing.va_rt_format == requested.va_rt_format &&
+           existing.va_fourcc == requested.va_fourcc &&
+           existing.coded_extent.width >= requested.coded_extent.width &&
+           existing.coded_extent.height >= requested.coded_extent.height &&
+           existing.usage == requested.usage &&
+           existing.create_flags == requested.create_flags &&
+           existing.tiling == requested.tiling &&
+           existing.chroma_subsampling == requested.chroma_subsampling &&
+           existing.luma_bit_depth == requested.luma_bit_depth &&
+           existing.chroma_bit_depth == requested.chroma_bit_depth;
 }
 
 void destroy_export_resource(VulkanRuntime *runtime, ExportResource *resource) {
@@ -126,6 +143,7 @@ void destroy_decode_resource_handles(VulkanRuntime *runtime, SurfaceResource *re
     resource->drm_format_modifier = 0;
     resource->exportable = false;
     resource->has_drm_format_modifier = false;
+    resource->decode_key = {};
     resource->layout = VK_IMAGE_LAYOUT_UNDEFINED;
 }
 
@@ -156,25 +174,33 @@ void destroy_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface) {
     surface->dpb_slot = -1;
 }
 
-bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExtent2D extent, char *reason, size_t reason_size) {
+bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const DecodeImageKey &key, char *reason, size_t reason_size) {
     if (surface == nullptr) {
         std::snprintf(reason, reason_size, "missing target surface");
+        return false;
+    }
+    if (key.codec_operation == 0 ||
+        key.picture_format == VK_FORMAT_UNDEFINED ||
+        key.reference_picture_format == VK_FORMAT_UNDEFINED ||
+        key.coded_extent.width == 0 ||
+        key.coded_extent.height == 0 ||
+        key.usage == 0) {
+        std::snprintf(reason, reason_size, "invalid decode image key");
         return false;
     }
 
     auto *existing = static_cast<SurfaceResource *>(surface->vulkan);
     if (existing != nullptr &&
         existing->image != VK_NULL_HANDLE &&
-        existing->coded_extent.width >= extent.width &&
-        existing->coded_extent.height >= extent.height &&
-        existing->format == runtime->h264_picture_format &&
-        existing->va_rt_format == surface->rt_format &&
-        existing->va_fourcc == surface->fourcc) {
+        decode_image_key_matches(existing->decode_key, key)) {
         existing->visible_extent = {surface->width, surface->height};
         return true;
     }
     if (existing != nullptr && existing->image != VK_NULL_HANDLE && surface->decoded) {
-        std::snprintf(reason, reason_size, "decoded reference surface is too small for H.264 session");
+        std::snprintf(reason, reason_size,
+                      "decoded reference surface decode image key mismatch: codec=0x%x format=%d fourcc=0x%x extent=%ux%u",
+                      key.codec_operation, key.picture_format, key.va_fourcc,
+                      key.coded_extent.width, key.coded_extent.height);
         return false;
     }
 
@@ -183,18 +209,22 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
         existing = nullptr;
     }
 
-    VideoProfileChain profile_chain;
+    const VkExtent2D extent = key.coded_extent;
+    VideoProfileChain profile_chain(
+        static_cast<VkVideoCodecOperationFlagBitsKHR>(key.codec_operation),
+        key.luma_bit_depth);
     VkVideoProfileListInfoKHR profile_list{};
     profile_list.sType = VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR;
     profile_list.profileCount = 1;
     profile_list.pProfiles = &profile_chain.profile;
 
     const bool export_layout_supported =
-        runtime->h264_image_tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT ||
-        runtime->h264_image_tiling == VK_IMAGE_TILING_LINEAR;
+        key.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT ||
+        key.tiling == VK_IMAGE_TILING_LINEAR;
     const bool request_exportable =
         runtime->surface_export &&
-        runtime->h264_picture_format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM &&
+        key.picture_format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM &&
+        key.va_fourcc == VA_FOURCC_NV12 &&
         export_layout_supported;
 
     VkExternalMemoryImageCreateInfo external_image{};
@@ -204,9 +234,9 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
     std::vector<uint64_t> drm_modifiers;
     VkImageDrmFormatModifierListCreateInfoEXT drm_modifier_list{};
     drm_modifier_list.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT;
-    if (runtime->h264_image_tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
-        if (!enumerate_h264_drm_format_modifiers(runtime, &drm_modifiers)) {
-            std::snprintf(reason, reason_size, "no DRM format modifiers support H.264 decode surfaces");
+    if (key.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
+        if (!enumerate_decode_drm_format_modifiers(runtime, key, &drm_modifiers)) {
+            std::snprintf(reason, reason_size, "no DRM format modifiers support decode surfaces");
             return false;
         }
         drm_modifier_list.drmFormatModifierCount = static_cast<uint32_t>(drm_modifiers.size());
@@ -215,25 +245,25 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
 
     if (request_exportable) {
         profile_list.pNext = &external_image;
-        if (runtime->h264_image_tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
+        if (key.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
             external_image.pNext = &drm_modifier_list;
         }
-    } else if (runtime->h264_image_tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
+    } else if (key.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
         profile_list.pNext = &drm_modifier_list;
     }
 
     VkImageCreateInfo image_info{};
     image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     image_info.pNext = &profile_list;
-    image_info.flags = runtime->h264_image_create_flags;
+    image_info.flags = key.create_flags;
     image_info.imageType = VK_IMAGE_TYPE_2D;
-    image_info.format = runtime->h264_picture_format;
+    image_info.format = key.picture_format;
     image_info.extent = {extent.width, extent.height, 1};
     image_info.mipLevels = 1;
     image_info.arrayLayers = 1;
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;
-    image_info.tiling = runtime->h264_image_tiling;
-    image_info.usage = h264_surface_image_usage();
+    image_info.tiling = key.tiling;
+    image_info.usage = key.usage;
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -249,7 +279,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
         if (new_resource) {
             delete resource;
         }
-        std::snprintf(reason, reason_size, "vkCreateImage for H.264 surface failed: %d", result);
+        std::snprintf(reason, reason_size, "vkCreateImage for decode surface failed: %d", result);
         return false;
     }
 
@@ -265,7 +295,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
         } else {
             destroy_decode_resource_handles(runtime, resource);
         }
-        std::snprintf(reason, reason_size, "no memory type for H.264 surface image");
+        std::snprintf(reason, reason_size, "no memory type for decode surface image");
         return false;
     }
 
@@ -293,7 +323,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
         } else {
             destroy_decode_resource_handles(runtime, resource);
         }
-        std::snprintf(reason, reason_size, "vkAllocateMemory for H.264 surface failed: %d", result);
+        std::snprintf(reason, reason_size, "vkAllocateMemory for decode surface failed: %d", result);
         return false;
     }
 
@@ -304,7 +334,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
         } else {
             destroy_decode_resource_handles(runtime, resource);
         }
-        std::snprintf(reason, reason_size, "vkBindImageMemory for H.264 surface failed: %d", result);
+        std::snprintf(reason, reason_size, "vkBindImageMemory for decode surface failed: %d", result);
         return false;
     }
 
@@ -312,7 +342,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
     view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     view_info.image = resource->image;
     view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    view_info.format = runtime->h264_picture_format;
+    view_info.format = key.picture_format;
     view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     view_info.subresourceRange.baseMipLevel = 0;
     view_info.subresourceRange.levelCount = 1;
@@ -326,16 +356,17 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
         } else {
             destroy_decode_resource_handles(runtime, resource);
         }
-        std::snprintf(reason, reason_size, "vkCreateImageView for H.264 surface failed: %d", result);
+        std::snprintf(reason, reason_size, "vkCreateImageView for decode surface failed: %d", result);
         return false;
     }
 
     resource->extent = extent;
     resource->coded_extent = extent;
     resource->visible_extent = {surface->width, surface->height};
-    resource->format = runtime->h264_picture_format;
-    resource->va_rt_format = surface->rt_format;
-    resource->va_fourcc = surface->fourcc;
+    resource->format = key.picture_format;
+    resource->va_rt_format = key.va_rt_format;
+    resource->va_fourcc = key.va_fourcc;
+    resource->decode_key = key;
     resource->allocation_size = requirements.size;
     if (request_exportable) {
         VkImageSubresource plane0{};
@@ -347,7 +378,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
         resource->plane_count = 2;
         resource->exportable = true;
 
-        if (runtime->h264_image_tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
+        if (key.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
             VkImageDrmFormatModifierPropertiesEXT modifier_properties{};
             modifier_properties.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT;
             result = runtime->get_image_drm_format_modifier_properties(

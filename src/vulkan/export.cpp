@@ -288,6 +288,7 @@ bool ensure_export_only_surface_resource(
     resource->format = format->vk_format;
     resource->va_rt_format = surface->rt_format;
     resource->va_fourcc = surface->fourcc;
+    resource->decode_key = {};
     resource->allocation_size = 0;
     resource->plane_layouts[0] = {};
     resource->plane_layouts[1] = {};

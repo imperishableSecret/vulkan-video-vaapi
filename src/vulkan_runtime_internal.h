@@ -127,6 +127,22 @@ struct ExportResource {
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 };
 
+struct DecodeImageKey {
+    VkVideoCodecOperationFlagsKHR codec_operation = 0;
+    uint32_t codec_profile = 0;
+    VkFormat picture_format = VK_FORMAT_UNDEFINED;
+    VkFormat reference_picture_format = VK_FORMAT_UNDEFINED;
+    unsigned int va_rt_format = 0;
+    unsigned int va_fourcc = 0;
+    VkExtent2D coded_extent{};
+    VkImageUsageFlags usage = 0;
+    VkImageCreateFlags create_flags = 0;
+    VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL;
+    VkVideoChromaSubsamplingFlagsKHR chroma_subsampling = 0;
+    VkVideoComponentBitDepthFlagsKHR luma_bit_depth = 0;
+    VkVideoComponentBitDepthFlagsKHR chroma_bit_depth = 0;
+};
+
 struct SurfaceResource {
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
@@ -137,6 +153,7 @@ struct SurfaceResource {
     VkFormat format = VK_FORMAT_UNDEFINED;
     unsigned int va_rt_format = 0;
     unsigned int va_fourcc = 0;
+    DecodeImageKey decode_key{};
     VkDeviceSize allocation_size = 0;
     VkSubresourceLayout plane_layouts[2]{};
     uint32_t plane_count = 0;
@@ -261,7 +278,8 @@ void destroy_export_resource(VulkanRuntime *runtime, ExportResource *resource);
 VkDeviceSize export_memory_bytes(const SurfaceResource *resource);
 void retire_export_resource(SurfaceResource *resource);
 void destroy_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface);
-bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExtent2D extent, char *reason, size_t reason_size);
+VkImageUsageFlags h264_surface_image_usage();
+bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const DecodeImageKey &key, char *reason, size_t reason_size);
 void destroy_upload_buffer(VulkanRuntime *runtime, UploadBuffer *upload);
 bool create_upload_buffer(VulkanRuntime *runtime, const H264VideoSession *session, const VkvvH264DecodeInput *input, UploadBuffer *upload, char *reason, size_t reason_size);
 bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reason_size);
