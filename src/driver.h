@@ -2,6 +2,7 @@
 #define VKVV_DRIVER_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <mutex>
 #include <va/va.h>
@@ -24,6 +25,12 @@ typedef enum {
     VKVV_OBJECT_SURFACE,
     VKVV_OBJECT_BUFFER,
 } VkvvObjectType;
+
+typedef struct VkvvDriver VkvvDriver;
+typedef struct VkvvContext VkvvContext;
+typedef struct VkvvSurface VkvvSurface;
+typedef struct VkvvBuffer VkvvBuffer;
+typedef struct VkvvCodecOps VkvvCodecOps;
 
 typedef struct {
     unsigned int min_width;
@@ -94,19 +101,6 @@ typedef struct VkvvSurface {
     bool decoded;
 } VkvvSurface;
 
-typedef struct VkvvContext {
-    std::mutex mutex;
-    VAConfigID config_id;
-    VAProfile profile;
-    VAEntrypoint entrypoint;
-    unsigned int width;
-    unsigned int height;
-    VASurfaceID render_target;
-    void *codec_state;
-    void *codec_session;
-    unsigned int next_dpb_slot;
-} VkvvContext;
-
 typedef struct VkvvBuffer {
     VABufferType type;
     unsigned int size;
@@ -115,6 +109,42 @@ typedef struct VkvvBuffer {
     bool mapped;
 } VkvvBuffer;
 
+typedef struct VkvvCodecOps {
+    const char *name;
+    void *(*state_create)(void);
+    void (*state_destroy)(void *state);
+    void *(*session_create)(void);
+    void (*session_destroy)(void *runtime, void *session);
+    void (*begin_picture)(void *state);
+    VAStatus (*render_buffer)(void *state, const VkvvBuffer *buffer);
+    VAStatus (*prepare_decode)(void *state, unsigned int *width, unsigned int *height, char *reason, size_t reason_size);
+    VAStatus (*ensure_session)(void *runtime, void *session, unsigned int width, unsigned int height, char *reason, size_t reason_size);
+    VAStatus (*decode)(
+        void *runtime,
+        void *session,
+        VkvvDriver *drv,
+        VkvvContext *vctx,
+        VkvvSurface *target,
+        VAProfile profile,
+        void *state,
+        char *reason,
+        size_t reason_size);
+} VkvvCodecOps;
+
+typedef struct VkvvContext {
+    std::mutex mutex;
+    VAConfigID config_id;
+    VAProfile profile;
+    VAEntrypoint entrypoint;
+    unsigned int width;
+    unsigned int height;
+    VASurfaceID render_target;
+    const VkvvCodecOps *codec_ops;
+    void *codec_state;
+    void *codec_session;
+    unsigned int next_dpb_slot;
+} VkvvContext;
+
 typedef struct VkvvObject {
     unsigned int id;
     VkvvObjectType type;
@@ -122,7 +152,7 @@ typedef struct VkvvObject {
     struct VkvvObject *next;
 } VkvvObject;
 
-typedef struct {
+typedef struct VkvvDriver {
     std::mutex object_mutex;
     std::mutex state_mutex;
     VkvvVideoCaps caps;

@@ -1,5 +1,4 @@
 #include "va_private.h"
-#include "h264.h"
 #include "vulkan_runtime.h"
 
 #include <new>
@@ -8,10 +7,11 @@ void vkvv_release_context_payload(VkvvDriver *drv, VkvvContext *vctx) {
     if (vctx == NULL) {
         return;
     }
-    if (vkvv_profile_is_h264(vctx->profile)) {
-        vkvv_h264_state_destroy(vctx->codec_state);
-        vkvv_vulkan_h264_session_destroy(drv != NULL ? drv->vulkan : NULL, vctx->codec_session);
+    if (vctx->codec_ops != NULL) {
+        vctx->codec_ops->state_destroy(vctx->codec_state);
+        vctx->codec_ops->session_destroy(drv != NULL ? drv->vulkan : NULL, vctx->codec_session);
     }
+    vctx->codec_ops = NULL;
     vctx->codec_state = NULL;
     vctx->codec_session = NULL;
 }
@@ -46,14 +46,17 @@ VAStatus vkvvCreateContext(
     vctx->height = (unsigned int) picture_height;
     vctx->render_target = VA_INVALID_ID;
     vctx->next_dpb_slot = 0;
-    if (vkvv_profile_is_h264(vctx->profile)) {
-        vctx->codec_state = vkvv_h264_state_create();
-        vctx->codec_session = vkvv_vulkan_h264_session_create();
-        if (vctx->codec_state == NULL || vctx->codec_session == NULL) {
-            vkvv_release_context_payload(drv, vctx);
-            delete vctx;
-            return VA_STATUS_ERROR_ALLOCATION_FAILED;
-        }
+    vctx->codec_ops = vkvv_codec_ops_for_profile(vctx->profile);
+    if (vctx->codec_ops == NULL) {
+        delete vctx;
+        return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
+    }
+    vctx->codec_state = vctx->codec_ops->state_create();
+    vctx->codec_session = vctx->codec_ops->session_create();
+    if (vctx->codec_state == NULL || vctx->codec_session == NULL) {
+        vkvv_release_context_payload(drv, vctx);
+        delete vctx;
+        return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
 
     *context = vkvv_object_add(drv, VKVV_OBJECT_CONTEXT, vctx);
@@ -117,8 +120,8 @@ VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID
     }
     vctx->render_target = render_target;
     vkvv_surface_begin_work(surface);
-    if (vkvv_profile_is_h264(vctx->profile)) {
-        vkvv_h264_begin_picture(vctx->codec_state);
+    if (vctx->codec_ops != NULL) {
+        vctx->codec_ops->begin_picture(vctx->codec_state);
     }
     return VA_STATUS_SUCCESS;
 }
@@ -135,8 +138,8 @@ VAStatus vkvvRenderPicture(VADriverContextP ctx, VAContextID context, VABufferID
         if (buffer == NULL) {
             return VA_STATUS_ERROR_INVALID_BUFFER;
         }
-        if (vkvv_profile_is_h264(vctx->profile)) {
-            VAStatus status = vkvv_h264_render_buffer(vctx->codec_state, buffer);
+        if (vctx->codec_ops != NULL) {
+            VAStatus status = vctx->codec_ops->render_buffer(vctx->codec_state, buffer);
             if (status != VA_STATUS_SUCCESS) {
                 return status;
             }
@@ -152,7 +155,7 @@ VAStatus vkvvEndPicture(VADriverContextP ctx, VAContextID context) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
     VkvvLockGuard context_lock(&vctx->mutex);
-    if (!vkvv_profile_is_h264(vctx->profile)) {
+    if (vctx->codec_ops == NULL) {
         return VA_STATUS_ERROR_UNIMPLEMENTED;
     }
     auto *target = static_cast<VkvvSurface *>(vkvv_object_get(drv, vctx->render_target, VKVV_OBJECT_SURFACE));
@@ -172,14 +175,8 @@ VAStatus vkvvEndPicture(VADriverContextP ctx, VAContextID context) {
     unsigned int width = 0;
     unsigned int height = 0;
     char reason[512] = {};
-    VAStatus status = vkvv_h264_prepare_decode(vctx->codec_state, &width, &height, reason, sizeof(reason));
+    VAStatus status = vctx->codec_ops->prepare_decode(vctx->codec_state, &width, &height, reason, sizeof(reason));
     vkvv_log("%s", reason);
-    if (status != VA_STATUS_SUCCESS) {
-        return finish_surface(status);
-    }
-
-    VkvvH264DecodeInput decode_input = {};
-    status = vkvv_h264_get_decode_input(vctx->codec_state, &decode_input);
     if (status != VA_STATUS_SUCCESS) {
         return finish_surface(status);
     }
@@ -192,15 +189,15 @@ VAStatus vkvvEndPicture(VADriverContextP ctx, VAContextID context) {
         }
     }
 
-    status = vkvv_vulkan_ensure_h264_session(drv->vulkan, vctx->codec_session, width, height, reason, sizeof(reason));
+    status = vctx->codec_ops->ensure_session(drv->vulkan, vctx->codec_session, width, height, reason, sizeof(reason));
     vkvv_log("%s", reason);
     if (status != VA_STATUS_SUCCESS) {
         return finish_surface(status);
     }
 
-    status = vkvv_vulkan_decode_h264(
+    status = vctx->codec_ops->decode(
         drv->vulkan, vctx->codec_session, drv, vctx, target,
-        vctx->profile, &decode_input, reason, sizeof(reason));
+        vctx->profile, vctx->codec_state, reason, sizeof(reason));
     vkvv_log("%s", reason);
     if (status != VA_STATUS_SUCCESS) {
         return finish_surface(status);

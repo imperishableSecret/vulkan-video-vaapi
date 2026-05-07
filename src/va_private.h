@@ -48,6 +48,7 @@ inline bool vkvv_profile_is_h264(VAProfile profile) {
 void vkvv_log(const char *fmt, ...);
 void *vkvv_get_or_create_vulkan_runtime(char *reason, size_t reason_size);
 void vkvv_release_context_payload(VkvvDriver *drv, VkvvContext *vctx);
+const VkvvCodecOps *vkvv_codec_ops_for_profile(VAProfile profile);
 void vkvv_init_profile_capabilities(VkvvDriver *drv);
 const VkvvProfileCapability *vkvv_profile_capability(const VkvvDriver *drv, VAProfile profile);
 bool vkvv_profile_supported(const VkvvDriver *drv, VAProfile profile);
