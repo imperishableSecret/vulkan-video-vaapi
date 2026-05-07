@@ -2,7 +2,7 @@
 #include "h264.h"
 #include "vulkan_runtime.h"
 
-#include <cstdlib>
+#include <new>
 
 void vkvv_release_context_payload(VkvvDriver *drv, VkvvContext *vctx) {
     if (vctx == NULL) {
@@ -35,11 +35,10 @@ VAStatus vkvvCreateContext(
         return VA_STATUS_ERROR_INVALID_CONFIG;
     }
 
-    auto *vctx = static_cast<VkvvContext *>(std::calloc(1, sizeof(VkvvContext)));
+    auto *vctx = new (std::nothrow) VkvvContext();
     if (vctx == NULL) {
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
-    vkvv_context_init_lock(vctx);
     vctx->config_id = config_id;
     vctx->profile = config->profile;
     vctx->entrypoint = config->entrypoint;
@@ -52,8 +51,7 @@ VAStatus vkvvCreateContext(
         vctx->codec_session = vkvv_vulkan_h264_session_create();
         if (vctx->codec_state == NULL || vctx->codec_session == NULL) {
             vkvv_release_context_payload(drv, vctx);
-            vkvv_context_destroy_lock(vctx);
-            std::free(vctx);
+            delete vctx;
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
     }
@@ -61,8 +59,7 @@ VAStatus vkvvCreateContext(
     *context = vkvv_object_add(drv, VKVV_OBJECT_CONTEXT, vctx);
     if (*context == VA_INVALID_ID) {
         vkvv_release_context_payload(drv, vctx);
-        vkvv_context_destroy_lock(vctx);
-        std::free(vctx);
+        delete vctx;
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
     return VA_STATUS_SUCCESS;

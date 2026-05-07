@@ -1,6 +1,6 @@
 #include "va_private.h"
 
-#include <cstdlib>
+#include <new>
 
 VAStatus vkvvQueryConfigProfiles(VADriverContextP ctx, VAProfile *profile_list, int *num_profiles) {
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
@@ -88,7 +88,7 @@ VAStatus vkvvCreateConfig(
         }
     }
 
-    auto *config = static_cast<VkvvConfig *>(std::calloc(1, sizeof(VkvvConfig)));
+    auto *config = new (std::nothrow) VkvvConfig();
     if (config == NULL) {
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
@@ -98,7 +98,7 @@ VAStatus vkvvCreateConfig(
 
     *config_id = vkvv_object_add(drv, VKVV_OBJECT_CONFIG, config);
     if (*config_id == VA_INVALID_ID) {
-        std::free(config);
+        delete config;
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
     return VA_STATUS_SUCCESS;

@@ -1,7 +1,7 @@
 #include "va_private.h"
 #include "vulkan_runtime.h"
 
-#include <cstdlib>
+#include <new>
 
 namespace {
 
@@ -99,7 +99,7 @@ VAStatus vkvvCreateSurfaces2(
     }
 
     for (unsigned int i = 0; i < num_surfaces; i++) {
-        auto *surface = static_cast<VkvvSurface *>(std::calloc(1, sizeof(VkvvSurface)));
+        auto *surface = new (std::nothrow) VkvvSurface();
         if (surface == NULL) {
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
@@ -110,11 +110,9 @@ VAStatus vkvvCreateSurfaces2(
         surface->dpb_slot = -1;
         surface->work_state = VKVV_SURFACE_WORK_READY;
         surface->sync_status = VA_STATUS_SUCCESS;
-        vkvv_surface_init_lock(surface);
         surfaces[i] = vkvv_object_add(drv, VKVV_OBJECT_SURFACE, surface);
         if (surfaces[i] == VA_INVALID_ID) {
-            vkvv_surface_destroy_lock(surface);
-            std::free(surface);
+            delete surface;
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
         vkvv_log("created surface %u: %ux%u fourcc=0x%x rt=0x%x",

@@ -1,6 +1,7 @@
 #include "va_private.h"
 
-#include <cstdlib>
+#include <mutex>
+#include <new>
 
 namespace {
 
@@ -20,67 +21,34 @@ void destroy_payload(VkvvObject *object) {
     switch (object->type) {
         case VKVV_OBJECT_CONTEXT: {
             auto *vctx = static_cast<VkvvContext *>(object->payload);
-            pthread_mutex_lock(&vctx->mutex);
-            pthread_mutex_unlock(&vctx->mutex);
-            vkvv_context_destroy_lock(vctx);
+            std::unique_lock<std::mutex> lock(vctx->mutex);
+            lock.unlock();
+            delete vctx;
             break;
         }
         case VKVV_OBJECT_SURFACE: {
             auto *surface = static_cast<VkvvSurface *>(object->payload);
-            pthread_mutex_lock(&surface->mutex);
-            pthread_mutex_unlock(&surface->mutex);
-            vkvv_surface_destroy_lock(surface);
+            std::unique_lock<std::mutex> lock(surface->mutex);
+            lock.unlock();
+            delete surface;
             break;
         }
+        case VKVV_OBJECT_CONFIG:
+            delete static_cast<VkvvConfig *>(object->payload);
+            break;
+        case VKVV_OBJECT_BUFFER:
+            delete static_cast<VkvvBuffer *>(object->payload);
+            break;
         default:
             break;
     }
-    std::free(object->payload);
     object->payload = NULL;
 }
 
 } // namespace
 
-void vkvv_driver_init_lock(VkvvDriver *drv) {
-    if (drv != NULL) {
-        pthread_mutex_init(&drv->object_mutex, NULL);
-        pthread_mutex_init(&drv->state_mutex, NULL);
-    }
-}
-
-void vkvv_driver_destroy_lock(VkvvDriver *drv) {
-    if (drv != NULL) {
-        pthread_mutex_destroy(&drv->state_mutex);
-        pthread_mutex_destroy(&drv->object_mutex);
-    }
-}
-
-void vkvv_context_init_lock(VkvvContext *vctx) {
-    if (vctx != NULL) {
-        pthread_mutex_init(&vctx->mutex, NULL);
-    }
-}
-
-void vkvv_context_destroy_lock(VkvvContext *vctx) {
-    if (vctx != NULL) {
-        pthread_mutex_destroy(&vctx->mutex);
-    }
-}
-
-void vkvv_surface_init_lock(VkvvSurface *surface) {
-    if (surface != NULL) {
-        pthread_mutex_init(&surface->mutex, NULL);
-    }
-}
-
-void vkvv_surface_destroy_lock(VkvvSurface *surface) {
-    if (surface != NULL) {
-        pthread_mutex_destroy(&surface->mutex);
-    }
-}
-
 unsigned int vkvv_object_add(VkvvDriver *drv, VkvvObjectType type, void *payload) {
-    auto *object = static_cast<VkvvObject *>(std::calloc(1, sizeof(VkvvObject)));
+    auto *object = new (std::nothrow) VkvvObject();
     if (object == NULL) {
         return VA_INVALID_ID;
     }
@@ -122,7 +90,7 @@ bool vkvv_object_remove(VkvvDriver *drv, unsigned int id, VkvvObjectType type) {
         return false;
     }
     destroy_payload(removed);
-    std::free(removed);
+    delete removed;
     return true;
 }
 
@@ -136,7 +104,7 @@ void vkvv_object_clear(VkvvDriver *drv) {
     while (object != NULL) {
         VkvvObject *next = object->next;
         destroy_payload(object);
-        std::free(object);
+        delete object;
         object = next;
     }
 }
@@ -148,12 +116,12 @@ VkvvSurface *vkvv_surface_get_locked(VkvvDriver *drv, unsigned int id) {
         return NULL;
     }
     auto *surface = static_cast<VkvvSurface *>(object->payload);
-    pthread_mutex_lock(&surface->mutex);
+    surface->mutex.lock();
     return surface;
 }
 
 void vkvv_surface_unlock(VkvvSurface *surface) {
     if (surface != NULL) {
-        pthread_mutex_unlock(&surface->mutex);
+        surface->mutex.unlock();
     }
 }

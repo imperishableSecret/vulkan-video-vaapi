@@ -5,14 +5,15 @@
 
 #include <cstddef>
 #include <stdint.h>
+#include <mutex>
 
 // Lock order for driver-owned VA objects: driver state/object registry,
 // context, surface, then Vulkan runtime command resources.
 class VkvvLockGuard {
   public:
-    explicit VkvvLockGuard(pthread_mutex_t *mutex) : mutex_(mutex) {
+    explicit VkvvLockGuard(std::mutex *mutex) : mutex_(mutex) {
         if (mutex_ != NULL) {
-            pthread_mutex_lock(mutex_);
+            mutex_->lock();
         }
     }
 
@@ -25,13 +26,13 @@ class VkvvLockGuard {
 
     void unlock() {
         if (mutex_ != NULL) {
-            pthread_mutex_unlock(mutex_);
+            mutex_->unlock();
             mutex_ = NULL;
         }
     }
 
   private:
-    pthread_mutex_t *mutex_;
+    std::mutex *mutex_;
 };
 
 inline VkvvDriver *vkvv_driver_from_ctx(VADriverContextP ctx) {
@@ -74,12 +75,6 @@ inline unsigned int vkvv_surface_fourcc_for_format(unsigned int rt_format) {
 void vkvv_log(const char *fmt, ...);
 void *vkvv_get_or_create_vulkan_runtime(char *reason, size_t reason_size);
 void vkvv_release_context_payload(VkvvDriver *drv, VkvvContext *vctx);
-void vkvv_driver_init_lock(VkvvDriver *drv);
-void vkvv_driver_destroy_lock(VkvvDriver *drv);
-void vkvv_context_init_lock(VkvvContext *vctx);
-void vkvv_context_destroy_lock(VkvvContext *vctx);
-void vkvv_surface_init_lock(VkvvSurface *surface);
-void vkvv_surface_destroy_lock(VkvvSurface *surface);
 void vkvv_surface_begin_work(VkvvSurface *surface);
 void vkvv_surface_complete_work(VkvvSurface *surface, VAStatus status);
 bool vkvv_surface_has_pending_work(const VkvvSurface *surface);

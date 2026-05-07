@@ -2,8 +2,8 @@
 #define VKVV_DRIVER_H
 
 #include <stdbool.h>
-#include <pthread.h>
 #include <stdint.h>
+#include <mutex>
 #include <va/va.h>
 #include <va/va_backend.h>
 
@@ -47,7 +47,7 @@ typedef enum {
 } VkvvSurfaceWorkState;
 
 typedef struct VkvvSurface {
-    pthread_mutex_t mutex;
+    std::mutex mutex;
     unsigned int rt_format;
     unsigned int width;
     unsigned int height;
@@ -61,7 +61,7 @@ typedef struct VkvvSurface {
 } VkvvSurface;
 
 typedef struct VkvvContext {
-    pthread_mutex_t mutex;
+    std::mutex mutex;
     VAConfigID config_id;
     VAProfile profile;
     VAEntrypoint entrypoint;
@@ -89,8 +89,8 @@ typedef struct VkvvObject {
 } VkvvObject;
 
 typedef struct {
-    pthread_mutex_t object_mutex;
-    pthread_mutex_t state_mutex;
+    std::mutex object_mutex;
+    std::mutex state_mutex;
     VkvvVideoCaps caps;
     VkvvObject *objects;
     unsigned int next_id;

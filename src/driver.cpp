@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <new>
 #include <va/va_drmcommon.h>
 
 #ifndef VKVV_VERSION
@@ -80,8 +81,7 @@ static VAStatus vkvvTerminate(VADriverContextP ctx) {
         release_owned_payloads(drv);
         vkvv_object_clear(drv);
         vkvv_vulkan_h264_session_destroy(drv->vulkan, drv->h264_export_session);
-        vkvv_driver_destroy_lock(drv);
-        std::free(drv);
+        delete drv;
         ctx->pDriverData = NULL;
     }
     return VA_STATUS_SUCCESS;
@@ -164,11 +164,10 @@ static struct VADriverVTable make_vtable(void) {
 static struct VADriverVTable vtable = make_vtable();
 
 static VAStatus vkvvDriverInit(VADriverContextP ctx) {
-    auto *drv = static_cast<VkvvDriver *>(std::calloc(1, sizeof(VkvvDriver)));
+    auto *drv = new (std::nothrow) VkvvDriver();
     if (drv == NULL) {
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
-    vkvv_driver_init_lock(drv);
     drv->next_id = 1;
     vkvv_probe_vulkan_video(&drv->caps);
     if (drv->caps.h264) {

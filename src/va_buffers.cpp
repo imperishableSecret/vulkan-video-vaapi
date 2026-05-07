@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 
 VAStatus vkvvCreateBuffer(
         VADriverContextP ctx,
@@ -21,7 +22,7 @@ VAStatus vkvvCreateBuffer(
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
 
-    auto *buffer = static_cast<VkvvBuffer *>(std::calloc(1, sizeof(VkvvBuffer)));
+    auto *buffer = new (std::nothrow) VkvvBuffer();
     if (buffer == NULL) {
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
@@ -32,7 +33,7 @@ VAStatus vkvvCreateBuffer(
     if (total != 0) {
         buffer->data = std::calloc(1, total);
         if (buffer->data == NULL) {
-            std::free(buffer);
+            delete buffer;
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
         if (data != NULL) {
@@ -43,7 +44,7 @@ VAStatus vkvvCreateBuffer(
     *buf_id = vkvv_object_add(drv, VKVV_OBJECT_BUFFER, buffer);
     if (*buf_id == VA_INVALID_ID) {
         std::free(buffer->data);
-        std::free(buffer);
+        delete buffer;
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
     return VA_STATUS_SUCCESS;
@@ -113,4 +114,3 @@ VAStatus vkvvMapBuffer2(VADriverContextP ctx, VABufferID buf_id, void **pbuf, ui
     (void) flags;
     return vkvvMapBuffer(ctx, buf_id, pbuf);
 }
-
