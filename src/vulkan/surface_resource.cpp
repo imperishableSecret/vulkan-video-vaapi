@@ -132,6 +132,8 @@ void destroy_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface) {
 
     destroy_surface_resource_raw(runtime, static_cast<SurfaceResource *>(surface->vulkan));
     surface->vulkan = nullptr;
+    surface->work_state = VKVV_SURFACE_WORK_READY;
+    surface->sync_status = VA_STATUS_SUCCESS;
     surface->decoded = false;
     surface->dpb_slot = -1;
 }

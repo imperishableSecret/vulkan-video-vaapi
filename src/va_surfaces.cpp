@@ -17,7 +17,43 @@ void set_integer_attrib(VASurfaceAttrib *attrib, VASurfaceAttribType type, uint3
     attrib->value.value.i = value;
 }
 
+VASurfaceStatus va_status_for_surface(const VkvvSurface *surface) {
+    if (surface != NULL && surface->work_state == VKVV_SURFACE_WORK_RENDERING) {
+        return VASurfaceRendering;
+    }
+    return VASurfaceReady;
+}
+
+VAStatus sync_surface_work(const VkvvSurface *surface, uint64_t timeout_ns) {
+    if (surface->work_state == VKVV_SURFACE_WORK_RENDERING) {
+        (void) timeout_ns;
+        return VA_STATUS_ERROR_TIMEDOUT;
+    }
+    return surface->sync_status;
+}
+
 } // namespace
+
+void vkvv_surface_begin_work(VkvvSurface *surface) {
+    if (surface == NULL) {
+        return;
+    }
+    surface->work_state = VKVV_SURFACE_WORK_RENDERING;
+    surface->sync_status = VA_STATUS_ERROR_TIMEDOUT;
+    surface->decoded = false;
+}
+
+void vkvv_surface_complete_work(VkvvSurface *surface, VAStatus status) {
+    if (surface == NULL) {
+        return;
+    }
+    surface->work_state = VKVV_SURFACE_WORK_READY;
+    surface->sync_status = status;
+}
+
+bool vkvv_surface_has_pending_work(const VkvvSurface *surface) {
+    return surface != NULL && surface->work_state == VKVV_SURFACE_WORK_RENDERING;
+}
 
 VAStatus vkvvCreateSurfaces2(
         VADriverContextP ctx,
@@ -46,6 +82,8 @@ VAStatus vkvvCreateSurfaces2(
         surface->height = height;
         surface->fourcc = vkvv_surface_fourcc_for_format(format);
         surface->dpb_slot = -1;
+        surface->work_state = VKVV_SURFACE_WORK_READY;
+        surface->sync_status = VA_STATUS_SUCCESS;
         surfaces[i] = vkvv_object_add(drv, VKVV_OBJECT_SURFACE, surface);
         if (surfaces[i] == VA_INVALID_ID) {
             std::free(surface);
@@ -89,16 +127,23 @@ VAStatus vkvvDestroySurfaces(VADriverContextP ctx, VASurfaceID *surface_list, in
 
 VAStatus vkvvSyncSurface(VADriverContextP ctx, VASurfaceID render_target) {
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
-    return vkvv_object_get(drv, render_target, VKVV_OBJECT_SURFACE) != NULL ?
-           VA_STATUS_SUCCESS : VA_STATUS_ERROR_INVALID_SURFACE;
+    auto *surface = static_cast<VkvvSurface *>(vkvv_object_get(drv, render_target, VKVV_OBJECT_SURFACE));
+    if (surface == NULL) {
+        return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+    return sync_surface_work(surface, VA_TIMEOUT_INFINITE);
 }
 
 VAStatus vkvvQuerySurfaceStatus(VADriverContextP ctx, VASurfaceID render_target, VASurfaceStatus *status) {
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
-    if (vkvv_object_get(drv, render_target, VKVV_OBJECT_SURFACE) == NULL) {
+    auto *surface = static_cast<VkvvSurface *>(vkvv_object_get(drv, render_target, VKVV_OBJECT_SURFACE));
+    if (surface == NULL) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
-    *status = VASurfaceReady;
+    if (status == NULL) {
+        return VA_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    *status = va_status_for_surface(surface);
     return VA_STATUS_SUCCESS;
 }
 
@@ -218,6 +263,10 @@ VAStatus vkvvExportSurfaceHandle(
 }
 
 VAStatus vkvvSyncSurface2(VADriverContextP ctx, VASurfaceID surface, uint64_t timeout_ns) {
-    (void) timeout_ns;
-    return vkvvSyncSurface(ctx, surface);
+    VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
+    auto *target = static_cast<VkvvSurface *>(vkvv_object_get(drv, surface, VKVV_OBJECT_SURFACE));
+    if (target == NULL) {
+        return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+    return sync_surface_work(target, timeout_ns);
 }

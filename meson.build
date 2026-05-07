@@ -109,6 +109,13 @@ multi_context_smoke = executable(
   install: false,
 )
 
+sync_smoke = executable(
+  'vkvv-sync-smoke',
+  files('tests/smoke/sync_smoke.cpp'),
+  dependencies: [libva_dep, libva_drm_dep],
+  install: false,
+)
+
 driver_test_env = environment()
 driver_test_env.set('LIBVA_DRIVER_NAME', 'nvidia_vulkan')
 driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
@@ -117,3 +124,4 @@ test('smoke-session', session_smoke, is_parallel: false, timeout: 30)
 test('smoke-export', export_smoke, is_parallel: false, timeout: 30)
 test('smoke-lifetime', lifetime_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-multi-context', multi_context_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
+test('smoke-sync', sync_smoke, env: driver_test_env, is_parallel: false, timeout: 30)

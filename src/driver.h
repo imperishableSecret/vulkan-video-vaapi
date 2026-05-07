@@ -40,6 +40,11 @@ typedef struct VkvvConfig {
     unsigned int rt_format;
 } VkvvConfig;
 
+typedef enum {
+    VKVV_SURFACE_WORK_READY = 0,
+    VKVV_SURFACE_WORK_RENDERING,
+} VkvvSurfaceWorkState;
+
 typedef struct VkvvSurface {
     unsigned int rt_format;
     unsigned int width;
@@ -47,6 +52,8 @@ typedef struct VkvvSurface {
     unsigned int fourcc;
     void *vulkan;
     int dpb_slot;
+    VkvvSurfaceWorkState work_state;
+    VAStatus sync_status;
     bool decoded;
 } VkvvSurface;
 

@@ -71,6 +71,12 @@ VAStatus vkvvDestroyContext(VADriverContextP ctx, VAContextID context) {
     if (vctx == NULL) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
+    if (vctx->render_target != VA_INVALID_ID) {
+        auto *surface = static_cast<VkvvSurface *>(vkvv_object_get(drv, vctx->render_target, VKVV_OBJECT_SURFACE));
+        if (vkvv_surface_has_pending_work(surface)) {
+            vkvv_surface_complete_work(surface, VA_STATUS_ERROR_OPERATION_FAILED);
+        }
+    }
     vkvv_release_context_payload(drv, vctx);
     return vkvv_object_remove(drv, context, VKVV_OBJECT_CONTEXT) ?
            VA_STATUS_SUCCESS : VA_STATUS_ERROR_INVALID_CONTEXT;
@@ -82,10 +88,21 @@ VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID
     if (vctx == NULL) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
-    if (vkvv_object_get(drv, render_target, VKVV_OBJECT_SURFACE) == NULL) {
+    if (vctx->render_target != VA_INVALID_ID) {
+        auto *previous = static_cast<VkvvSurface *>(vkvv_object_get(drv, vctx->render_target, VKVV_OBJECT_SURFACE));
+        if (vkvv_surface_has_pending_work(previous)) {
+            vkvv_surface_complete_work(previous, VA_STATUS_ERROR_OPERATION_FAILED);
+        }
+    }
+    auto *surface = static_cast<VkvvSurface *>(vkvv_object_get(drv, render_target, VKVV_OBJECT_SURFACE));
+    if (surface == NULL) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
+    if (vkvv_surface_has_pending_work(surface)) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
     vctx->render_target = render_target;
+    vkvv_surface_begin_work(surface);
     if (vkvv_profile_is_h264(vctx->profile)) {
         vkvv_h264_begin_picture(vctx->codec_state);
     }
@@ -126,6 +143,11 @@ VAStatus vkvvEndPicture(VADriverContextP ctx, VAContextID context) {
     if (target == NULL) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
+    auto finish_surface = [vctx, target](VAStatus status) {
+        vkvv_surface_complete_work(target, status);
+        vctx->render_target = VA_INVALID_ID;
+        return status;
+    };
 
     unsigned int width = 0;
     unsigned int height = 0;
@@ -133,27 +155,27 @@ VAStatus vkvvEndPicture(VADriverContextP ctx, VAContextID context) {
     VAStatus status = vkvv_h264_prepare_decode(vctx->codec_state, &width, &height, reason, sizeof(reason));
     vkvv_log("%s", reason);
     if (status != VA_STATUS_SUCCESS) {
-        return status;
+        return finish_surface(status);
     }
 
     VkvvH264DecodeInput decode_input = {};
     status = vkvv_h264_get_decode_input(vctx->codec_state, &decode_input);
     if (status != VA_STATUS_SUCCESS) {
-        return status;
+        return finish_surface(status);
     }
 
     if (drv->vulkan == NULL) {
         drv->vulkan = vkvv_get_or_create_vulkan_runtime(reason, sizeof(reason));
         vkvv_log("%s", reason);
         if (drv->vulkan == NULL) {
-            return VA_STATUS_ERROR_OPERATION_FAILED;
+            return finish_surface(VA_STATUS_ERROR_OPERATION_FAILED);
         }
     }
 
     status = vkvv_vulkan_ensure_h264_session(drv->vulkan, vctx->codec_session, width, height, reason, sizeof(reason));
     vkvv_log("%s", reason);
     if (status != VA_STATUS_SUCCESS) {
-        return status;
+        return finish_surface(status);
     }
 
     status = vkvv_vulkan_decode_h264(
@@ -161,12 +183,12 @@ VAStatus vkvvEndPicture(VADriverContextP ctx, VAContextID context) {
         vctx->profile, &decode_input, reason, sizeof(reason));
     vkvv_log("%s", reason);
     if (status != VA_STATUS_SUCCESS) {
-        return status;
+        return finish_surface(status);
     }
 
     status = vkvv_vulkan_refresh_surface_export(drv->vulkan, target, reason, sizeof(reason));
     if (reason[0] != '\0') {
         vkvv_log("%s", reason);
     }
-    return status;
+    return finish_surface(status);
 }

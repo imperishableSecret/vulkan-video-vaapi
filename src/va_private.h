@@ -46,6 +46,9 @@ inline unsigned int vkvv_surface_fourcc_for_format(unsigned int rt_format) {
 void vkvv_log(const char *fmt, ...);
 void *vkvv_get_or_create_vulkan_runtime(char *reason, size_t reason_size);
 void vkvv_release_context_payload(VkvvDriver *drv, VkvvContext *vctx);
+void vkvv_surface_begin_work(VkvvSurface *surface);
+void vkvv_surface_complete_work(VkvvSurface *surface, VAStatus status);
+bool vkvv_surface_has_pending_work(const VkvvSurface *surface);
 
 VAStatus vkvvQueryConfigProfiles(VADriverContextP ctx, VAProfile *profile_list, int *num_profiles);
 VAStatus vkvvQueryConfigEntrypoints(VADriverContextP ctx, VAProfile profile, VAEntrypoint *entrypoint_list, int *num_entrypoints);
