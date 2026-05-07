@@ -50,6 +50,27 @@ VAStatus sync_surface_work(const VkvvSurface *surface, uint64_t timeout_ns) {
     return surface->sync_status;
 }
 
+VAStatus complete_vulkan_surface_work(
+        VkvvDriver *drv,
+        VkvvSurface *surface,
+        uint64_t timeout_ns) {
+    if (drv == NULL || drv->vulkan == NULL || surface == NULL ||
+        !vkvv_surface_has_pending_work(surface)) {
+        return sync_surface_work(surface, timeout_ns);
+    }
+
+    char reason[512] = {};
+    VAStatus status = vkvv_vulkan_complete_surface_work(
+        drv->vulkan, surface, timeout_ns, reason, sizeof(reason));
+    if (reason[0] != '\0') {
+        vkvv_log("%s", reason);
+    }
+    if (status == VA_STATUS_ERROR_TIMEDOUT && vkvv_surface_has_pending_work(surface)) {
+        return sync_surface_work(surface, timeout_ns);
+    }
+    return status;
+}
+
 } // namespace
 
 void vkvv_surface_begin_work(VkvvSurface *surface) {
@@ -142,12 +163,15 @@ VAStatus vkvvDestroySurfaces(VADriverContextP ctx, VASurfaceID *surface_list, in
         }
         LockedSurface locked_surface(surface);
         surface->destroying = true;
+        if (drv->vulkan != NULL) {
+            if (vkvv_surface_has_pending_work(surface)) {
+                (void) complete_vulkan_surface_work(drv, surface, VA_TIMEOUT_INFINITE);
+            }
+            vkvv_vulkan_surface_destroy(drv->vulkan, surface);
+        }
         if (vkvv_surface_has_pending_work(surface)) {
             surface->work_state = VKVV_SURFACE_WORK_READY;
             surface->sync_status = VA_STATUS_ERROR_OPERATION_FAILED;
-        }
-        if (drv->vulkan != NULL) {
-            vkvv_vulkan_surface_destroy(drv->vulkan, surface);
         }
         locked_surface.unlock();
         surface = NULL;
@@ -165,7 +189,7 @@ VAStatus vkvvSyncSurface(VADriverContextP ctx, VASurfaceID render_target) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
     LockedSurface locked_surface(surface);
-    return sync_surface_work(surface, VA_TIMEOUT_INFINITE);
+    return complete_vulkan_surface_work(drv, surface, VA_TIMEOUT_INFINITE);
 }
 
 VAStatus vkvvQuerySurfaceStatus(VADriverContextP ctx, VASurfaceID render_target, VASurfaceStatus *status) {
@@ -177,6 +201,9 @@ VAStatus vkvvQuerySurfaceStatus(VADriverContextP ctx, VASurfaceID render_target,
     LockedSurface locked_surface(surface);
     if (surface->destroying) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+    if (vkvv_surface_has_pending_work(surface)) {
+        (void) complete_vulkan_surface_work(drv, surface, 0);
     }
     if (status == NULL) {
         return VA_STATUS_ERROR_INVALID_PARAMETER;
@@ -268,7 +295,13 @@ VAStatus vkvvExportSurfaceHandle(
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
     if (vkvv_surface_has_pending_work(surface)) {
-        return VA_STATUS_ERROR_TIMEDOUT;
+        VAStatus status = complete_vulkan_surface_work(drv, surface, VA_TIMEOUT_INFINITE);
+        if (status != VA_STATUS_SUCCESS) {
+            return status;
+        }
+        if (vkvv_surface_has_pending_work(surface)) {
+            return VA_STATUS_ERROR_TIMEDOUT;
+        }
     }
     if (drv->vulkan == NULL) {
         char runtime_reason[512] = {};
@@ -301,5 +334,5 @@ VAStatus vkvvSyncSurface2(VADriverContextP ctx, VASurfaceID surface, uint64_t ti
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
     LockedSurface locked_surface(target);
-    return sync_surface_work(target, timeout_ns);
+    return complete_vulkan_surface_work(drv, target, timeout_ns);
 }

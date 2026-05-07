@@ -17,6 +17,8 @@ void vkvv_vulkan_h264_session_destroy(void *runtime, void *session);
 VAStatus vkvv_vulkan_ensure_h264_session(void *runtime, void *session, unsigned int width, unsigned int height, char *reason, size_t reason_size);
 VAStatus vkvv_vulkan_prepare_surface_export(void *runtime, VkvvSurface *surface, char *reason, size_t reason_size);
 VAStatus vkvv_vulkan_refresh_surface_export(void *runtime, VkvvSurface *surface, char *reason, size_t reason_size);
+VAStatus vkvv_vulkan_complete_surface_work(void *runtime, VkvvSurface *surface, uint64_t timeout_ns, char *reason, size_t reason_size);
+VAStatus vkvv_vulkan_drain_pending_work(void *runtime, char *reason, size_t reason_size);
 VAStatus vkvv_vulkan_decode_h264(
         void *runtime,
         void *session,

@@ -253,6 +253,10 @@ class VulkanRuntime {
     VkCommandPool command_pool = VK_NULL_HANDLE;
     VkCommandBuffer command_buffer = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
+    VkvvSurface *pending_surface = nullptr;
+    VkVideoSessionParametersKHR pending_parameters = VK_NULL_HANDLE;
+    VkDeviceSize pending_upload_allocation_size = 0;
+    char pending_operation[64]{};
     std::mutex command_mutex;
 
     void destroy_command_resources() {
@@ -286,7 +290,9 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
 void destroy_upload_buffer(VulkanRuntime *runtime, UploadBuffer *upload);
 bool ensure_upload_buffer(VulkanRuntime *runtime, const H264VideoSession *session, const VkvvH264DecodeInput *input, UploadBuffer *upload, char *reason, size_t reason_size);
 bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reason_size);
+bool submit_command_buffer(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation);
 bool submit_command_buffer_and_wait(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation);
+void track_pending_decode(VulkanRuntime *runtime, VkvvSurface *surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, const char *operation);
 bool reset_h264_session(VulkanRuntime *runtime, H264VideoSession *session, VkVideoSessionParametersKHR parameters, char *reason, size_t reason_size);
 void add_image_layout_barrier(std::vector<VkImageMemoryBarrier2> *barriers, SurfaceResource *resource, VkImageLayout new_layout, VkAccessFlags2 dst_access);
 VkVideoPictureResourceInfoKHR make_picture_resource(SurfaceResource *resource, VkExtent2D coded_extent);

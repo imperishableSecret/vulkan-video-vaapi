@@ -7,6 +7,16 @@ void vkvv_release_context_payload(VkvvDriver *drv, VkvvContext *vctx) {
     if (vctx == NULL) {
         return;
     }
+    if (drv != NULL && drv->vulkan != NULL) {
+        char reason[512] = {};
+        VAStatus status = vkvv_vulkan_drain_pending_work(drv->vulkan, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            vkvv_log("%s", reason);
+        }
+        if (status != VA_STATUS_SUCCESS) {
+            vkvv_log("pending Vulkan work drain failed before context release: %s", vaErrorStr(status));
+        }
+    }
     if (vctx->codec_ops != NULL) {
         vctx->codec_ops->state_destroy(vctx->codec_state);
         vctx->codec_ops->session_destroy(drv != NULL ? drv->vulkan : NULL, vctx->codec_session);
@@ -189,6 +199,14 @@ VAStatus vkvvEndPicture(VADriverContextP ctx, VAContextID context) {
         }
     }
 
+    status = vkvv_vulkan_drain_pending_work(drv->vulkan, reason, sizeof(reason));
+    if (reason[0] != '\0') {
+        vkvv_log("%s", reason);
+    }
+    if (status != VA_STATUS_SUCCESS) {
+        return finish_surface(status);
+    }
+
     status = vctx->codec_ops->ensure_session(drv->vulkan, vctx->codec_session, width, height, reason, sizeof(reason));
     vkvv_log("%s", reason);
     if (status != VA_STATUS_SUCCESS) {
@@ -203,9 +221,6 @@ VAStatus vkvvEndPicture(VADriverContextP ctx, VAContextID context) {
         return finish_surface(status);
     }
 
-    status = vkvv_vulkan_refresh_surface_export(drv->vulkan, target, reason, sizeof(reason));
-    if (reason[0] != '\0') {
-        vkvv_log("%s", reason);
-    }
-    return finish_surface(status);
+    vctx->render_target = VA_INVALID_ID;
+    return VA_STATUS_SUCCESS;
 }

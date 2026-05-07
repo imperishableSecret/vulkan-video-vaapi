@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <mutex>
 #include <vector>
 
 namespace {
@@ -80,6 +81,61 @@ bool ensure_upload(
     return true;
 }
 
+bool check_async_completion(vkvv::VulkanRuntime *runtime) {
+    VkvvSurface surface{};
+    surface.work_state = VKVV_SURFACE_WORK_RENDERING;
+    surface.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+    surface.dpb_slot = -1;
+
+    char reason[512] = {};
+    {
+        std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+        if (!check(vkvv::ensure_command_resources(runtime, reason, sizeof(reason)),
+                   "ensure_command_resources failed")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+
+        VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
+        if (!check(result == VK_SUCCESS, "vkResetFences failed for async smoke")) {
+            return false;
+        }
+        result = vkResetCommandBuffer(runtime->command_buffer, 0);
+        if (!check(result == VK_SUCCESS, "vkResetCommandBuffer failed for async smoke")) {
+            return false;
+        }
+
+        VkCommandBufferBeginInfo begin_info{};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        result = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
+        if (!check(result == VK_SUCCESS, "vkBeginCommandBuffer failed for async smoke")) {
+            return false;
+        }
+        result = vkEndCommandBuffer(runtime->command_buffer);
+        if (!check(result == VK_SUCCESS, "vkEndCommandBuffer failed for async smoke")) {
+            return false;
+        }
+        if (!check(vkvv::submit_command_buffer(runtime, reason, sizeof(reason), "async smoke"),
+                   "submit_command_buffer failed for async smoke")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        vkvv::track_pending_decode(runtime, &surface, VK_NULL_HANDLE, 0, "async smoke");
+    }
+
+    VAStatus status = vkvv_vulkan_complete_surface_work(
+        runtime, &surface, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
+    if (!check(status == VA_STATUS_SUCCESS, "async surface completion failed")) {
+        std::fprintf(stderr, "%s\n", reason);
+        return false;
+    }
+    return check(surface.work_state == VKVV_SURFACE_WORK_READY &&
+                 surface.sync_status == VA_STATUS_SUCCESS &&
+                 surface.decoded,
+                 "async surface completion did not mark the surface ready");
+}
+
 } // namespace
 
 int main(void) {
@@ -124,6 +180,7 @@ int main(void) {
     ok = ensure_upload(typed_runtime, typed_session, larger_upload) && ok;
     ok = check(typed_session->upload.capacity > first_upload_capacity,
                "larger H.264 upload did not grow the reusable buffer") && ok;
+    ok = check_async_completion(typed_runtime) && ok;
 
     ok = ensure_session(runtime, session, 640, 360, 640, 368) && ok;
     const VkVideoSessionKHR grown_session = typed_session->video.session;
