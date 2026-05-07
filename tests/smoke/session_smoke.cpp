@@ -1,6 +1,8 @@
 #include "vulkan_runtime_internal.h"
 
+#include <cstdint>
 #include <cstdio>
+#include <vector>
 
 namespace {
 
@@ -54,6 +56,30 @@ bool ensure_session(
     return true;
 }
 
+bool ensure_upload(
+        vkvv::VulkanRuntime *runtime,
+        vkvv::H264VideoSession *session,
+        const std::vector<uint8_t> &bytes) {
+    VkvvH264DecodeInput input{};
+    input.bitstream = bytes.data();
+    input.bitstream_size = bytes.size();
+
+    char reason[512] = {};
+    if (!check(vkvv::ensure_upload_buffer(runtime, session, &input, &session->upload, reason, sizeof(reason)),
+               "ensure_upload_buffer failed")) {
+        std::fprintf(stderr, "%s\n", reason);
+        return false;
+    }
+    if (!check(session->upload.buffer != VK_NULL_HANDLE &&
+               session->upload.memory != VK_NULL_HANDLE &&
+               session->upload.size >= bytes.size() &&
+               session->upload.capacity >= session->upload.size,
+               "upload buffer was not populated correctly")) {
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int main(void) {
@@ -79,6 +105,25 @@ int main(void) {
 
     ok = ensure_session(runtime, session, 64, 64, 256, 256) && ok;
     auto *typed_session = static_cast<vkvv::H264VideoSession *>(session);
+    std::vector<uint8_t> first_upload(256, 0x11);
+    ok = ensure_upload(typed_runtime, typed_session, first_upload) && ok;
+    const VkBuffer first_upload_buffer = typed_session->upload.buffer;
+    const VkDeviceMemory first_upload_memory = typed_session->upload.memory;
+    const VkDeviceSize first_upload_capacity = typed_session->upload.capacity;
+    const VkDeviceSize first_upload_allocation = typed_session->upload.allocation_size;
+
+    std::vector<uint8_t> smaller_upload(128, 0x22);
+    ok = ensure_upload(typed_runtime, typed_session, smaller_upload) && ok;
+    ok = check(typed_session->upload.buffer == first_upload_buffer &&
+               typed_session->upload.memory == first_upload_memory &&
+               typed_session->upload.capacity == first_upload_capacity &&
+               typed_session->upload.allocation_size == first_upload_allocation,
+               "smaller H.264 upload did not reuse the existing buffer") && ok;
+
+    std::vector<uint8_t> larger_upload(static_cast<size_t>(first_upload_capacity + 1), 0x33);
+    ok = ensure_upload(typed_runtime, typed_session, larger_upload) && ok;
+    ok = check(typed_session->upload.capacity > first_upload_capacity,
+               "larger H.264 upload did not grow the reusable buffer") && ok;
 
     ok = ensure_session(runtime, session, 640, 360, 640, 368) && ok;
     const VkVideoSessionKHR grown_session = typed_session->video.session;

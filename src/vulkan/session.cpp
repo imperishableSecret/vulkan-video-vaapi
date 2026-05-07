@@ -28,6 +28,7 @@ void destroy_h264_video_session(VulkanRuntime *runtime, H264VideoSession *sessio
     if (session == nullptr) {
         return;
     }
+    destroy_upload_buffer(runtime, &session->upload);
     destroy_video_session(runtime, &session->video);
     session->bitstream_offset_alignment = 1;
     session->bitstream_size_alignment = 1;

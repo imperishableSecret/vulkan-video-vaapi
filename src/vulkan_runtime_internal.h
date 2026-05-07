@@ -169,7 +169,9 @@ struct UploadBuffer {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkDeviceSize size = 0;
+    VkDeviceSize capacity = 0;
     VkDeviceSize allocation_size = 0;
+    bool coherent = true;
 };
 
 struct VideoSessionKey {
@@ -193,6 +195,7 @@ struct VideoSession {
 
 struct H264VideoSession {
     VideoSession video;
+    UploadBuffer upload;
     VkDeviceSize bitstream_offset_alignment = 1;
     VkDeviceSize bitstream_size_alignment = 1;
     StdVideoH264LevelIdc max_level = STD_VIDEO_H264_LEVEL_IDC_5_2;
@@ -281,7 +284,7 @@ void destroy_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface);
 VkImageUsageFlags h264_surface_image_usage();
 bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const DecodeImageKey &key, char *reason, size_t reason_size);
 void destroy_upload_buffer(VulkanRuntime *runtime, UploadBuffer *upload);
-bool create_upload_buffer(VulkanRuntime *runtime, const H264VideoSession *session, const VkvvH264DecodeInput *input, UploadBuffer *upload, char *reason, size_t reason_size);
+bool ensure_upload_buffer(VulkanRuntime *runtime, const H264VideoSession *session, const VkvvH264DecodeInput *input, UploadBuffer *upload, char *reason, size_t reason_size);
 bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reason_size);
 bool submit_command_buffer_and_wait(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation);
 bool reset_h264_session(VulkanRuntime *runtime, H264VideoSession *session, VkVideoSessionParametersKHR parameters, char *reason, size_t reason_size);

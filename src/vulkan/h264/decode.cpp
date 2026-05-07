@@ -170,29 +170,26 @@ VAStatus vkvv_vulkan_decode_h264(
         }
     }
 
-    UploadBuffer upload{};
-    if (!create_upload_buffer(runtime, session, input, &upload, reason, reason_size)) {
+    UploadBuffer *upload = &session->upload;
+    if (!ensure_upload_buffer(runtime, session, input, upload, reason, reason_size)) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
 
     std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
     if (!ensure_command_resources(runtime, reason, reason_size)) {
-        destroy_upload_buffer(runtime, &upload);
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
 
     VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
     if (result != VK_SUCCESS) {
-        destroy_upload_buffer(runtime, &upload);
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
         std::snprintf(reason, reason_size, "vkResetFences for H.264 decode failed: %d", result);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
     result = vkResetCommandBuffer(runtime->command_buffer, 0);
     if (result != VK_SUCCESS) {
-        destroy_upload_buffer(runtime, &upload);
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
         std::snprintf(reason, reason_size, "vkResetCommandBuffer for H.264 decode failed: %d", result);
         return VA_STATUS_ERROR_OPERATION_FAILED;
@@ -203,7 +200,6 @@ VAStatus vkvv_vulkan_decode_h264(
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     result = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
     if (result != VK_SUCCESS) {
-        destroy_upload_buffer(runtime, &upload);
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
         std::snprintf(reason, reason_size, "vkBeginCommandBuffer for H.264 decode failed: %d", result);
         return VA_STATUS_ERROR_OPERATION_FAILED;
@@ -303,9 +299,9 @@ VAStatus vkvv_vulkan_decode_h264(
     VkVideoDecodeInfoKHR decode_info{};
     decode_info.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_INFO_KHR;
     decode_info.pNext = &h264_picture;
-    decode_info.srcBuffer = upload.buffer;
+    decode_info.srcBuffer = upload->buffer;
     decode_info.srcBufferOffset = 0;
-    decode_info.srcBufferRange = upload.size;
+    decode_info.srcBufferRange = upload->size;
     decode_info.dstPictureResource = dst_picture;
     decode_info.pSetupReferenceSlot = setup_slot_ptr;
     decode_info.referenceSlotCount = reference_count;
@@ -318,7 +314,6 @@ VAStatus vkvv_vulkan_decode_h264(
 
     result = vkEndCommandBuffer(runtime->command_buffer);
     if (result != VK_SUCCESS) {
-        destroy_upload_buffer(runtime, &upload);
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
         const VASliceParameterBufferH264 *first_slice =
                 (input->last_slices != nullptr && input->last_slice_count > 0) ? &input->last_slices[0] : nullptr;
@@ -349,9 +344,8 @@ VAStatus vkvv_vulkan_decode_h264(
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
-    const VkDeviceSize upload_allocation_size = upload.allocation_size;
+    const VkDeviceSize upload_allocation_size = upload->allocation_size;
     const bool submitted = submit_command_buffer_and_wait(runtime, reason, reason_size, "H.264 decode");
-    destroy_upload_buffer(runtime, &upload);
     runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
     if (!submitted) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
