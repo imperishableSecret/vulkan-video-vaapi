@@ -4,6 +4,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <string>
+#include <thread>
 #include <unistd.h>
 #include <va/va.h>
 #include <va/va_drm.h>
@@ -151,7 +152,18 @@ int main(void) {
         return 1;
     }
 
-    if (!export_surface(display, surfaces[0], "export surface 0")) {
+    bool export_ok[2] = {};
+    std::thread export_threads[2] = {
+        std::thread([&]() {
+            export_ok[0] = export_surface(display, surfaces[0], "parallel export surface 0");
+        }),
+        std::thread([&]() {
+            export_ok[1] = export_surface(display, surfaces[1], "parallel export surface 1");
+        }),
+    };
+    export_threads[0].join();
+    export_threads[1].join();
+    if (!export_ok[0] || !export_ok[1]) {
         cleanup();
         return 1;
     }

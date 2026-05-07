@@ -80,6 +80,7 @@ static VAStatus vkvvTerminate(VADriverContextP ctx) {
         release_owned_payloads(drv);
         vkvv_object_clear(drv);
         vkvv_vulkan_h264_session_destroy(drv->vulkan, drv->h264_export_session);
+        vkvv_driver_destroy_lock(drv);
         std::free(drv);
         ctx->pDriverData = NULL;
     }
@@ -167,6 +168,7 @@ static VAStatus vkvvDriverInit(VADriverContextP ctx) {
     if (drv == NULL) {
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
+    vkvv_driver_init_lock(drv);
     drv->next_id = 1;
     vkvv_probe_vulkan_video(&drv->caps);
     if (drv->caps.h264) {

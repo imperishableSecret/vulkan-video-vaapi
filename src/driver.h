@@ -2,6 +2,7 @@
 #define VKVV_DRIVER_H
 
 #include <stdbool.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <va/va.h>
 #include <va/va_backend.h>
@@ -46,6 +47,7 @@ typedef enum {
 } VkvvSurfaceWorkState;
 
 typedef struct VkvvSurface {
+    pthread_mutex_t mutex;
     unsigned int rt_format;
     unsigned int width;
     unsigned int height;
@@ -54,10 +56,12 @@ typedef struct VkvvSurface {
     int dpb_slot;
     VkvvSurfaceWorkState work_state;
     VAStatus sync_status;
+    bool destroying;
     bool decoded;
 } VkvvSurface;
 
 typedef struct VkvvContext {
+    pthread_mutex_t mutex;
     VAConfigID config_id;
     VAProfile profile;
     VAEntrypoint entrypoint;
@@ -85,6 +89,8 @@ typedef struct VkvvObject {
 } VkvvObject;
 
 typedef struct {
+    pthread_mutex_t object_mutex;
+    pthread_mutex_t state_mutex;
     VkvvVideoCaps caps;
     VkvvObject *objects;
     unsigned int next_id;
@@ -98,6 +104,8 @@ unsigned int vkvv_object_add(VkvvDriver *drv, VkvvObjectType type, void *payload
 void *vkvv_object_get(VkvvDriver *drv, unsigned int id, VkvvObjectType type);
 bool vkvv_object_remove(VkvvDriver *drv, unsigned int id, VkvvObjectType type);
 void vkvv_object_clear(VkvvDriver *drv);
+VkvvSurface *vkvv_surface_get_locked(VkvvDriver *drv, unsigned int id);
+void vkvv_surface_unlock(VkvvSurface *surface);
 
 #ifdef __cplusplus
 }

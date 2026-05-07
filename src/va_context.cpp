@@ -39,6 +39,7 @@ VAStatus vkvvCreateContext(
     if (vctx == NULL) {
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
+    vkvv_context_init_lock(vctx);
     vctx->config_id = config_id;
     vctx->profile = config->profile;
     vctx->entrypoint = config->entrypoint;
@@ -51,6 +52,7 @@ VAStatus vkvvCreateContext(
         vctx->codec_session = vkvv_vulkan_h264_session_create();
         if (vctx->codec_state == NULL || vctx->codec_session == NULL) {
             vkvv_release_context_payload(drv, vctx);
+            vkvv_context_destroy_lock(vctx);
             std::free(vctx);
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
@@ -59,6 +61,7 @@ VAStatus vkvvCreateContext(
     *context = vkvv_object_add(drv, VKVV_OBJECT_CONTEXT, vctx);
     if (*context == VA_INVALID_ID) {
         vkvv_release_context_payload(drv, vctx);
+        vkvv_context_destroy_lock(vctx);
         std::free(vctx);
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
@@ -71,13 +74,19 @@ VAStatus vkvvDestroyContext(VADriverContextP ctx, VAContextID context) {
     if (vctx == NULL) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
-    if (vctx->render_target != VA_INVALID_ID) {
-        auto *surface = static_cast<VkvvSurface *>(vkvv_object_get(drv, vctx->render_target, VKVV_OBJECT_SURFACE));
-        if (vkvv_surface_has_pending_work(surface)) {
-            vkvv_surface_complete_work(surface, VA_STATUS_ERROR_OPERATION_FAILED);
+    {
+        VkvvLockGuard context_lock(&vctx->mutex);
+        if (vctx->render_target != VA_INVALID_ID) {
+            auto *surface = static_cast<VkvvSurface *>(vkvv_object_get(drv, vctx->render_target, VKVV_OBJECT_SURFACE));
+            if (surface != NULL) {
+                VkvvLockGuard surface_lock(&surface->mutex);
+                if (vkvv_surface_has_pending_work(surface)) {
+                    vkvv_surface_complete_work(surface, VA_STATUS_ERROR_OPERATION_FAILED);
+                }
+            }
         }
+        vkvv_release_context_payload(drv, vctx);
     }
-    vkvv_release_context_payload(drv, vctx);
     return vkvv_object_remove(drv, context, VKVV_OBJECT_CONTEXT) ?
            VA_STATUS_SUCCESS : VA_STATUS_ERROR_INVALID_CONTEXT;
 }
@@ -88,14 +97,22 @@ VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID
     if (vctx == NULL) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
+    VkvvLockGuard context_lock(&vctx->mutex);
     if (vctx->render_target != VA_INVALID_ID) {
         auto *previous = static_cast<VkvvSurface *>(vkvv_object_get(drv, vctx->render_target, VKVV_OBJECT_SURFACE));
-        if (vkvv_surface_has_pending_work(previous)) {
-            vkvv_surface_complete_work(previous, VA_STATUS_ERROR_OPERATION_FAILED);
+        if (previous != NULL) {
+            VkvvLockGuard previous_lock(&previous->mutex);
+            if (vkvv_surface_has_pending_work(previous)) {
+                vkvv_surface_complete_work(previous, VA_STATUS_ERROR_OPERATION_FAILED);
+            }
         }
     }
     auto *surface = static_cast<VkvvSurface *>(vkvv_object_get(drv, render_target, VKVV_OBJECT_SURFACE));
     if (surface == NULL) {
+        return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+    VkvvLockGuard surface_lock(&surface->mutex);
+    if (surface->destroying) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
     if (vkvv_surface_has_pending_work(surface)) {
@@ -115,6 +132,7 @@ VAStatus vkvvRenderPicture(VADriverContextP ctx, VAContextID context, VABufferID
     if (vctx == NULL) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
+    VkvvLockGuard context_lock(&vctx->mutex);
     for (int i = 0; i < num_buffers; i++) {
         auto *buffer = static_cast<VkvvBuffer *>(vkvv_object_get(drv, buffers[i], VKVV_OBJECT_BUFFER));
         if (buffer == NULL) {
@@ -136,11 +154,16 @@ VAStatus vkvvEndPicture(VADriverContextP ctx, VAContextID context) {
     if (vctx == NULL) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
+    VkvvLockGuard context_lock(&vctx->mutex);
     if (!vkvv_profile_is_h264(vctx->profile)) {
         return VA_STATUS_ERROR_UNIMPLEMENTED;
     }
     auto *target = static_cast<VkvvSurface *>(vkvv_object_get(drv, vctx->render_target, VKVV_OBJECT_SURFACE));
     if (target == NULL) {
+        return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+    VkvvLockGuard surface_lock(&target->mutex);
+    if (target->destroying) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
     auto finish_surface = [vctx, target](VAStatus status) {

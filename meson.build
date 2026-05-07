@@ -15,6 +15,7 @@ libva_dep = dependency('libva')
 libva_drm_dep = dependency('libva-drm')
 libdrm_dep = dependency('libdrm')
 vulkan_dep = dependency('vulkan')
+threads_dep = dependency('threads')
 exports_map = meson.current_source_dir() / 'src' / 'exports.map'
 src_inc = include_directories('src')
 
@@ -50,7 +51,7 @@ shared_module(
   'nvidia_vulkan_drv_video',
   driver_sources,
   name_prefix: '',
-  dependencies: [libva_dep, libdrm_dep, vulkan_dep],
+  dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
   gnu_symbol_visibility: 'hidden',
   link_args: ['-Wl,--version-script=' + exports_map],
   link_depends: files('src/exports.map'),
@@ -80,7 +81,7 @@ session_smoke = executable(
     'src/object.cpp',
   ) + vulkan_runtime_sources + h264_vulkan_sources,
   include_directories: src_inc,
-  dependencies: [libva_dep, libdrm_dep, vulkan_dep],
+  dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
   install: false,
 )
 
@@ -91,28 +92,28 @@ export_smoke = executable(
     'src/object.cpp',
   ) + vulkan_runtime_sources + h264_vulkan_sources,
   include_directories: src_inc,
-  dependencies: [libva_dep, libdrm_dep, vulkan_dep],
+  dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
   install: false,
 )
 
 lifetime_smoke = executable(
   'vkvv-lifetime-smoke',
   files('tests/smoke/lifetime_smoke.cpp'),
-  dependencies: [libva_dep, libva_drm_dep],
+  dependencies: [libva_dep, libva_drm_dep, threads_dep],
   install: false,
 )
 
 multi_context_smoke = executable(
   'vkvv-multi-context-smoke',
   files('tests/smoke/multi_context_smoke.cpp'),
-  dependencies: [libva_dep, libva_drm_dep],
+  dependencies: [libva_dep, libva_drm_dep, threads_dep],
   install: false,
 )
 
 sync_smoke = executable(
   'vkvv-sync-smoke',
   files('tests/smoke/sync_smoke.cpp'),
-  dependencies: [libva_dep, libva_drm_dep],
+  dependencies: [libva_dep, libva_drm_dep, threads_dep],
   install: false,
 )
 

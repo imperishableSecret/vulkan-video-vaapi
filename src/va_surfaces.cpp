@@ -9,6 +9,23 @@ constexpr int min_surface_dimension = 1;
 constexpr int max_decode_surface_dimension = 4096;
 constexpr unsigned int surface_attribute_count = 7;
 
+struct LockedSurface {
+    explicit LockedSurface(VkvvSurface *surface) : surface(surface) {}
+    ~LockedSurface() {
+        unlock();
+    }
+
+    LockedSurface(const LockedSurface &) = delete;
+    LockedSurface &operator=(const LockedSurface &) = delete;
+
+    void unlock() {
+        vkvv_surface_unlock(surface);
+        surface = NULL;
+    }
+
+    VkvvSurface *surface;
+};
+
 void set_integer_attrib(VASurfaceAttrib *attrib, VASurfaceAttribType type, uint32_t flags, int value) {
     *attrib = {};
     attrib->type = type;
@@ -25,6 +42,9 @@ VASurfaceStatus va_status_for_surface(const VkvvSurface *surface) {
 }
 
 VAStatus sync_surface_work(const VkvvSurface *surface, uint64_t timeout_ns) {
+    if (surface->destroying) {
+        return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
     if (surface->work_state == VKVV_SURFACE_WORK_RENDERING) {
         (void) timeout_ns;
         return VA_STATUS_ERROR_TIMEDOUT;
@@ -38,6 +58,9 @@ void vkvv_surface_begin_work(VkvvSurface *surface) {
     if (surface == NULL) {
         return;
     }
+    if (surface->destroying) {
+        return;
+    }
     surface->work_state = VKVV_SURFACE_WORK_RENDERING;
     surface->sync_status = VA_STATUS_ERROR_TIMEDOUT;
     surface->decoded = false;
@@ -45,6 +68,9 @@ void vkvv_surface_begin_work(VkvvSurface *surface) {
 
 void vkvv_surface_complete_work(VkvvSurface *surface, VAStatus status) {
     if (surface == NULL) {
+        return;
+    }
+    if (surface->destroying) {
         return;
     }
     surface->work_state = VKVV_SURFACE_WORK_READY;
@@ -84,8 +110,10 @@ VAStatus vkvvCreateSurfaces2(
         surface->dpb_slot = -1;
         surface->work_state = VKVV_SURFACE_WORK_READY;
         surface->sync_status = VA_STATUS_SUCCESS;
+        vkvv_surface_init_lock(surface);
         surfaces[i] = vkvv_object_add(drv, VKVV_OBJECT_SURFACE, surface);
         if (surfaces[i] == VA_INVALID_ID) {
+            vkvv_surface_destroy_lock(surface);
             std::free(surface);
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
@@ -111,13 +139,21 @@ VAStatus vkvvCreateSurfaces(
 VAStatus vkvvDestroySurfaces(VADriverContextP ctx, VASurfaceID *surface_list, int num_surfaces) {
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
     for (int i = 0; i < num_surfaces; i++) {
-        auto *surface = static_cast<VkvvSurface *>(vkvv_object_get(drv, surface_list[i], VKVV_OBJECT_SURFACE));
+        auto *surface = vkvv_surface_get_locked(drv, surface_list[i]);
         if (surface == NULL) {
             return VA_STATUS_ERROR_INVALID_SURFACE;
+        }
+        LockedSurface locked_surface(surface);
+        surface->destroying = true;
+        if (vkvv_surface_has_pending_work(surface)) {
+            surface->work_state = VKVV_SURFACE_WORK_READY;
+            surface->sync_status = VA_STATUS_ERROR_OPERATION_FAILED;
         }
         if (drv->vulkan != NULL) {
             vkvv_vulkan_surface_destroy(drv->vulkan, surface);
         }
+        locked_surface.unlock();
+        surface = NULL;
         if (!vkvv_object_remove(drv, surface_list[i], VKVV_OBJECT_SURFACE)) {
             return VA_STATUS_ERROR_INVALID_SURFACE;
         }
@@ -127,17 +163,22 @@ VAStatus vkvvDestroySurfaces(VADriverContextP ctx, VASurfaceID *surface_list, in
 
 VAStatus vkvvSyncSurface(VADriverContextP ctx, VASurfaceID render_target) {
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
-    auto *surface = static_cast<VkvvSurface *>(vkvv_object_get(drv, render_target, VKVV_OBJECT_SURFACE));
+    auto *surface = vkvv_surface_get_locked(drv, render_target);
     if (surface == NULL) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
+    LockedSurface locked_surface(surface);
     return sync_surface_work(surface, VA_TIMEOUT_INFINITE);
 }
 
 VAStatus vkvvQuerySurfaceStatus(VADriverContextP ctx, VASurfaceID render_target, VASurfaceStatus *status) {
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
-    auto *surface = static_cast<VkvvSurface *>(vkvv_object_get(drv, render_target, VKVV_OBJECT_SURFACE));
+    auto *surface = vkvv_surface_get_locked(drv, render_target);
     if (surface == NULL) {
+        return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+    LockedSurface locked_surface(surface);
+    if (surface->destroying) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
     if (status == NULL) {
@@ -150,7 +191,12 @@ VAStatus vkvvQuerySurfaceStatus(VADriverContextP ctx, VASurfaceID render_target,
 VAStatus vkvvQuerySurfaceError(VADriverContextP ctx, VASurfaceID render_target, VAStatus error_status, void **error_info) {
     (void) error_status;
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
-    if (vkvv_object_get(drv, render_target, VKVV_OBJECT_SURFACE) == NULL) {
+    auto *surface = vkvv_surface_get_locked(drv, render_target);
+    if (surface == NULL) {
+        return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+    LockedSurface locked_surface(surface);
+    if (surface->destroying) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
     *error_info = NULL;
@@ -221,10 +267,18 @@ VAStatus vkvvExportSurfaceHandle(
     if ((mem_type & VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2) == 0) {
         return VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE;
     }
-    auto *surface = static_cast<VkvvSurface *>(vkvv_object_get(drv, surface_id, VKVV_OBJECT_SURFACE));
+    VkvvLockGuard driver_state_lock(&drv->state_mutex);
+    auto *surface = vkvv_surface_get_locked(drv, surface_id);
     if (surface == NULL) {
         vkvv_log("export requested for unknown surface %u", surface_id);
         return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+    LockedSurface locked_surface(surface);
+    if (surface->destroying) {
+        return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+    if (vkvv_surface_has_pending_work(surface)) {
+        return VA_STATUS_ERROR_TIMEDOUT;
     }
     if (drv->vulkan == NULL) {
         char runtime_reason[512] = {};
@@ -264,9 +318,10 @@ VAStatus vkvvExportSurfaceHandle(
 
 VAStatus vkvvSyncSurface2(VADriverContextP ctx, VASurfaceID surface, uint64_t timeout_ns) {
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
-    auto *target = static_cast<VkvvSurface *>(vkvv_object_get(drv, surface, VKVV_OBJECT_SURFACE));
+    auto *target = vkvv_surface_get_locked(drv, surface);
     if (target == NULL) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
+    LockedSurface locked_surface(target);
     return sync_surface_work(target, timeout_ns);
 }
