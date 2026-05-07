@@ -367,7 +367,7 @@ VAStatus vkvv_h264_prepare_decode(void *state, unsigned int *width, unsigned int
     *width = static_cast<unsigned int>(h264->pic.picture_width_in_mbs_minus1 + 1) * 16;
     *height = static_cast<unsigned int>(h264->pic.picture_height_in_mbs_minus1 + 1) * 16;
     std::snprintf(reason, reason_size,
-                  "captured H.264 picture: %ux%u slices=%zu bitstream=%zu bytes iq=%d hdr=%d nal=%u pps=%u idr=%u",
+                  "captured H.264 picture: %ux%u slices=%zu bitstream=%zu bytes iq=%d slice_header=%d nal=%u pps=%u idr=%u",
                   *width, *height, h264->slice_offsets.size(), h264->bitstream.size(), h264->has_iq,
                   h264->has_slice_header, h264->first_nal_unit_type,
                   h264->pic_parameter_set_id, h264->idr_pic_id);

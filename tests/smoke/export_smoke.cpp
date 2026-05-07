@@ -162,11 +162,10 @@ int main(void) {
         return 1;
     }
     if (first_fd < 0 || fcntl(first_fd, F_GETFD) < 0 ||
-        resource->retired_exports.size() != 1 ||
-        resource->retired_exports[0].memory != first_export_memory ||
-        resource->export_resource.memory == first_export_memory ||
+        !resource->retired_exports.empty() ||
+        resource->export_resource.memory != first_export_memory ||
         resource->export_resource.allocation_size == 0) {
-        std::fprintf(stderr, "export refresh did not preserve the previously exported shadow image\n");
+        std::fprintf(stderr, "export refresh did not update the previously exported shadow image in place\n");
         if (first_fd >= 0) {
             close(first_fd);
         }

@@ -255,6 +255,19 @@ bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, cha
                                              reason, reason_size);
 }
 
+bool export_resource_matches_surface(const SurfaceResource *source) {
+    if (source == nullptr) {
+        return false;
+    }
+
+    const ExportResource &resource = source->export_resource;
+    return resource.image != VK_NULL_HANDLE &&
+           resource.format == source->format &&
+           resource.va_fourcc == source->va_fourcc &&
+           resource.extent.width >= source->coded_extent.width &&
+           resource.extent.height >= source->coded_extent.height;
+}
+
 void add_raw_image_barrier(
         std::vector<VkImageMemoryBarrier2> *barriers,
         VkImage image,
@@ -291,7 +304,7 @@ bool copy_surface_to_export_resource(VulkanRuntime *runtime, SurfaceResource *so
     if (format == nullptr) {
         return false;
     }
-    if (source->export_resource.exported) {
+    if (source->export_resource.exported && !export_resource_matches_surface(source)) {
         retire_export_resource(source);
     }
     if (!ensure_export_resource(runtime, source, reason, reason_size)) {
