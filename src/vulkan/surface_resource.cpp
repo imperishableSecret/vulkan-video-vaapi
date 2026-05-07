@@ -65,6 +65,8 @@ void destroy_export_resource(VulkanRuntime *runtime, ExportResource *resource) {
         resource->memory = VK_NULL_HANDLE;
     }
     resource->extent = {};
+    resource->format = VK_FORMAT_UNDEFINED;
+    resource->va_fourcc = 0;
     resource->allocation_size = 0;
     resource->plane_layouts[0] = {};
     resource->plane_layouts[1] = {};

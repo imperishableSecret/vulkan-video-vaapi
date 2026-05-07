@@ -56,6 +56,8 @@ struct ExportResource {
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkExtent2D extent{};
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    unsigned int va_fourcc = 0;
     VkDeviceSize allocation_size = 0;
     VkSubresourceLayout plane_layouts[2]{};
     uint32_t plane_count = 0;

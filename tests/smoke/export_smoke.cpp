@@ -1,6 +1,7 @@
 #include "vulkan_runtime_internal.h"
 
 #include <cstdio>
+#include <drm_fourcc.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -46,12 +47,69 @@ int main(void) {
         return 1;
     }
 
+    VkvvSurface p010_surface{};
+    p010_surface.rt_format = VA_RT_FORMAT_YUV420_10;
+    p010_surface.width = 64;
+    p010_surface.height = 64;
+    p010_surface.fourcc = VA_FOURCC_P010;
+    p010_surface.dpb_slot = -1;
+    status = vkvv_vulkan_prepare_surface_export(runtime, &p010_surface, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    if (status != VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT) {
+        std::fprintf(stderr, "P010 export preparation should stay unsupported until a 10-bit decode path exists\n");
+        vkvv_vulkan_surface_destroy(runtime, &p010_surface);
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+
+    VADRMPRIMESurfaceDescriptor invalid_descriptor{};
+    status = vkvv_vulkan_export_surface(
+        runtime, &surface, VA_EXPORT_SURFACE_READ_ONLY, &invalid_descriptor, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    if (status != VA_STATUS_ERROR_INVALID_PARAMETER) {
+        std::fprintf(stderr, "export without separate layers should fail validation\n");
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+
+    status = vkvv_vulkan_export_surface(
+        runtime, &surface, VA_EXPORT_SURFACE_READ_WRITE | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
+        &invalid_descriptor, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    if (status != VA_STATUS_ERROR_INVALID_PARAMETER) {
+        std::fprintf(stderr, "read-write export should fail validation\n");
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+
     VADRMPRIMESurfaceDescriptor descriptor{};
     status = vkvv_vulkan_export_surface(
         runtime, &surface, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
         &descriptor, reason, sizeof(reason));
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    if (descriptor.fourcc != VA_FOURCC_NV12 ||
+        descriptor.num_objects != 1 ||
+        descriptor.num_layers != 2 ||
+        descriptor.layers[0].drm_format != DRM_FORMAT_R8 ||
+        descriptor.layers[0].num_planes != 1 ||
+        descriptor.layers[1].drm_format != DRM_FORMAT_GR88 ||
+        descriptor.layers[1].num_planes != 1) {
+        std::fprintf(stderr, "NV12 descriptor builder returned an unexpected DRM PRIME shape\n");
+        if (descriptor.objects[0].fd >= 0) {
+            close(descriptor.objects[0].fd);
+        }
         vkvv_vulkan_surface_destroy(runtime, &surface);
         vkvv_vulkan_h264_session_destroy(runtime, session);
         vkvv_vulkan_runtime_destroy(runtime);

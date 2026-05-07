@@ -6,19 +6,112 @@
 #include <limits>
 #include <mutex>
 #include <vector>
+#include <unistd.h>
 #include <drm_fourcc.h>
 
 namespace vkvv {
 
+struct ExportLayerInfo {
+    VkImageAspectFlags aspect;
+    uint32_t drm_format;
+    uint32_t width_divisor;
+    uint32_t height_divisor;
+};
+
+struct ExportFormatInfo {
+    unsigned int va_fourcc;
+    VkFormat vk_format;
+    const char *name;
+    uint32_t layer_count;
+    ExportLayerInfo layers[2];
+};
+
+constexpr ExportFormatInfo nv12_export_format = {
+    VA_FOURCC_NV12,
+    VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
+    "NV12",
+    2,
+    {
+        {VK_IMAGE_ASPECT_PLANE_0_BIT, DRM_FORMAT_R8, 1, 1},
+        {VK_IMAGE_ASPECT_PLANE_1_BIT, DRM_FORMAT_GR88, 2, 2},
+    },
+};
+
+const ExportFormatInfo *export_format_for_fourcc(unsigned int fourcc) {
+    switch (fourcc) {
+        case VA_FOURCC_NV12:
+            return &nv12_export_format;
+        default:
+            return nullptr;
+    }
+}
+
+const ExportFormatInfo *export_format_for_surface(
+        const VkvvSurface *surface,
+        const SurfaceResource *resource,
+        char *reason,
+        size_t reason_size) {
+    if (surface == nullptr && resource == nullptr) {
+        std::snprintf(reason, reason_size, "missing surface export format source");
+        return nullptr;
+    }
+    const unsigned int fourcc = resource != nullptr ? resource->va_fourcc : surface->fourcc;
+    const ExportFormatInfo *format = export_format_for_fourcc(fourcc);
+    if (format == nullptr) {
+        std::snprintf(reason, reason_size, "surface export does not support VA fourcc=0x%x", fourcc);
+        return nullptr;
+    }
+    if (resource != nullptr && resource->format != format->vk_format) {
+        std::snprintf(reason, reason_size,
+                      "surface export format mismatch: va_fourcc=0x%x resource_format=%d expected_format=%d",
+                      fourcc, resource->format, format->vk_format);
+        return nullptr;
+    }
+    return format;
+}
+
+VkExtent3D export_layer_extent(VkExtent2D coded_extent, const ExportLayerInfo &layer) {
+    return {
+        (coded_extent.width + layer.width_divisor - 1) / layer.width_divisor,
+        (coded_extent.height + layer.height_divisor - 1) / layer.height_divisor,
+        1,
+    };
+}
+
+VAStatus validate_export_flags(uint32_t flags, char *reason, size_t reason_size) {
+    const uint32_t access = flags & VA_EXPORT_SURFACE_READ_WRITE;
+    if (access != VA_EXPORT_SURFACE_READ_ONLY) {
+        std::snprintf(reason, reason_size, "surface export requires read-only access flags");
+        return VA_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    if ((flags & VA_EXPORT_SURFACE_SEPARATE_LAYERS) == 0) {
+        std::snprintf(reason, reason_size, "surface export currently requires separate layers");
+        return VA_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    if ((flags & VA_EXPORT_SURFACE_COMPOSED_LAYERS) != 0) {
+        std::snprintf(reason, reason_size, "surface export does not support composed layers");
+        return VA_STATUS_ERROR_INVALID_PARAMETER;
+    }
+
+    constexpr uint32_t supported_flags =
+        VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS;
+    if ((flags & ~supported_flags) != 0) {
+        std::snprintf(reason, reason_size, "surface export has unsupported flags=0x%x", flags & ~supported_flags);
+        return VA_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    return VA_STATUS_SUCCESS;
+}
+
 bool create_export_resource_with_tiling(
         VulkanRuntime *runtime,
         ExportResource *resource,
+        const ExportFormatInfo *format,
         VkExtent2D extent,
         VkImageTiling tiling,
         char *reason,
         size_t reason_size) {
-    if (runtime->h264_picture_format != VK_FORMAT_G8_B8R8_2PLANE_420_UNORM) {
-        std::snprintf(reason, reason_size, "export shadow image currently supports only NV12-compatible Vulkan format");
+    if (format == nullptr) {
+        std::snprintf(reason, reason_size, "missing surface export format");
         return false;
     }
 
@@ -32,7 +125,7 @@ bool create_export_resource_with_tiling(
     if (tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
         if (!enumerate_drm_format_modifiers(
                 runtime,
-                runtime->h264_picture_format,
+                format->vk_format,
                 VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT,
                 &drm_modifiers)) {
             std::snprintf(reason, reason_size, "no DRM format modifiers support transfer-dst export images");
@@ -47,7 +140,7 @@ bool create_export_resource_with_tiling(
     image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     image_info.pNext = &external_image;
     image_info.imageType = VK_IMAGE_TYPE_2D;
-    image_info.format = runtime->h264_picture_format;
+    image_info.format = format->vk_format;
     image_info.extent = {extent.width, extent.height, 1};
     image_info.mipLevels = 1;
     image_info.arrayLayers = 1;
@@ -104,16 +197,17 @@ bool create_export_resource_with_tiling(
         return false;
     }
 
-    VkImageSubresource plane0{};
-    plane0.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT;
-    VkImageSubresource plane1{};
-    plane1.aspectMask = VK_IMAGE_ASPECT_PLANE_1_BIT;
-    vkGetImageSubresourceLayout(runtime->device, resource->image, &plane0, &resource->plane_layouts[0]);
-    vkGetImageSubresourceLayout(runtime->device, resource->image, &plane1, &resource->plane_layouts[1]);
+    for (uint32_t i = 0; i < format->layer_count; i++) {
+        VkImageSubresource plane{};
+        plane.aspectMask = format->layers[i].aspect;
+        vkGetImageSubresourceLayout(runtime->device, resource->image, &plane, &resource->plane_layouts[i]);
+    }
 
     resource->extent = extent;
+    resource->format = format->vk_format;
+    resource->va_fourcc = format->va_fourcc;
     resource->allocation_size = requirements.size;
-    resource->plane_count = 2;
+    resource->plane_count = format->layer_count;
     if (tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
         VkImageDrmFormatModifierPropertiesEXT modifier_properties{};
         modifier_properties.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT;
@@ -134,8 +228,15 @@ bool create_export_resource_with_tiling(
 }
 
 bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, char *reason, size_t reason_size) {
+    const ExportFormatInfo *format = export_format_for_surface(nullptr, source, reason, reason_size);
+    if (format == nullptr) {
+        return false;
+    }
+
     ExportResource *resource = &source->export_resource;
     if (resource->image != VK_NULL_HANDLE &&
+        resource->format == source->format &&
+        resource->va_fourcc == source->va_fourcc &&
         resource->extent.width >= source->coded_extent.width &&
         resource->extent.height >= source->coded_extent.height) {
         return true;
@@ -143,13 +244,13 @@ bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, cha
 
     destroy_export_resource(runtime, resource);
     if (runtime->image_drm_format_modifier &&
-        create_export_resource_with_tiling(runtime, resource, source->coded_extent,
+        create_export_resource_with_tiling(runtime, resource, format, source->coded_extent,
                                            VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
                                            reason, reason_size)) {
         return true;
     }
     destroy_export_resource(runtime, resource);
-    return create_export_resource_with_tiling(runtime, resource, source->coded_extent,
+    return create_export_resource_with_tiling(runtime, resource, format, source->coded_extent,
                                              VK_IMAGE_TILING_LINEAR,
                                              reason, reason_size);
 }
@@ -186,6 +287,10 @@ void add_raw_image_barrier(
 }
 
 bool copy_surface_to_export_resource(VulkanRuntime *runtime, SurfaceResource *source, char *reason, size_t reason_size) {
+    const ExportFormatInfo *format = export_format_for_surface(nullptr, source, reason, reason_size);
+    if (format == nullptr) {
+        return false;
+    }
     if (source->export_resource.exported) {
         retire_export_resource(source);
     }
@@ -247,24 +352,20 @@ bool copy_surface_to_export_resource(VulkanRuntime *runtime, SurfaceResource *so
     export_resource->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 
     VkImageCopy regions[2]{};
-    regions[0].srcSubresource.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT;
-    regions[0].srcSubresource.layerCount = 1;
-    regions[0].dstSubresource.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT;
-    regions[0].dstSubresource.layerCount = 1;
-    regions[0].extent = {source->coded_extent.width, source->coded_extent.height, 1};
-
-    regions[1].srcSubresource.aspectMask = VK_IMAGE_ASPECT_PLANE_1_BIT;
-    regions[1].srcSubresource.layerCount = 1;
-    regions[1].dstSubresource.aspectMask = VK_IMAGE_ASPECT_PLANE_1_BIT;
-    regions[1].dstSubresource.layerCount = 1;
-    regions[1].extent = {(source->coded_extent.width + 1) / 2, (source->coded_extent.height + 1) / 2, 1};
+    for (uint32_t i = 0; i < format->layer_count; i++) {
+        regions[i].srcSubresource.aspectMask = format->layers[i].aspect;
+        regions[i].srcSubresource.layerCount = 1;
+        regions[i].dstSubresource.aspectMask = format->layers[i].aspect;
+        regions[i].dstSubresource.layerCount = 1;
+        regions[i].extent = export_layer_extent(source->coded_extent, format->layers[i]);
+    }
 
     vkCmdCopyImage(runtime->command_buffer,
                    source->image,
                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                    export_resource->image,
                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                   2,
+                   format->layer_count,
                    regions);
 
     barriers.clear();
@@ -302,6 +403,55 @@ bool copy_surface_to_export_resource(VulkanRuntime *runtime, SurfaceResource *so
     return submit_command_buffer_and_wait(runtime, reason, reason_size, "surface export copy");
 }
 
+VAStatus fill_drm_prime_descriptor(
+        const VkvvSurface *surface,
+        const ExportFormatInfo *format,
+        VkDeviceSize allocation_size,
+        const VkSubresourceLayout *plane_layouts,
+        uint32_t plane_count,
+        uint64_t modifier,
+        bool has_modifier,
+        int fd,
+        VADRMPRIMESurfaceDescriptor *descriptor,
+        char *reason,
+        size_t reason_size) {
+    if (plane_count != format->layer_count) {
+        std::snprintf(reason, reason_size, "exportable %s image has %u planes, expected %u",
+                      format->name, plane_count, format->layer_count);
+        return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+    if (allocation_size > std::numeric_limits<uint32_t>::max()) {
+        std::snprintf(reason, reason_size, "export allocation is too large for VADRMPRIMESurfaceDescriptor");
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    for (uint32_t i = 0; i < format->layer_count; i++) {
+        if (plane_layouts[i].offset > std::numeric_limits<uint32_t>::max() ||
+            plane_layouts[i].rowPitch > std::numeric_limits<uint32_t>::max()) {
+            std::snprintf(reason, reason_size, "export plane layout is too large for VADRMPRIMESurfaceDescriptor");
+            return VA_STATUS_ERROR_OPERATION_FAILED;
+        }
+    }
+
+    std::memset(descriptor, 0, sizeof(*descriptor));
+    descriptor->fourcc = format->va_fourcc;
+    descriptor->width = surface->width;
+    descriptor->height = surface->height;
+    descriptor->num_objects = 1;
+    descriptor->objects[0].fd = fd;
+    descriptor->objects[0].size = static_cast<uint32_t>(allocation_size);
+    descriptor->objects[0].drm_format_modifier = has_modifier ? modifier : DRM_FORMAT_MOD_INVALID;
+    descriptor->num_layers = format->layer_count;
+    for (uint32_t i = 0; i < format->layer_count; i++) {
+        descriptor->layers[i].drm_format = format->layers[i].drm_format;
+        descriptor->layers[i].num_planes = 1;
+        descriptor->layers[i].object_index[0] = 0;
+        descriptor->layers[i].offset[0] = static_cast<uint32_t>(plane_layouts[i].offset);
+        descriptor->layers[i].pitch[0] = static_cast<uint32_t>(plane_layouts[i].rowPitch);
+    }
+
+    return VA_STATUS_SUCCESS;
+}
+
 } // namespace vkvv
 
 using namespace vkvv;
@@ -324,8 +474,8 @@ VAStatus vkvv_vulkan_prepare_surface_export(
         std::snprintf(reason, reason_size, "missing surface for export preparation");
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
-    if (surface->fourcc != VA_FOURCC_NV12) {
-        std::snprintf(reason, reason_size, "surface export currently supports only NV12");
+    const ExportFormatInfo *format = export_format_for_surface(surface, nullptr, reason, reason_size);
+    if (format == nullptr) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
 
@@ -343,7 +493,8 @@ VAStatus vkvv_vulkan_prepare_surface_export(
     }
 
     std::snprintf(reason, reason_size,
-                  "surface export resource ready: visible=%ux%u coded=%ux%u format=%d va_fourcc=0x%x exportable=%u shadow=%u decode_mem=%llu export_mem=%llu retired=%zu",
+                  "surface export resource ready: format=%s visible=%ux%u coded=%ux%u vk_format=%d va_fourcc=0x%x exportable=%u shadow=%u decode_mem=%llu export_mem=%llu retired=%zu",
+                  format->name,
                   surface->width, surface->height,
                   resource->coded_extent.width, resource->coded_extent.height,
                   resource->format, resource->va_fourcc, resource->exportable,
@@ -381,11 +532,16 @@ VAStatus vkvv_vulkan_refresh_surface_export(
         return VA_STATUS_SUCCESS;
     }
 
+    const ExportFormatInfo *format = export_format_for_surface(surface, resource, reason, reason_size);
+    if (format == nullptr) {
+        return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
+    }
     if (!copy_surface_to_export_resource(runtime, resource, reason, reason_size)) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
     std::snprintf(reason, reason_size,
-                  "refreshed exported NV12 shadow image after decode: export_mem=%llu retired=%zu",
+                  "refreshed exported %s shadow image after decode: export_mem=%llu retired=%zu",
+                  format->name,
                   static_cast<unsigned long long>(export_memory_bytes(resource)),
                   resource->retired_exports.size());
     return VA_STATUS_SUCCESS;
@@ -411,13 +567,13 @@ VAStatus vkvv_vulkan_export_surface(
         std::snprintf(reason, reason_size, "surface has no Vulkan image to export");
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
-    if (surface->fourcc != VA_FOURCC_NV12) {
-        std::snprintf(reason, reason_size, "surface export currently supports only NV12");
+    const ExportFormatInfo *format = export_format_for_surface(surface, nullptr, reason, reason_size);
+    if (format == nullptr) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
-    if ((flags & VA_EXPORT_SURFACE_SEPARATE_LAYERS) == 0) {
-        std::snprintf(reason, reason_size, "surface export currently requires separate layers");
-        return VA_STATUS_ERROR_INVALID_SURFACE;
+    const VAStatus flag_status = validate_export_flags(flags, reason, reason_size);
+    if (flag_status != VA_STATUS_SUCCESS) {
+        return flag_status;
     }
     if (descriptor == nullptr) {
         std::snprintf(reason, reason_size, "surface export descriptor is null");
@@ -425,6 +581,10 @@ VAStatus vkvv_vulkan_export_surface(
     }
 
     auto *resource = static_cast<SurfaceResource *>(surface->vulkan);
+    format = export_format_for_surface(surface, resource, reason, reason_size);
+    if (format == nullptr) {
+        return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
+    }
     VkDeviceMemory export_memory = resource->memory;
     VkDeviceSize export_allocation_size = resource->allocation_size;
     const VkSubresourceLayout *export_plane_layouts = resource->plane_layouts;
@@ -453,20 +613,9 @@ VAStatus vkvv_vulkan_export_surface(
         exported_shadow = shadow;
     }
 
-    if (export_memory == VK_NULL_HANDLE || export_plane_count != 2) {
+    if (export_memory == VK_NULL_HANDLE) {
         std::snprintf(reason, reason_size, "Vulkan surface image has no exportable memory layout");
         return VA_STATUS_ERROR_INVALID_SURFACE;
-    }
-    if (export_allocation_size > std::numeric_limits<uint32_t>::max()) {
-        std::snprintf(reason, reason_size, "export allocation is too large for VADRMPRIMESurfaceDescriptor");
-        return VA_STATUS_ERROR_OPERATION_FAILED;
-    }
-    for (uint32_t i = 0; i < export_plane_count; i++) {
-        if (export_plane_layouts[i].offset > std::numeric_limits<uint32_t>::max() ||
-            export_plane_layouts[i].rowPitch > std::numeric_limits<uint32_t>::max()) {
-            std::snprintf(reason, reason_size, "export plane layout is too large for VADRMPRIMESurfaceDescriptor");
-            return VA_STATUS_ERROR_OPERATION_FAILED;
-        }
     }
 
     VkMemoryGetFdInfoKHR fd_info{};
@@ -481,35 +630,21 @@ VAStatus vkvv_vulkan_export_surface(
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
-    std::memset(descriptor, 0, sizeof(*descriptor));
-    descriptor->fourcc = VA_FOURCC_NV12;
-    descriptor->width = surface->width;
-    descriptor->height = surface->height;
-    descriptor->num_objects = 1;
-    descriptor->objects[0].fd = fd;
-    descriptor->objects[0].size = static_cast<uint32_t>(export_allocation_size);
-    descriptor->objects[0].drm_format_modifier =
-        export_has_modifier ? export_modifier : DRM_FORMAT_MOD_INVALID;
-
-    descriptor->num_layers = 2;
-    descriptor->layers[0].drm_format = DRM_FORMAT_R8;
-    descriptor->layers[0].num_planes = 1;
-    descriptor->layers[0].object_index[0] = 0;
-    descriptor->layers[0].offset[0] = static_cast<uint32_t>(export_plane_layouts[0].offset);
-    descriptor->layers[0].pitch[0] = static_cast<uint32_t>(export_plane_layouts[0].rowPitch);
-
-    descriptor->layers[1].drm_format = DRM_FORMAT_GR88;
-    descriptor->layers[1].num_planes = 1;
-    descriptor->layers[1].object_index[0] = 0;
-    descriptor->layers[1].offset[0] = static_cast<uint32_t>(export_plane_layouts[1].offset);
-    descriptor->layers[1].pitch[0] = static_cast<uint32_t>(export_plane_layouts[1].rowPitch);
+    const VAStatus descriptor_status = fill_drm_prime_descriptor(
+        surface, format, export_allocation_size, export_plane_layouts,
+        export_plane_count, export_modifier, export_has_modifier, fd, descriptor,
+        reason, reason_size);
+    if (descriptor_status != VA_STATUS_SUCCESS) {
+        close(fd);
+        return descriptor_status;
+    }
     if (exported_shadow != nullptr) {
         exported_shadow->exported = true;
     }
 
     std::snprintf(reason, reason_size,
-                  "exported NV12 dma-buf%s: %ux%u fd=%d size=%u modifier=0x%llx y_pitch=%u uv_pitch=%u decode_mem=%llu export_mem=%llu retired=%zu",
-                  copied_to_shadow ? " via shadow copy" : "",
+                  "exported %s dma-buf%s: %ux%u fd=%d size=%u modifier=0x%llx y_pitch=%u uv_pitch=%u decode_mem=%llu export_mem=%llu retired=%zu",
+                  format->name, copied_to_shadow ? " via shadow copy" : "",
                   surface->width, surface->height, fd, descriptor->objects[0].size,
                   static_cast<unsigned long long>(descriptor->objects[0].drm_format_modifier),
                   descriptor->layers[0].pitch[0], descriptor->layers[1].pitch[0],
