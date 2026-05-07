@@ -12,19 +12,7 @@ int main(void) {
     if (runtime == nullptr) {
         return 1;
     }
-    void *session = vkvv_vulkan_h264_session_create();
-    if (session == nullptr) {
-        vkvv_vulkan_runtime_destroy(runtime);
-        return 1;
-    }
-
-    VAStatus status = vkvv_vulkan_ensure_h264_session(runtime, session, 64, 64, reason, sizeof(reason));
-    std::printf("%s\n", reason);
-    if (status != VA_STATUS_SUCCESS) {
-        vkvv_vulkan_h264_session_destroy(runtime, session);
-        vkvv_vulkan_runtime_destroy(runtime);
-        return 1;
-    }
+    void *session = nullptr;
 
     VkvvSurface surface{};
     surface.rt_format = VA_RT_FORMAT_YUV420;
@@ -38,7 +26,7 @@ int main(void) {
                 typed_runtime->surface_export,
                 typed_runtime->h264_picture_format,
                 typed_runtime->h264_image_tiling);
-    status = vkvv_vulkan_prepare_surface_export(runtime, &surface, reason, sizeof(reason));
+    VAStatus status = vkvv_vulkan_prepare_surface_export(runtime, &surface, reason, sizeof(reason));
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
         std::printf("%s\n", reason);
@@ -129,15 +117,18 @@ int main(void) {
 
     auto *resource = static_cast<vkvv::SurfaceResource *>(surface.vulkan);
     if (resource == nullptr ||
+        resource->image != VK_NULL_HANDLE ||
+        resource->memory != VK_NULL_HANDLE ||
+        resource->view != VK_NULL_HANDLE ||
         resource->coded_extent.width != 64 ||
         resource->coded_extent.height != 64 ||
         resource->visible_extent.width != 64 ||
         resource->visible_extent.height != 64 ||
         resource->va_fourcc != VA_FOURCC_NV12 ||
-        resource->allocation_size == 0 ||
+        resource->allocation_size != 0 ||
         resource->export_resource.allocation_size == 0 ||
         !resource->export_resource.exported) {
-        std::fprintf(stderr, "surface resource tracking/accounting is incomplete\n");
+        std::fprintf(stderr, "export preparation should allocate only an export shadow before decode\n");
         if (descriptor.objects[0].fd >= 0) {
             close(descriptor.objects[0].fd);
         }
@@ -148,6 +139,53 @@ int main(void) {
     }
     VkDeviceMemory first_export_memory = resource->export_resource.memory;
     const int first_fd = descriptor.objects[0].fd;
+
+    session = vkvv_vulkan_h264_session_create();
+    if (session == nullptr) {
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+
+    status = vkvv_vulkan_ensure_h264_session(runtime, session, 64, 64, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    if (status != VA_STATUS_SUCCESS) {
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+
+    if (!vkvv::ensure_surface_resource(typed_runtime, &surface, {64, 64}, reason, sizeof(reason))) {
+        std::fprintf(stderr, "%s\n", reason);
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    resource = static_cast<vkvv::SurfaceResource *>(surface.vulkan);
+    if (resource == nullptr ||
+        resource->image == VK_NULL_HANDLE ||
+        resource->allocation_size == 0 ||
+        resource->export_resource.memory != first_export_memory) {
+        std::fprintf(stderr, "decode image creation did not preserve the pre-exported shadow image\n");
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
 
     surface.decoded = true;
     status = vkvv_vulkan_refresh_surface_export(runtime, &surface, reason, sizeof(reason));

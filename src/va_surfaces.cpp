@@ -280,19 +280,7 @@ VAStatus vkvvExportSurfaceHandle(
     }
 
     char reason[512] = {};
-    if (drv->h264_export_session == NULL) {
-        drv->h264_export_session = vkvv_vulkan_h264_session_create();
-        if (drv->h264_export_session == NULL) {
-            return VA_STATUS_ERROR_ALLOCATION_FAILED;
-        }
-    }
-    VAStatus status = vkvv_vulkan_ensure_h264_session(
-        drv->vulkan, drv->h264_export_session, surface->width, surface->height, reason, sizeof(reason));
-    vkvv_log("%s", reason);
-    if (status != VA_STATUS_SUCCESS) {
-        return status;
-    }
-    status = vkvv_vulkan_prepare_surface_export(drv->vulkan, surface, reason, sizeof(reason));
+    VAStatus status = vkvv_vulkan_prepare_surface_export(drv->vulkan, surface, reason, sizeof(reason));
     vkvv_log("%s", reason);
     if (status != VA_STATUS_SUCCESS) {
         return status;

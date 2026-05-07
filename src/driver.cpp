@@ -80,7 +80,6 @@ static VAStatus vkvvTerminate(VADriverContextP ctx) {
     if (drv != NULL) {
         release_owned_payloads(drv);
         vkvv_object_clear(drv);
-        vkvv_vulkan_h264_session_destroy(drv->vulkan, drv->h264_export_session);
         delete drv;
         ctx->pDriverData = NULL;
     }

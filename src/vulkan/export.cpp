@@ -5,6 +5,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <new>
 #include <vector>
 #include <unistd.h>
 #include <drm_fourcc.h>
@@ -255,6 +256,49 @@ bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, cha
                                              reason, reason_size);
 }
 
+bool ensure_export_only_surface_resource(
+        VkvvSurface *surface,
+        const ExportFormatInfo *format,
+        VkExtent2D extent,
+        char *reason,
+        size_t reason_size) {
+    if (surface == nullptr || format == nullptr) {
+        std::snprintf(reason, reason_size, "missing surface export resource state");
+        return false;
+    }
+
+    auto *resource = static_cast<SurfaceResource *>(surface->vulkan);
+    if (resource == nullptr) {
+        resource = new (std::nothrow) SurfaceResource();
+        if (resource == nullptr) {
+            std::snprintf(reason, reason_size, "out of memory creating export-only surface resource");
+            return false;
+        }
+        surface->vulkan = resource;
+    }
+
+    if (resource->image != VK_NULL_HANDLE) {
+        resource->visible_extent = {surface->width, surface->height};
+        return true;
+    }
+
+    resource->extent = extent;
+    resource->coded_extent = extent;
+    resource->visible_extent = {surface->width, surface->height};
+    resource->format = format->vk_format;
+    resource->va_rt_format = surface->rt_format;
+    resource->va_fourcc = surface->fourcc;
+    resource->allocation_size = 0;
+    resource->plane_layouts[0] = {};
+    resource->plane_layouts[1] = {};
+    resource->plane_count = 0;
+    resource->drm_format_modifier = 0;
+    resource->exportable = false;
+    resource->has_drm_format_modifier = false;
+    resource->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    return true;
+}
+
 bool export_resource_matches_surface(const SurfaceResource *source) {
     if (source == nullptr) {
         return false;
@@ -496,7 +540,7 @@ VAStatus vkvv_vulkan_prepare_surface_export(
         round_up_16(std::max(1u, surface->width)),
         round_up_16(std::max(1u, surface->height)),
     };
-    if (!ensure_surface_resource(runtime, surface, extent, reason, reason_size)) {
+    if (!ensure_export_only_surface_resource(surface, format, extent, reason, reason_size)) {
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
 
@@ -538,7 +582,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(
     }
 
     auto *resource = static_cast<SurfaceResource *>(surface->vulkan);
-    if (resource->exportable || resource->export_resource.image == VK_NULL_HANDLE) {
+    if (resource->export_resource.image == VK_NULL_HANDLE) {
         if (reason_size > 0) {
             reason[0] = '\0';
         }

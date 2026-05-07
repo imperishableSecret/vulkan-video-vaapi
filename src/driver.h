@@ -130,7 +130,6 @@ typedef struct {
     unsigned int profile_cap_count;
     VkvvObject *objects;
     unsigned int next_id;
-    void *h264_export_session;
     void *vulkan;
 } VkvvDriver;
 

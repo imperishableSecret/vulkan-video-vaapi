@@ -103,6 +103,32 @@ void retire_export_resource(SurfaceResource *resource) {
     resource->export_resource = {};
 }
 
+void destroy_decode_resource_handles(VulkanRuntime *runtime, SurfaceResource *resource) {
+    if (resource == nullptr) {
+        return;
+    }
+    if (resource->view != VK_NULL_HANDLE) {
+        vkDestroyImageView(runtime->device, resource->view, nullptr);
+        resource->view = VK_NULL_HANDLE;
+    }
+    if (resource->image != VK_NULL_HANDLE) {
+        vkDestroyImage(runtime->device, resource->image, nullptr);
+        resource->image = VK_NULL_HANDLE;
+    }
+    if (resource->memory != VK_NULL_HANDLE) {
+        vkFreeMemory(runtime->device, resource->memory, nullptr);
+        resource->memory = VK_NULL_HANDLE;
+    }
+    resource->allocation_size = 0;
+    resource->plane_layouts[0] = {};
+    resource->plane_layouts[1] = {};
+    resource->plane_count = 0;
+    resource->drm_format_modifier = 0;
+    resource->exportable = false;
+    resource->has_drm_format_modifier = false;
+    resource->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+}
+
 void destroy_surface_resource_raw(VulkanRuntime *runtime, SurfaceResource *resource) {
     if (resource == nullptr) {
         return;
@@ -113,15 +139,7 @@ void destroy_surface_resource_raw(VulkanRuntime *runtime, SurfaceResource *resou
         destroy_export_resource(runtime, &retired);
     }
     resource->retired_exports.clear();
-    if (resource->view != VK_NULL_HANDLE) {
-        vkDestroyImageView(runtime->device, resource->view, nullptr);
-    }
-    if (resource->image != VK_NULL_HANDLE) {
-        vkDestroyImage(runtime->device, resource->image, nullptr);
-    }
-    if (resource->memory != VK_NULL_HANDLE) {
-        vkFreeMemory(runtime->device, resource->memory, nullptr);
-    }
+    destroy_decode_resource_handles(runtime, resource);
     delete resource;
 }
 
@@ -146,6 +164,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
 
     auto *existing = static_cast<SurfaceResource *>(surface->vulkan);
     if (existing != nullptr &&
+        existing->image != VK_NULL_HANDLE &&
         existing->coded_extent.width >= extent.width &&
         existing->coded_extent.height >= extent.height &&
         existing->format == runtime->h264_picture_format &&
@@ -154,12 +173,15 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
         existing->visible_extent = {surface->width, surface->height};
         return true;
     }
-    if (existing != nullptr && surface->decoded) {
+    if (existing != nullptr && existing->image != VK_NULL_HANDLE && surface->decoded) {
         std::snprintf(reason, reason_size, "decoded reference surface is too small for H.264 session");
         return false;
     }
 
-    destroy_surface_resource(runtime, surface);
+    if (existing != nullptr && existing->image != VK_NULL_HANDLE) {
+        destroy_surface_resource(runtime, surface);
+        existing = nullptr;
+    }
 
     VideoProfileChain profile_chain;
     VkVideoProfileListInfoKHR profile_list{};
@@ -215,15 +237,18 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-    auto *resource = new (std::nothrow) SurfaceResource();
+    auto *resource = existing != nullptr ? existing : new (std::nothrow) SurfaceResource();
     if (resource == nullptr) {
         std::snprintf(reason, reason_size, "out of memory creating surface resource");
         return false;
     }
+    const bool new_resource = existing == nullptr;
 
     VkResult result = vkCreateImage(runtime->device, &image_info, nullptr, &resource->image);
     if (result != VK_SUCCESS) {
-        delete resource;
+        if (new_resource) {
+            delete resource;
+        }
         std::snprintf(reason, reason_size, "vkCreateImage for H.264 surface failed: %d", result);
         return false;
     }
@@ -235,7 +260,11 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
     if (!find_memory_type(runtime->memory_properties, requirements.memoryTypeBits,
                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &memory_type_index) &&
         !find_memory_type(runtime->memory_properties, requirements.memoryTypeBits, 0, &memory_type_index)) {
-        destroy_surface_resource_raw(runtime, resource);
+        if (new_resource) {
+            destroy_surface_resource_raw(runtime, resource);
+        } else {
+            destroy_decode_resource_handles(runtime, resource);
+        }
         std::snprintf(reason, reason_size, "no memory type for H.264 surface image");
         return false;
     }
@@ -259,14 +288,22 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
 
     result = vkAllocateMemory(runtime->device, &allocate_info, nullptr, &resource->memory);
     if (result != VK_SUCCESS) {
-        destroy_surface_resource_raw(runtime, resource);
+        if (new_resource) {
+            destroy_surface_resource_raw(runtime, resource);
+        } else {
+            destroy_decode_resource_handles(runtime, resource);
+        }
         std::snprintf(reason, reason_size, "vkAllocateMemory for H.264 surface failed: %d", result);
         return false;
     }
 
     result = vkBindImageMemory(runtime->device, resource->image, resource->memory, 0);
     if (result != VK_SUCCESS) {
-        destroy_surface_resource_raw(runtime, resource);
+        if (new_resource) {
+            destroy_surface_resource_raw(runtime, resource);
+        } else {
+            destroy_decode_resource_handles(runtime, resource);
+        }
         std::snprintf(reason, reason_size, "vkBindImageMemory for H.264 surface failed: %d", result);
         return false;
     }
@@ -284,7 +321,11 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
 
     result = vkCreateImageView(runtime->device, &view_info, nullptr, &resource->view);
     if (result != VK_SUCCESS) {
-        destroy_surface_resource_raw(runtime, resource);
+        if (new_resource) {
+            destroy_surface_resource_raw(runtime, resource);
+        } else {
+            destroy_decode_resource_handles(runtime, resource);
+        }
         std::snprintf(reason, reason_size, "vkCreateImageView for H.264 surface failed: %d", result);
         return false;
     }
@@ -312,7 +353,11 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
             result = runtime->get_image_drm_format_modifier_properties(
                 runtime->device, resource->image, &modifier_properties);
             if (result != VK_SUCCESS) {
-                destroy_surface_resource_raw(runtime, resource);
+                if (new_resource) {
+                    destroy_surface_resource_raw(runtime, resource);
+                } else {
+                    destroy_decode_resource_handles(runtime, resource);
+                }
                 std::snprintf(reason, reason_size, "vkGetImageDrmFormatModifierPropertiesEXT failed: %d", result);
                 return false;
             }
@@ -323,7 +368,9 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, VkExt
             resource->has_drm_format_modifier = true;
         }
     }
-    surface->vulkan = resource;
+    if (new_resource) {
+        surface->vulkan = resource;
+    }
     return true;
 }
 
