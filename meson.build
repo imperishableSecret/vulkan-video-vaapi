@@ -97,6 +97,13 @@ export_smoke = executable(
   install: false,
 )
 
+va_export_smoke = executable(
+  'vkvv-va-export-smoke',
+  files('tests/smoke/va_export_smoke.cpp'),
+  dependencies: [libva_dep, libva_drm_dep, libdrm_dep],
+  install: false,
+)
+
 lifetime_smoke = executable(
   'vkvv-lifetime-smoke',
   files('tests/smoke/lifetime_smoke.cpp'),
@@ -131,6 +138,7 @@ driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
 
 test('smoke-session', session_smoke, is_parallel: false, timeout: 30)
 test('smoke-export', export_smoke, is_parallel: false, timeout: 30)
+test('smoke-va-export', va_export_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-lifetime', lifetime_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-multi-context', multi_context_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-sync', sync_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
