@@ -1,6 +1,7 @@
 #include "va_private.h"
-#include "h264.h"
-#include "vulkan/h264/api.h"
+#include "codecs/ops.h"
+#include "codecs/h264/h264.h"
+#include "vulkan/codecs/h264/api.h"
 
 namespace {
 
@@ -35,11 +36,27 @@ const VkvvDecodeOps h264_decode_ops = {
     h264_decode,
 };
 
+struct DecodeRegistryEntry {
+    VAEntrypoint entrypoint;
+    bool (*profile_matches)(VAProfile profile);
+    const VkvvDecodeOps *ops;
+};
+
+bool h264_profile_matches(VAProfile profile) {
+    return vkvv_profile_is_h264(profile);
+}
+
+const DecodeRegistryEntry decode_registry[] = {
+    {VAEntrypointVLD, h264_profile_matches, &h264_decode_ops},
+};
+
 } // namespace
 
 const VkvvDecodeOps *vkvv_decode_ops_for_profile_entrypoint(VAProfile profile, VAEntrypoint entrypoint) {
-    if (entrypoint == VAEntrypointVLD && vkvv_profile_is_h264(profile)) {
-        return &h264_decode_ops;
+    for (const DecodeRegistryEntry &entry : decode_registry) {
+        if (entry.entrypoint == entrypoint && entry.profile_matches != nullptr && entry.profile_matches(profile)) {
+            return entry.ops;
+        }
     }
     return nullptr;
 }

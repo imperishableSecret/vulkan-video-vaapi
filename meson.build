@@ -24,27 +24,32 @@ vulkan_runtime_sources = files(
   'src/vulkan/common.cpp',
   'src/vulkan/command.cpp',
   'src/vulkan/export.cpp',
+  'src/vulkan/export/descriptor.cpp',
+  'src/vulkan/export/formats.cpp',
+  'src/vulkan/export/shadow_image.cpp',
   'src/vulkan/session.cpp',
   'src/vulkan/surface_resource.cpp',
   'src/vulkan/upload.cpp',
+  'src/vulkan/video_profile.cpp',
 )
 
 h264_vulkan_sources = files(
-  'src/vulkan/h264/common.cpp',
-  'src/vulkan/h264/decode.cpp',
-  'src/vulkan/h264/parameters.cpp',
-  'src/vulkan/h264/session.cpp',
+  'src/vulkan/codecs/h264/common.cpp',
+  'src/vulkan/codecs/h264/decode.cpp',
+  'src/vulkan/codecs/h264/parameters.cpp',
+  'src/vulkan/codecs/h264/session.cpp',
 )
 
 driver_sources = files(
-  'src/caps.cpp',
-  'src/codecs.cpp',
+  'src/caps/records.cpp',
+  'src/caps/formats.cpp',
+  'src/codecs/registry.cpp',
   'src/driver.cpp',
   'src/va_buffers.cpp',
   'src/va_config.cpp',
   'src/va_context.cpp',
   'src/va_surfaces.cpp',
-  'src/h264.cpp',
+  'src/codecs/h264/h264.cpp',
   'src/object.cpp',
   'src/vulkan_probe.cpp',
 ) + vulkan_runtime_sources + h264_vulkan_sources
@@ -53,6 +58,7 @@ shared_module(
   'nvidia_vulkan_drv_video',
   driver_sources,
   name_prefix: '',
+  include_directories: src_inc,
   dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
   gnu_symbol_visibility: 'hidden',
   link_args: ['-Wl,--version-script=' + exports_map],
@@ -79,10 +85,11 @@ executable(
 codec_smoke = executable(
   'vkvv-codec-smoke',
   files(
-    'tests/smoke/codec_smoke.cpp',
-    'src/caps.cpp',
-    'src/codecs.cpp',
-    'src/h264.cpp',
+    'tests/smoke/generic/codec_smoke.cpp',
+    'src/caps/records.cpp',
+    'src/caps/formats.cpp',
+    'src/codecs/registry.cpp',
+    'src/codecs/h264/h264.cpp',
     'src/object.cpp',
   ) + vulkan_runtime_sources + h264_vulkan_sources,
   include_directories: src_inc,
@@ -93,7 +100,7 @@ codec_smoke = executable(
 session_smoke = executable(
   'vkvv-session-smoke',
   files(
-    'tests/smoke/session_smoke.cpp',
+    'tests/smoke/h264/session_smoke.cpp',
     'src/object.cpp',
   ) + vulkan_runtime_sources + h264_vulkan_sources,
   include_directories: src_inc,
@@ -104,7 +111,7 @@ session_smoke = executable(
 export_smoke = executable(
   'vkvv-export-smoke',
   files(
-    'tests/smoke/export_smoke.cpp',
+    'tests/smoke/h264/export_smoke.cpp',
     'src/object.cpp',
   ) + vulkan_runtime_sources + h264_vulkan_sources,
   include_directories: src_inc,
@@ -114,35 +121,35 @@ export_smoke = executable(
 
 va_export_smoke = executable(
   'vkvv-va-export-smoke',
-  files('tests/smoke/va_export_smoke.cpp'),
+  files('tests/smoke/generic/va_export_smoke.cpp'),
   dependencies: [libva_dep, libva_drm_dep, libdrm_dep],
   install: false,
 )
 
 lifetime_smoke = executable(
   'vkvv-lifetime-smoke',
-  files('tests/smoke/lifetime_smoke.cpp'),
+  files('tests/smoke/generic/lifetime_smoke.cpp'),
   dependencies: [libva_dep, libva_drm_dep, threads_dep],
   install: false,
 )
 
 multi_context_smoke = executable(
   'vkvv-multi-context-smoke',
-  files('tests/smoke/multi_context_smoke.cpp'),
+  files('tests/smoke/generic/multi_context_smoke.cpp'),
   dependencies: [libva_dep, libva_drm_dep, threads_dep],
   install: false,
 )
 
 sync_smoke = executable(
   'vkvv-sync-smoke',
-  files('tests/smoke/sync_smoke.cpp'),
+  files('tests/smoke/generic/sync_smoke.cpp'),
   dependencies: [libva_dep, libva_drm_dep, threads_dep],
   install: false,
 )
 
 capability_smoke = executable(
   'vkvv-capability-smoke',
-  files('tests/smoke/capability_smoke.cpp'),
+  files('tests/smoke/generic/capability_smoke.cpp'),
   dependencies: [libva_dep, libva_drm_dep],
   install: false,
 )

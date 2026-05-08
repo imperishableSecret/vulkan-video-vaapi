@@ -1,7 +1,7 @@
 #ifndef VKVV_VULKAN_H264_API_H
 #define VKVV_VULKAN_H264_API_H
 
-#include "../../h264.h"
+#include "codecs/h264/h264.h"
 
 #ifdef __cplusplus
 extern "C" {
