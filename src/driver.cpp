@@ -176,8 +176,14 @@ static VAStatus vkvvDriverInit(VADriverContextP ctx) {
         if (drv->vulkan == NULL) {
             drv->caps.h264 = false;
             drv->caps.surface_export = false;
+            drv->caps.surface_export_nv12 = false;
+            drv->caps.surface_export_p010 = false;
+            drv->caps.surface_export_p012 = false;
         } else if (!vkvv_vulkan_supports_surface_export(drv->vulkan)) {
             drv->caps.surface_export = false;
+            drv->caps.surface_export_nv12 = false;
+            drv->caps.surface_export_p010 = false;
+            drv->caps.surface_export_p012 = false;
         }
     }
     vkvv_init_profile_capabilities(drv);

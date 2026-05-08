@@ -30,6 +30,7 @@ struct H264VideoSession {
 inline constexpr VideoProfileSpec h264_profile_spec{
     .operation = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
     .bit_depth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+    .std_profile = STD_VIDEO_H264_PROFILE_IDC_HIGH,
 };
 
 struct H264StdParameters {

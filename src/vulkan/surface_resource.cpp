@@ -216,10 +216,14 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
     const bool export_layout_supported =
         key.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT ||
         key.tiling == VK_IMAGE_TILING_LINEAR;
+    const bool export_descriptor_supported =
+        (key.picture_format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM &&
+         key.va_fourcc == VA_FOURCC_NV12) ||
+        (key.picture_format == VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16 &&
+         key.va_fourcc == VA_FOURCC_P010);
     const bool request_exportable =
         runtime->surface_export &&
-        key.picture_format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM &&
-        key.va_fourcc == VA_FOURCC_NV12 &&
+        export_descriptor_supported &&
         export_layout_supported;
 
     VkExternalMemoryImageCreateInfo external_image{};

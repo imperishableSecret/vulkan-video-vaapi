@@ -64,6 +64,15 @@ bool profile_present(const std::vector<VAProfile> &profiles, int profile_count, 
     return false;
 }
 
+bool image_format_present(const VAImageFormat *formats, int format_count, unsigned int fourcc) {
+    for (int i = 0; i < format_count; i++) {
+        if (formats[i].fourcc == fourcc) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool find_integer_attrib(
         const std::vector<VASurfaceAttrib> &attribs,
         VASurfaceAttribType type,
@@ -325,9 +334,11 @@ int main(void) {
     int image_format_count = 0;
     ok = check_va(vaQueryImageFormats(display, image_formats, &image_format_count),
                   "vaQueryImageFormats") && ok;
-    if (image_format_count != 1 || image_formats[0].fourcc != VA_FOURCC_NV12) {
-        std::fprintf(stderr, "expected only NV12 image format, got count=%d first=0x%x\n",
-                     image_format_count, image_formats[0].fourcc);
+    if (image_format_count != 2 ||
+        !image_format_present(image_formats, image_format_count, VA_FOURCC_NV12) ||
+        !image_format_present(image_formats, image_format_count, VA_FOURCC_P010)) {
+        std::fprintf(stderr, "expected NV12 and P010 image formats, got count=%d first=0x%x second=0x%x\n",
+                     image_format_count, image_formats[0].fourcc, image_formats[1].fourcc);
         ok = false;
     }
 

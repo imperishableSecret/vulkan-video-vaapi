@@ -1,6 +1,7 @@
 #ifndef VKVV_VULKAN_VIDEO_PROFILE_H
 #define VKVV_VULKAN_VIDEO_PROFILE_H
 
+#include <cstdint>
 #include <vulkan/vulkan.h>
 
 namespace vkvv {
@@ -8,6 +9,7 @@ namespace vkvv {
 struct VideoProfileSpec {
     VkVideoCodecOperationFlagBitsKHR operation = VK_VIDEO_CODEC_OPERATION_NONE_KHR;
     VkVideoComponentBitDepthFlagsKHR bit_depth = VK_VIDEO_COMPONENT_BIT_DEPTH_INVALID_KHR;
+    uint32_t std_profile = UINT32_MAX;
 };
 
 struct VideoCapabilitiesChain {

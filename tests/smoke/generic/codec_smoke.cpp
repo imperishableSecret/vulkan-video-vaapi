@@ -69,9 +69,15 @@ int main(void) {
     drv.caps.h264 = true;
     drv.caps.h265 = true;
     drv.caps.h265_10 = true;
+    drv.caps.h265_12 = true;
     drv.caps.vp9 = true;
+    drv.caps.vp9_10 = true;
+    drv.caps.vp9_12 = true;
     drv.caps.av1 = true;
+    drv.caps.av1_10 = true;
     drv.caps.surface_export = true;
+    drv.caps.surface_export_nv12 = true;
+    drv.caps.surface_export_p010 = true;
     vkvv_init_profile_capabilities(&drv);
 
     const VkvvProfileCapability *h264_decode = vkvv_profile_capability_for_entrypoint(
@@ -79,6 +85,10 @@ int main(void) {
     ok = check(h264_decode != nullptr && h264_decode->advertise &&
                    h264_decode->direction == VKVV_CODEC_DIRECTION_DECODE,
                "H.264 VLD should be an advertised decode capability") && ok;
+    ok = check(h264_decode != nullptr &&
+                   h264_decode->format_count == 1 &&
+                   h264_decode->formats[0].fourcc == VA_FOURCC_NV12,
+               "H.264 decode capability should expose one NV12 format variant") && ok;
 
     const VkvvProfileCapability *hevc_hidden = vkvv_profile_capability_record(
         &drv, VAProfileHEVCMain, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
@@ -87,6 +97,15 @@ int main(void) {
                    !hevc_hidden->runtime_wired &&
                    !hevc_hidden->advertise,
                "HEVC hardware capability should remain hidden until decode is wired") && ok;
+
+    const VkvvProfileCapability *av1_hidden = vkvv_profile_capability_record(
+        &drv, VAProfileAV1Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
+    ok = check(av1_hidden != nullptr &&
+                   av1_hidden->format_count == 2 &&
+                   vkvv_profile_format_variant(av1_hidden, VA_RT_FORMAT_YUV420, false) != nullptr &&
+                   vkvv_profile_format_variant(av1_hidden, VA_RT_FORMAT_YUV420_10, false) != nullptr &&
+                   !av1_hidden->advertise,
+               "AV1 Profile0 should carry hidden NV12 and P010 variants") && ok;
 
     const VkvvProfileCapability *h264_encode = vkvv_profile_capability_record(
         &drv, VAProfileH264High, VAEntrypointEncSlice, VKVV_CODEC_DIRECTION_ENCODE);

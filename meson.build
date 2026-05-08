@@ -27,6 +27,7 @@ vulkan_runtime_sources = files(
   'src/vulkan/export/descriptor.cpp',
   'src/vulkan/export/formats.cpp',
   'src/vulkan/export/shadow_image.cpp',
+  'src/vulkan/formats.cpp',
   'src/vulkan/session.cpp',
   'src/vulkan/surface_resource.cpp',
   'src/vulkan/upload.cpp',

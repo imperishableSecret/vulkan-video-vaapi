@@ -12,10 +12,11 @@
 extern "C" {
 #endif
 
-#define VKVV_MAX_PROFILES 16
+#define VKVV_MAX_PROFILES 24
 #define VKVV_MAX_ENTRYPOINTS 4
 #define VKVV_MAX_ATTRIBUTES 4
-#define VKVV_MAX_IMAGE_FORMATS 2
+#define VKVV_MAX_IMAGE_FORMATS 3
+#define VKVV_MAX_FORMAT_VARIANTS 3
 #define VKVV_MAX_SUBPIC_FORMATS 1
 #define VKVV_MAX_DISPLAY_ATTRIBUTES 1
 
@@ -71,14 +72,27 @@ typedef struct {
     bool h264;
     bool h265;
     bool h265_10;
+    bool h265_12;
     bool vp9;
+    bool vp9_10;
+    bool vp9_12;
     bool av1;
+    bool av1_10;
+    bool av1_12;
     bool surface_export;
+    bool surface_export_nv12;
+    bool surface_export_p010;
+    bool surface_export_p012;
     VkvvVideoProfileLimits h264_limits;
     VkvvVideoProfileLimits h265_limits;
     VkvvVideoProfileLimits h265_10_limits;
+    VkvvVideoProfileLimits h265_12_limits;
     VkvvVideoProfileLimits vp9_limits;
+    VkvvVideoProfileLimits vp9_10_limits;
+    VkvvVideoProfileLimits vp9_12_limits;
     VkvvVideoProfileLimits av1_limits;
+    VkvvVideoProfileLimits av1_10_limits;
+    VkvvVideoProfileLimits av1_12_limits;
     char summary[512];
 } VkvvVideoCaps;
 
@@ -96,6 +110,18 @@ typedef struct VkvvConfig {
     unsigned int max_height;
     bool exportable;
 } VkvvConfig;
+
+typedef struct {
+    unsigned int rt_format;
+    unsigned int fourcc;
+    unsigned int bit_depth;
+    unsigned int vulkan_format;
+    bool hardware_supported;
+    bool surface_wired;
+    bool export_wired;
+    bool advertise;
+    bool exportable;
+} VkvvFormatVariant;
 
 typedef struct {
     VAProfile profile;
@@ -118,6 +144,8 @@ typedef struct {
     bool decode_wired;
     bool export_wired;
     bool advertise;
+    unsigned int format_count;
+    VkvvFormatVariant formats[VKVV_MAX_FORMAT_VARIANTS];
 } VkvvProfileCapability;
 
 typedef enum {

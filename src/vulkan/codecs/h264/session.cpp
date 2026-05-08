@@ -1,11 +1,11 @@
 #include "internal.h"
 #include "api.h"
+#include "vulkan/formats.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <mutex>
 #include <new>
-#include <vector>
 
 namespace vkvv {
 
@@ -91,70 +91,6 @@ bool reset_h264_session(
     return true;
 }
 
-struct H264FormatSelection {
-    VkFormat format = VK_FORMAT_UNDEFINED;
-    VkImageCreateFlags create_flags = 0;
-    VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL;
-};
-
-bool choose_h264_format(
-        VulkanRuntime *runtime,
-        const VkVideoProfileInfoKHR *profile,
-        H264FormatSelection *selection,
-        char *reason,
-        size_t reason_size) {
-    VkVideoProfileListInfoKHR profile_list{};
-    profile_list.sType = VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR;
-    profile_list.profileCount = 1;
-    profile_list.pProfiles = profile;
-
-    VkPhysicalDeviceVideoFormatInfoKHR format_info{};
-    format_info.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_FORMAT_INFO_KHR;
-    format_info.pNext = &profile_list;
-    format_info.imageUsage = VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR;
-
-    uint32_t count = 0;
-    VkResult result = runtime->get_video_format_properties(runtime->physical_device, &format_info, &count, nullptr);
-    if (result != VK_SUCCESS || count == 0) {
-        std::snprintf(reason, reason_size, "vkGetPhysicalDeviceVideoFormatPropertiesKHR failed: result=%d count=%u", result, count);
-        return false;
-    }
-
-    std::vector<VkVideoFormatPropertiesKHR> properties(count);
-    for (VkVideoFormatPropertiesKHR &property : properties) {
-        property.sType = VK_STRUCTURE_TYPE_VIDEO_FORMAT_PROPERTIES_KHR;
-    }
-    result = runtime->get_video_format_properties(runtime->physical_device, &format_info, &count, properties.data());
-    if (result != VK_SUCCESS || count == 0) {
-        std::snprintf(reason, reason_size, "vkGetPhysicalDeviceVideoFormatPropertiesKHR failed: %d", result);
-        return false;
-    }
-    properties.resize(count);
-
-    auto preferred = properties.end();
-    if (runtime->surface_export) {
-        preferred = std::find_if(properties.begin(), properties.end(), [](const VkVideoFormatPropertiesKHR &property) {
-            return property.format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM &&
-                   property.imageTiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
-        });
-    }
-    if (preferred == properties.end()) {
-        preferred = std::find_if(properties.begin(), properties.end(), [](const VkVideoFormatPropertiesKHR &property) {
-            return property.format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
-        });
-    }
-    if (preferred == properties.end()) {
-        preferred = std::find_if(properties.begin(), properties.end(), [](const VkVideoFormatPropertiesKHR &property) {
-            return property.imageTiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
-        });
-    }
-    const VkVideoFormatPropertiesKHR &selected = preferred != properties.end() ? *preferred : properties.front();
-    selection->format = selected.format;
-    selection->create_flags = selected.imageCreateFlags;
-    selection->tiling = selected.imageTiling;
-    return true;
-}
-
 VkExtent2D h264_session_extent(VkExtent2D requested, const VkVideoCapabilitiesKHR &capabilities) {
     constexpr uint32_t min_nvidia_h264_session_dimension = 256;
     return {
@@ -236,8 +172,16 @@ VAStatus vkvv_vulkan_ensure_h264_session(
         return VA_STATUS_ERROR_RESOLUTION_NOT_SUPPORTED;
     }
 
-    H264FormatSelection format_selection{};
-    if (!choose_h264_format(runtime, &profile_chain.profile, &format_selection, reason, reason_size)) {
+    DecodeFormatSelection format_selection{};
+    if (!choose_decode_format(
+            runtime,
+            &profile_chain.profile,
+            VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR,
+            preferred_vk_format_for_rt_format(VA_RT_FORMAT_YUV420),
+            runtime->surface_export,
+            &format_selection,
+            reason,
+            reason_size)) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
 

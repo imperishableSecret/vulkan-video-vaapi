@@ -64,14 +64,40 @@ int main(void) {
     p010_surface.fourcc = VA_FOURCC_P010;
     status = vkvv_vulkan_prepare_surface_export(runtime, &p010_surface, reason, sizeof(reason));
     std::printf("%s\n", reason);
-    if (status != VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT) {
-        std::fprintf(stderr, "P010 export preparation should stay unsupported until a 10-bit decode path exists\n");
+    if (status != VA_STATUS_SUCCESS) {
+        std::fprintf(stderr, "P010 export preparation should succeed once the format/export path is wired\n");
         vkvv_vulkan_surface_destroy(runtime, &p010_surface);
         vkvv_vulkan_surface_destroy(runtime, &surface);
         vkvv_vulkan_h264_session_destroy(runtime, session);
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
+    VADRMPRIMESurfaceDescriptor p010_descriptor{};
+    p010_descriptor.objects[0].fd = -1;
+    status = vkvv_vulkan_export_surface(
+        runtime, &p010_surface, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
+        &p010_descriptor, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    if (status != VA_STATUS_SUCCESS ||
+        p010_descriptor.fourcc != VA_FOURCC_P010 ||
+        p010_descriptor.num_objects != 1 ||
+        p010_descriptor.num_layers != 2 ||
+        p010_descriptor.layers[0].drm_format != DRM_FORMAT_R16 ||
+        p010_descriptor.layers[1].drm_format != DRM_FORMAT_GR1616) {
+        std::fprintf(stderr, "P010 descriptor builder returned an unexpected DRM PRIME shape\n");
+        if (p010_descriptor.objects[0].fd >= 0) {
+            close(p010_descriptor.objects[0].fd);
+        }
+        vkvv_vulkan_surface_destroy(runtime, &p010_surface);
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    if (p010_descriptor.objects[0].fd >= 0) {
+        close(p010_descriptor.objects[0].fd);
+    }
+    vkvv_vulkan_surface_destroy(runtime, &p010_surface);
 
     VADRMPRIMESurfaceDescriptor invalid_descriptor{};
     status = vkvv_vulkan_export_surface(

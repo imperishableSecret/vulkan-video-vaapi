@@ -90,7 +90,7 @@ VAStatus vkvvCreateConfig(
         return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
     }
 
-    unsigned int rt_format = cap->rt_format;
+    unsigned int rt_format = vkvv_select_rt_format(cap, cap->rt_format);
     for (int i = 0; i < num_attribs; i++) {
         if (attrib_list[i].type == VAConfigAttribRTFormat &&
             attrib_list[i].value != VA_ATTRIB_NOT_SUPPORTED) {
@@ -99,6 +99,10 @@ VAStatus vkvvCreateConfig(
                 return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
             }
         }
+    }
+    const VkvvFormatVariant *format = vkvv_profile_format_variant(cap, rt_format, true);
+    if (format == NULL) {
+        return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
 
     auto *config = new (std::nothrow) VkvvConfig();
@@ -112,13 +116,13 @@ VAStatus vkvvCreateConfig(
                    VKVV_CONTEXT_MODE_ENCODE :
                    VKVV_CONTEXT_MODE_DECODE;
     config->rt_format = rt_format;
-    config->fourcc = vkvv_surface_fourcc_for_format(rt_format);
-    config->bit_depth = vkvv_rt_format_bit_depth(rt_format);
+    config->fourcc = format->fourcc;
+    config->bit_depth = format->bit_depth;
     config->min_width = cap->min_width;
     config->min_height = cap->min_height;
     config->max_width = cap->max_width;
     config->max_height = cap->max_height;
-    config->exportable = cap->exportable;
+    config->exportable = format->exportable;
 
     *config_id = vkvv_object_add(drv, VKVV_OBJECT_CONFIG, config);
     if (*config_id == VA_INVALID_ID) {

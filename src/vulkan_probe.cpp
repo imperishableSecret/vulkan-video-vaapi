@@ -106,16 +106,29 @@ void assume_caps(VkvvVideoCaps *caps, const char *reason) {
     caps->h264 = true;
     caps->h265 = true;
     caps->h265_10 = true;
+    caps->h265_12 = true;
     caps->vp9 = true;
+    caps->vp9_10 = true;
+    caps->vp9_12 = true;
     caps->av1 = true;
+    caps->av1_10 = true;
+    caps->av1_12 = true;
     caps->surface_export = true;
+    caps->surface_export_nv12 = true;
+    caps->surface_export_p010 = true;
+    caps->surface_export_p012 = false;
     caps->h264_limits = fallback_limits;
     caps->h265_limits = fallback_limits;
     caps->h265_10_limits = fallback_limits;
+    caps->h265_12_limits = fallback_limits;
     caps->vp9_limits = fallback_limits;
+    caps->vp9_10_limits = fallback_limits;
+    caps->vp9_12_limits = fallback_limits;
     caps->av1_limits = fallback_limits;
+    caps->av1_10_limits = fallback_limits;
+    caps->av1_12_limits = fallback_limits;
     std::snprintf(caps->summary, sizeof(caps->summary),
-                  "assuming H264/H265/H265Main10/VP9/AV1 support: %s", reason);
+                  "assuming H264/H265/H265Main10/H265Main12/VP9/VP9Profile2/AV1 support: %s", reason);
 }
 
 bool device_has_required_extensions(VkPhysicalDevice device, const char *codec_extension) {
@@ -154,6 +167,42 @@ bool device_has_surface_export_extensions(VkPhysicalDevice device) {
     return extension_present(extensions, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) &&
            extension_present(extensions, VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) &&
            extension_present(extensions, VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME);
+}
+
+bool device_format_has_linear_transfer_dst(VkPhysicalDevice device, VkFormat format) {
+    VkFormatProperties properties{};
+    vkGetPhysicalDeviceFormatProperties(device, format, &properties);
+    return (properties.linearTilingFeatures & VK_FORMAT_FEATURE_TRANSFER_DST_BIT) != 0;
+}
+
+bool device_format_has_modifier_transfer_dst(VkPhysicalDevice device, VkFormat format) {
+    VkDrmFormatModifierPropertiesList2EXT list{};
+    list.sType = VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_2_EXT;
+
+    VkFormatProperties2 properties{};
+    properties.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
+    properties.pNext = &list;
+    vkGetPhysicalDeviceFormatProperties2(device, format, &properties);
+    if (list.drmFormatModifierCount == 0) {
+        return false;
+    }
+
+    std::vector<VkDrmFormatModifierProperties2EXT> modifier_properties(list.drmFormatModifierCount);
+    list.pDrmFormatModifierProperties = modifier_properties.data();
+    vkGetPhysicalDeviceFormatProperties2(device, format, &properties);
+
+    for (const VkDrmFormatModifierProperties2EXT &property : modifier_properties) {
+        if ((property.drmFormatModifierTilingFeatures & VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool device_supports_export_format(VkPhysicalDevice device, VkFormat format) {
+    return device_has_surface_export_extensions(device) &&
+           (device_format_has_linear_transfer_dst(device, format) ||
+            device_format_has_modifier_transfer_dst(device, format));
 }
 
 bool device_has_decode_queue(
@@ -331,16 +380,24 @@ bool probe_impl(VkvvVideoCaps *caps) {
     h265_10_profile.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_PROFILE_INFO_KHR;
     h265_10_profile.stdProfileIdc = STD_VIDEO_H265_PROFILE_IDC_MAIN_10;
 
+    VkVideoDecodeH265ProfileInfoKHR h265_12_profile{};
+    h265_12_profile.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_PROFILE_INFO_KHR;
+    h265_12_profile.stdProfileIdc = STD_VIDEO_H265_PROFILE_IDC_FORMAT_RANGE_EXTENSIONS;
+
     VkVideoDecodeVP9ProfileInfoKHR vp9_profile{};
     vp9_profile.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_PROFILE_INFO_KHR;
     vp9_profile.stdProfile = STD_VIDEO_VP9_PROFILE_0;
+
+    VkVideoDecodeVP9ProfileInfoKHR vp9_profile2{};
+    vp9_profile2.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_PROFILE_INFO_KHR;
+    vp9_profile2.stdProfile = STD_VIDEO_VP9_PROFILE_2;
 
     VkVideoDecodeAV1ProfileInfoKHR av1_profile{};
     av1_profile.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_PROFILE_INFO_KHR;
     av1_profile.stdProfile = STD_VIDEO_AV1_PROFILE_MAIN;
     av1_profile.filmGrainSupport = VK_FALSE;
 
-    const std::array<VideoProbeProfile, 5> probes = {{
+    const std::array<VideoProbeProfile, 9> probes = {{
         {
             VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
             VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME,
@@ -366,12 +423,36 @@ bool probe_impl(VkvvVideoCaps *caps) {
             VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
         },
         {
+            VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+            VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME,
+            &h265_12_profile,
+            VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_CAPABILITIES_KHR,
+            VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+            VK_VIDEO_COMPONENT_BIT_DEPTH_12_BIT_KHR,
+        },
+        {
             VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR,
             VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME,
             &vp9_profile,
             VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_CAPABILITIES_KHR,
             VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
             VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+        },
+        {
+            VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR,
+            VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME,
+            &vp9_profile2,
+            VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_CAPABILITIES_KHR,
+            VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+            VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
+        },
+        {
+            VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR,
+            VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME,
+            &vp9_profile2,
+            VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_CAPABILITIES_KHR,
+            VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+            VK_VIDEO_COMPONENT_BIT_DEPTH_12_BIT_KHR,
         },
         {
             VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR,
@@ -381,13 +462,25 @@ bool probe_impl(VkvvVideoCaps *caps) {
             VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
             VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
         },
+        {
+            VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR,
+            VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME,
+            &av1_profile,
+            VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR,
+            VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+            VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
+        },
     }};
 
     char h264_reason[64] = "not-probed";
     char h265_reason[64] = "not-probed";
     char h265_10_reason[64] = "not-probed";
+    char h265_12_reason[64] = "not-probed";
     char vp9_reason[64] = "not-probed";
+    char vp9_10_reason[64] = "not-probed";
+    char vp9_12_reason[64] = "not-probed";
     char av1_reason[64] = "not-probed";
+    char av1_10_reason[64] = "not-probed";
 
     for (VkPhysicalDevice device : devices) {
         caps->h264 = probe_one_profile(
@@ -399,30 +492,52 @@ bool probe_impl(VkvvVideoCaps *caps) {
         caps->h265_10 = probe_one_profile(
             caps->h265_10, get_queue_family_properties2, get_video_capabilities,
             device, probes[2], &caps->h265_10_limits, h265_10_reason, sizeof(h265_10_reason));
+        caps->h265_12 = probe_one_profile(
+            caps->h265_12, get_queue_family_properties2, get_video_capabilities,
+            device, probes[3], &caps->h265_12_limits, h265_12_reason, sizeof(h265_12_reason));
         caps->vp9 = probe_one_profile(
             caps->vp9, get_queue_family_properties2, get_video_capabilities,
-            device, probes[3], &caps->vp9_limits, vp9_reason, sizeof(vp9_reason));
+            device, probes[4], &caps->vp9_limits, vp9_reason, sizeof(vp9_reason));
+        caps->vp9_10 = probe_one_profile(
+            caps->vp9_10, get_queue_family_properties2, get_video_capabilities,
+            device, probes[5], &caps->vp9_10_limits, vp9_10_reason, sizeof(vp9_10_reason));
+        caps->vp9_12 = probe_one_profile(
+            caps->vp9_12, get_queue_family_properties2, get_video_capabilities,
+            device, probes[6], &caps->vp9_12_limits, vp9_12_reason, sizeof(vp9_12_reason));
         caps->av1 = probe_one_profile(
             caps->av1, get_queue_family_properties2, get_video_capabilities,
-            device, probes[4], &caps->av1_limits, av1_reason, sizeof(av1_reason));
-        if (!caps->surface_export &&
-            device_has_surface_export_extensions(device) &&
-            device_has_required_extensions(device, VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME) &&
+            device, probes[7], &caps->av1_limits, av1_reason, sizeof(av1_reason));
+        caps->av1_10 = probe_one_profile(
+            caps->av1_10, get_queue_family_properties2, get_video_capabilities,
+            device, probes[8], &caps->av1_10_limits, av1_10_reason, sizeof(av1_10_reason));
+        if (device_has_required_extensions(device, VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME) &&
             device_has_decode_queue(get_queue_family_properties2, device, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR)) {
-            caps->surface_export = true;
+            caps->surface_export_nv12 = caps->surface_export_nv12 ||
+                device_supports_export_format(device, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM);
+            caps->surface_export_p010 = caps->surface_export_p010 ||
+                device_supports_export_format(device, VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16);
+            caps->surface_export_p012 = false;
+            caps->surface_export = caps->surface_export_nv12;
         }
     }
 
     std::snprintf(caps->summary, sizeof(caps->summary),
-                  "Vulkan Video profile caps: h264=%d(%s) h265=%d(%s) h265_10=%d(%s) vp9=%d(%s) av1=%d(%s) export=%d",
+                  "Vulkan Video profile caps: h264=%d(%s) h265=%d(%s) h265_10=%d(%s) h265_12=%d(%s) vp9=%d(%s) vp9_10=%d(%s) vp9_12=%d(%s) av1=%d(%s) av1_10=%d(%s) export_nv12=%d export_p010=%d",
                   caps->h264, h264_reason,
                   caps->h265, h265_reason,
                   caps->h265_10, h265_10_reason,
+                  caps->h265_12, h265_12_reason,
                   caps->vp9, vp9_reason,
+                  caps->vp9_10, vp9_10_reason,
+                  caps->vp9_12, vp9_12_reason,
                   caps->av1, av1_reason,
-                  caps->surface_export);
+                  caps->av1_10, av1_10_reason,
+                  caps->surface_export_nv12,
+                  caps->surface_export_p010);
 
-    return caps->h264 || caps->h265 || caps->h265_10 || caps->vp9 || caps->av1;
+    return caps->h264 || caps->h265 || caps->h265_10 || caps->h265_12 ||
+           caps->vp9 || caps->vp9_10 || caps->vp9_12 || caps->av1 ||
+           caps->av1_10;
 }
 
 } // namespace

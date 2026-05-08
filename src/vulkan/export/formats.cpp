@@ -16,10 +16,23 @@ constexpr ExportFormatInfo nv12_export_format = {
     },
 };
 
+constexpr ExportFormatInfo p010_export_format = {
+    VA_FOURCC_P010,
+    VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16,
+    "P010",
+    2,
+    {
+        {VK_IMAGE_ASPECT_PLANE_0_BIT, DRM_FORMAT_R16, 1, 1},
+        {VK_IMAGE_ASPECT_PLANE_1_BIT, DRM_FORMAT_GR1616, 2, 2},
+    },
+};
+
 const ExportFormatInfo *export_format_for_fourcc(unsigned int fourcc) {
     switch (fourcc) {
         case VA_FOURCC_NV12:
             return &nv12_export_format;
+        case VA_FOURCC_P010:
+            return &p010_export_format;
         default:
             return nullptr;
     }

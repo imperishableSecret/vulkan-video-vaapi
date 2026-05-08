@@ -34,21 +34,31 @@ VideoCapabilitiesChain::VideoCapabilitiesChain(const VideoProfileSpec &spec) {
 
 VideoProfileChain::VideoProfileChain(const VideoProfileSpec &spec) {
     h264.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_PROFILE_INFO_KHR;
-    h264.stdProfileIdc = STD_VIDEO_H264_PROFILE_IDC_HIGH;
+    h264.stdProfileIdc = spec.std_profile != UINT32_MAX ?
+                         static_cast<StdVideoH264ProfileIdc>(spec.std_profile) :
+                         STD_VIDEO_H264_PROFILE_IDC_HIGH;
     h264.pictureLayout = VK_VIDEO_DECODE_H264_PICTURE_LAYOUT_PROGRESSIVE_KHR;
 
     h265.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_PROFILE_INFO_KHR;
-    h265.stdProfileIdc = spec.bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR ?
+    h265.stdProfileIdc = spec.std_profile != UINT32_MAX ?
+                         static_cast<StdVideoH265ProfileIdc>(spec.std_profile) :
+                         spec.bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_12_BIT_KHR ?
+                         STD_VIDEO_H265_PROFILE_IDC_FORMAT_RANGE_EXTENSIONS :
+                         spec.bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR ?
                          STD_VIDEO_H265_PROFILE_IDC_MAIN_10 :
                          STD_VIDEO_H265_PROFILE_IDC_MAIN;
 
     vp9.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_PROFILE_INFO_KHR;
-    vp9.stdProfile = spec.bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR ?
+    vp9.stdProfile = spec.std_profile != UINT32_MAX ?
+                     static_cast<StdVideoVP9Profile>(spec.std_profile) :
+                     spec.bit_depth != VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR ?
                      STD_VIDEO_VP9_PROFILE_2 :
                      STD_VIDEO_VP9_PROFILE_0;
 
     av1.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_PROFILE_INFO_KHR;
-    av1.stdProfile = STD_VIDEO_AV1_PROFILE_MAIN;
+    av1.stdProfile = spec.std_profile != UINT32_MAX ?
+                     static_cast<StdVideoAV1Profile>(spec.std_profile) :
+                     STD_VIDEO_AV1_PROFILE_MAIN;
     av1.filmGrainSupport = VK_FALSE;
 
     void *codec_profile = nullptr;
