@@ -298,15 +298,15 @@ int main(void) {
     int profile_count = 0;
     ok = check_va(vaQueryConfigProfiles(display, profiles.data(), &profile_count),
                   "vaQueryConfigProfiles") && ok;
-    if (ok && profile_count != 3) {
-        std::fprintf(stderr, "expected exactly 3 usable profiles, got %d\n", profile_count);
+    if (ok && profile_count != 4) {
+        std::fprintf(stderr, "expected exactly 4 usable profiles, got %d\n", profile_count);
         ok = false;
     }
     ok = profile_present(profiles, profile_count, VAProfileH264ConstrainedBaseline) && ok;
     ok = profile_present(profiles, profile_count, VAProfileH264Main) && ok;
     ok = profile_present(profiles, profile_count, VAProfileH264High) && ok;
+    ok = profile_present(profiles, profile_count, VAProfileVP9Profile0) && ok;
     if (profile_present(profiles, profile_count, VAProfileHEVCMain) ||
-        profile_present(profiles, profile_count, VAProfileVP9Profile0) ||
         profile_present(profiles, profile_count, VAProfileAV1Profile0)) {
         std::fprintf(stderr, "driver advertised a profile without wired decode/export\n");
         ok = false;
@@ -315,6 +315,7 @@ int main(void) {
     ok = check_h264_profile(display, VAProfileH264ConstrainedBaseline) && ok;
     ok = check_h264_profile(display, VAProfileH264Main) && ok;
     ok = check_h264_profile(display, VAProfileH264High) && ok;
+    ok = check_h264_profile(display, VAProfileVP9Profile0) && ok;
     ok = check_encode_entrypoint_not_advertised(
              display, VAProfileH264High, VAEntrypointEncSlice,
              "H.264 EncSlice advertising") && ok;
@@ -327,7 +328,7 @@ int main(void) {
 
     ok = check_profile_not_advertised(display, VAProfileHEVCMain, "HEVC Main advertising") && ok;
     ok = check_profile_not_advertised(display, VAProfileHEVCMain10, "HEVC Main10 advertising") && ok;
-    ok = check_profile_not_advertised(display, VAProfileVP9Profile0, "VP9 Profile0 advertising") && ok;
+    ok = check_profile_not_advertised(display, VAProfileVP9Profile2, "VP9 Profile2 advertising") && ok;
     ok = check_profile_not_advertised(display, VAProfileAV1Profile0, "AV1 Profile0 advertising") && ok;
 
     VAImageFormat image_formats[4] = {};

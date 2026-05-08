@@ -16,6 +16,7 @@ libva_drm_dep = dependency('libva-drm')
 libdrm_dep = dependency('libdrm')
 vulkan_dep = dependency('vulkan')
 threads_dep = dependency('threads')
+gst_codecparsers_dep = dependency('gstreamer-codecparsers-1.0')
 exports_map = meson.current_source_dir() / 'src' / 'exports.map'
 src_inc = include_directories('src')
 
@@ -41,6 +42,12 @@ h264_vulkan_sources = files(
   'src/vulkan/codecs/h264/session.cpp',
 )
 
+vp9_vulkan_sources = files(
+  'src/vulkan/codecs/vp9/common.cpp',
+  'src/vulkan/codecs/vp9/decode.cpp',
+  'src/vulkan/codecs/vp9/session.cpp',
+)
+
 driver_sources = files(
   'src/caps/records.cpp',
   'src/caps/formats.cpp',
@@ -51,16 +58,17 @@ driver_sources = files(
   'src/va_context.cpp',
   'src/va_surfaces.cpp',
   'src/codecs/h264/h264.cpp',
+  'src/codecs/vp9/vp9.cpp',
   'src/object.cpp',
   'src/vulkan_probe.cpp',
-) + vulkan_runtime_sources + h264_vulkan_sources
+) + vulkan_runtime_sources + h264_vulkan_sources + vp9_vulkan_sources
 
 shared_module(
   'nvidia_vulkan_drv_video',
   driver_sources,
   name_prefix: '',
   include_directories: src_inc,
-  dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
+  dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep, gst_codecparsers_dep],
   gnu_symbol_visibility: 'hidden',
   link_args: ['-Wl,--version-script=' + exports_map],
   link_depends: files('src/exports.map'),
@@ -91,10 +99,11 @@ codec_smoke = executable(
     'src/caps/formats.cpp',
     'src/codecs/registry.cpp',
     'src/codecs/h264/h264.cpp',
+    'src/codecs/vp9/vp9.cpp',
     'src/object.cpp',
-  ) + vulkan_runtime_sources + h264_vulkan_sources,
+  ) + vulkan_runtime_sources + h264_vulkan_sources + vp9_vulkan_sources,
   include_directories: src_inc,
-  dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
+  dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep, gst_codecparsers_dep],
   install: false,
 )
 
@@ -103,7 +112,18 @@ session_smoke = executable(
   files(
     'tests/smoke/h264/session_smoke.cpp',
     'src/object.cpp',
-  ) + vulkan_runtime_sources + h264_vulkan_sources,
+  ) + vulkan_runtime_sources + h264_vulkan_sources + vp9_vulkan_sources,
+  include_directories: src_inc,
+  dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
+  install: false,
+)
+
+vp9_session_smoke = executable(
+  'vkvv-vp9-session-smoke',
+  files(
+    'tests/smoke/vp9/session_smoke.cpp',
+    'src/object.cpp',
+  ) + vulkan_runtime_sources + vp9_vulkan_sources,
   include_directories: src_inc,
   dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
   install: false,
@@ -114,7 +134,7 @@ export_smoke = executable(
   files(
     'tests/smoke/h264/export_smoke.cpp',
     'src/object.cpp',
-  ) + vulkan_runtime_sources + h264_vulkan_sources,
+  ) + vulkan_runtime_sources + h264_vulkan_sources + vp9_vulkan_sources,
   include_directories: src_inc,
   dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
   install: false,
@@ -160,6 +180,7 @@ driver_test_env.set('LIBVA_DRIVER_NAME', 'nvidia_vulkan')
 driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
 
 test('smoke-session', session_smoke, is_parallel: false, timeout: 30)
+test('smoke-vp9-session', vp9_session_smoke, is_parallel: false, timeout: 30)
 test('smoke-codec', codec_smoke, is_parallel: false, timeout: 30)
 test('smoke-export', export_smoke, is_parallel: false, timeout: 30)
 test('smoke-va-export', va_export_smoke, env: driver_test_env, is_parallel: false, timeout: 30)

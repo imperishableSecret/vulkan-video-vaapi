@@ -169,12 +169,15 @@ static VAStatus vkvvDriverInit(VADriverContextP ctx) {
     }
     drv->next_id = 1;
     vkvv_probe_vulkan_video(&drv->caps);
-    if (drv->caps.h264) {
+    if (drv->caps.h264 || drv->caps.vp9) {
         char reason[512] = {};
         drv->vulkan = vkvv_get_or_create_vulkan_runtime(reason, sizeof(reason));
         vkvv_log("%s", reason);
         if (drv->vulkan == NULL) {
             drv->caps.h264 = false;
+            drv->caps.vp9 = false;
+            drv->caps.vp9_10 = false;
+            drv->caps.vp9_12 = false;
             drv->caps.surface_export = false;
             drv->caps.surface_export_nv12 = false;
             drv->caps.surface_export_p010 = false;

@@ -227,7 +227,7 @@ void vkvv_init_profile_capabilities(VkvvDriver *drv) {
         VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR,
         VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME,
         VA_RT_FORMAT_YUV420, drv->caps.vp9_limits,
-        drv->caps.vp9, false, false,
+        drv->caps.vp9, true, true,
         drv->caps.vp9, drv->caps.surface_export_nv12);
     add_vp9_profile2(drv);
     add_av1_profile0(drv);

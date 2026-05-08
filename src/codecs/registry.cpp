@@ -1,7 +1,9 @@
 #include "va_private.h"
 #include "codecs/ops.h"
 #include "codecs/h264/h264.h"
+#include "codecs/vp9/vp9.h"
 #include "vulkan/codecs/h264/api.h"
+#include "vulkan/codecs/vp9/api.h"
 
 namespace {
 
@@ -36,6 +38,37 @@ const VkvvDecodeOps h264_decode_ops = {
     h264_decode,
 };
 
+VAStatus vp9_decode(
+        void *runtime,
+        void *session,
+        VkvvDriver *drv,
+        VkvvContext *vctx,
+        VkvvSurface *target,
+        VAProfile profile,
+        void *state,
+        char *reason,
+        size_t reason_size) {
+    VkvvVP9DecodeInput input = {};
+    VAStatus status = vkvv_vp9_get_decode_input(state, &input);
+    if (status != VA_STATUS_SUCCESS) {
+        return status;
+    }
+    return vkvv_vulkan_decode_vp9(runtime, session, drv, vctx, target, profile, &input, reason, reason_size);
+}
+
+const VkvvDecodeOps vp9_decode_ops = {
+    "vp9",
+    vkvv_vp9_state_create,
+    vkvv_vp9_state_destroy,
+    vkvv_vulkan_vp9_session_create,
+    vkvv_vulkan_vp9_session_destroy,
+    vkvv_vp9_begin_picture,
+    vkvv_vp9_render_buffer,
+    vkvv_vp9_prepare_decode,
+    vkvv_vulkan_ensure_vp9_session,
+    vp9_decode,
+};
+
 struct DecodeRegistryEntry {
     VAEntrypoint entrypoint;
     bool (*profile_matches)(VAProfile profile);
@@ -46,8 +79,13 @@ bool h264_profile_matches(VAProfile profile) {
     return vkvv_profile_is_h264(profile);
 }
 
+bool vp9_profile_matches(VAProfile profile) {
+    return profile == VAProfileVP9Profile0;
+}
+
 const DecodeRegistryEntry decode_registry[] = {
     {VAEntrypointVLD, h264_profile_matches, &h264_decode_ops},
+    {VAEntrypointVLD, vp9_profile_matches, &vp9_decode_ops},
 };
 
 } // namespace

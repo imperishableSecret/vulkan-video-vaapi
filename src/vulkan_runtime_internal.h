@@ -142,6 +142,7 @@ class VulkanRuntime {
     bool image_drm_format_modifier = false;
     bool surface_export = false;
 
+    bool video_decode_vp9 = false;
     bool video_maintenance2 = false;
 
     VkCommandPool command_pool = VK_NULL_HANDLE;

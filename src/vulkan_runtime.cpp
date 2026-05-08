@@ -22,6 +22,11 @@ constexpr RuntimeDecodeCodec wired_decode_codecs[] = {
         VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
         VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME,
     },
+    {
+        "vp9",
+        VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR,
+        VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME,
+    },
 };
 
 struct DecodeQueueSelection {
@@ -171,6 +176,7 @@ bool pick_physical_device(VulkanRuntime *runtime, char *reason, size_t reason_si
         bool external_memory_dma_buf = false;
         bool image_drm_format_modifier = false;
         bool surface_export = false;
+        bool video_decode_vp9 = false;
         uint32_t score = 0;
     };
 
@@ -195,29 +201,46 @@ bool pick_physical_device(VulkanRuntime *runtime, char *reason, size_t reason_si
         const bool has_external_memory_fd = extension_present(extensions, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
         const bool has_external_memory_dma_buf = extension_present(extensions, VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
         const bool has_image_drm_format_modifier = extension_present(extensions, VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME);
+        const bool has_vp9_decode = extension_present(extensions, VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME);
+        VkPhysicalDeviceVideoDecodeVP9FeaturesKHR vp9_features{};
+        vp9_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_DECODE_VP9_FEATURES_KHR;
         VkPhysicalDeviceVideoMaintenance2FeaturesKHR maintenance2_features{};
         maintenance2_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_MAINTENANCE_2_FEATURES_KHR;
         VkPhysicalDeviceFeatures2 features2{};
         features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        features2.pNext = &maintenance2_features;
+        features2.pNext = has_vp9_decode ? static_cast<void *>(&vp9_features) : static_cast<void *>(&maintenance2_features);
+        vp9_features.pNext = &maintenance2_features;
         vkGetPhysicalDeviceFeatures2(device, &features2);
+
+        VkVideoCodecOperationFlagsKHR queue_operations = queue.operations;
+        if ((queue_operations & VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR) != 0 &&
+            !vp9_features.videoDecodeVP9) {
+            queue_operations &= ~VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR;
+        }
+        if (queue_operations == 0) {
+            continue;
+        }
 
         const bool surface_export = has_external_memory_fd &&
                                     has_external_memory_dma_buf &&
                                     has_image_drm_format_modifier;
-        const uint32_t score = count_decode_operations(queue.operations) * 10 +
+        const uint32_t score = count_decode_operations(queue_operations) * 10 +
                                (surface_export ? 1 : 0);
         if (score <= best.score) {
             continue;
         }
 
         best.device = device;
-        best.queue = queue;
+        best.queue = {
+            .family = queue.family,
+            .operations = queue_operations,
+        };
         best.video_maintenance2 = has_video_maintenance2 && maintenance2_features.videoMaintenance2;
         best.external_memory_fd = has_external_memory_fd;
         best.external_memory_dma_buf = has_external_memory_dma_buf;
         best.image_drm_format_modifier = has_image_drm_format_modifier;
         best.surface_export = surface_export;
+        best.video_decode_vp9 = has_vp9_decode && vp9_features.videoDecodeVP9;
         best.score = score;
     }
 
@@ -237,6 +260,7 @@ bool pick_physical_device(VulkanRuntime *runtime, char *reason, size_t reason_si
     runtime->external_memory_dma_buf = best.external_memory_dma_buf;
     runtime->image_drm_format_modifier = best.image_drm_format_modifier;
     runtime->surface_export = best.surface_export;
+    runtime->video_decode_vp9 = best.video_decode_vp9;
     vkGetPhysicalDeviceMemoryProperties(best.device, &runtime->memory_properties);
     return true;
 }
@@ -274,9 +298,25 @@ bool create_device(VulkanRuntime *runtime, char *reason, size_t reason_size) {
     maintenance2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_MAINTENANCE_2_FEATURES_KHR;
     maintenance2.videoMaintenance2 = runtime->video_maintenance2 ? VK_TRUE : VK_FALSE;
 
+    VkPhysicalDeviceVideoDecodeVP9FeaturesKHR vp9{};
+    vp9.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_DECODE_VP9_FEATURES_KHR;
+    vp9.videoDecodeVP9 =
+        (runtime->enabled_decode_operations & VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR) != 0 &&
+        runtime->video_decode_vp9 ? VK_TRUE : VK_FALSE;
+
+    void *feature_chain = nullptr;
+    if (runtime->video_maintenance2) {
+        maintenance2.pNext = feature_chain;
+        feature_chain = &maintenance2;
+    }
+    if (vp9.videoDecodeVP9) {
+        vp9.pNext = feature_chain;
+        feature_chain = &vp9;
+    }
+
     VkPhysicalDeviceSynchronization2Features sync2{};
     sync2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
-    sync2.pNext = runtime->video_maintenance2 ? &maintenance2 : nullptr;
+    sync2.pNext = feature_chain;
     sync2.synchronization2 = VK_TRUE;
 
     VkDeviceCreateInfo device_info{};

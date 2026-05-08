@@ -1,7 +1,9 @@
 #include "va_private.h"
+#include "codecs/vp9/vp9.h"
 
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 namespace {
 
@@ -24,6 +26,101 @@ bool ops_complete(const VkvvDecodeOps *ops) {
            ops->prepare_decode != nullptr &&
            ops->ensure_session != nullptr &&
            ops->decode != nullptr;
+}
+
+std::vector<uint8_t> make_vp9_keyframe() {
+    return {
+        0x82, 0x49, 0x83, 0x42, 0x00, 0x00, 0xf0, 0x00,
+        0xf6, 0x06, 0x38, 0x24, 0x1c, 0x18, 0x42, 0x00,
+        0x00, 0x20, 0x40, 0x00, 0x22, 0x9b, 0xff, 0xff,
+        0xa5, 0x13, 0xfb, 0x82, 0x94, 0xde, 0x8f, 0x15,
+        0x4a, 0xb7, 0x6d, 0x27, 0xfd, 0x54, 0xfd, 0x19,
+        0xed, 0x94, 0x52, 0xd3, 0x71, 0xd2, 0x6c, 0xc8,
+        0xfe, 0xa6, 0xf7, 0x65, 0x4c, 0xbc, 0x26, 0x0c,
+        0x80, 0x00,
+    };
+}
+
+bool check_vp9_parser(const VkvvDecodeOps *vp9) {
+    void *state = vp9 != nullptr ? vp9->state_create() : nullptr;
+    if (!check(state != nullptr, "VP9 codec state allocation failed")) {
+        return false;
+    }
+
+    vp9->begin_picture(state);
+
+    VADecPictureParameterBufferVP9 pic{};
+    pic.frame_width = 16;
+    pic.frame_height = 16;
+    pic.pic_fields.bits.subsampling_x = 1;
+    pic.pic_fields.bits.subsampling_y = 1;
+    pic.pic_fields.bits.error_resilient_mode = 1;
+    pic.profile = 0;
+    pic.bit_depth = 8;
+
+    std::vector<uint8_t> bitstream = make_vp9_keyframe();
+
+    VASliceParameterBufferVP9 slice{};
+    slice.slice_data_size = static_cast<uint32_t>(bitstream.size());
+
+    VkvvBuffer pic_buffer{};
+    pic_buffer.type = VAPictureParameterBufferType;
+    pic_buffer.size = sizeof(pic);
+    pic_buffer.num_elements = 1;
+    pic_buffer.data = &pic;
+
+    VkvvBuffer slice_buffer{};
+    slice_buffer.type = VASliceParameterBufferType;
+    slice_buffer.size = sizeof(slice);
+    slice_buffer.num_elements = 1;
+    slice_buffer.data = &slice;
+
+    VkvvBuffer data_buffer{};
+    data_buffer.type = VASliceDataBufferType;
+    data_buffer.size = static_cast<unsigned int>(bitstream.size());
+    data_buffer.num_elements = 1;
+    data_buffer.data = bitstream.data();
+
+    bool ok = check(vp9->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS,
+                    "VP9 picture buffer ingestion failed");
+    ok = check(vp9->render_buffer(state, &slice_buffer) == VA_STATUS_SUCCESS,
+               "VP9 slice buffer ingestion failed") && ok;
+    ok = check(vp9->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS,
+               "VP9 slice data ingestion failed") && ok;
+
+    unsigned int width = 0;
+    unsigned int height = 0;
+    char reason[512] = {};
+    ok = check(vp9->prepare_decode(state, &width, &height, reason, sizeof(reason)) == VA_STATUS_SUCCESS,
+               "VP9 prepare_decode failed") && ok;
+    if (!ok) {
+        std::fprintf(stderr, "%s\n", reason);
+    }
+    ok = check(width == 16 && height == 16, "VP9 prepare_decode returned the wrong dimensions") && ok;
+
+    VkvvVP9DecodeInput input{};
+    ok = check(vkvv_vp9_get_decode_input(state, &input) == VA_STATUS_SUCCESS,
+               "VP9 decode input extraction failed") && ok;
+    const bool parsed =
+        input.header.valid &&
+        input.header.refresh_frame_flags == 0xff &&
+        input.header.frame_header_length_in_bytes > 0 &&
+        input.header.first_partition_size > 0 &&
+        input.bitstream_size == bitstream.size();
+    if (!parsed) {
+        std::fprintf(stderr,
+                     "VP9 parsed header mismatch: valid=%u refresh=0x%02x q=%u header=%u first_partition=%u bytes=%zu\n",
+                     input.header.valid,
+                     input.header.refresh_frame_flags,
+                     input.header.base_q_idx,
+                     input.header.frame_header_length_in_bytes,
+                     input.header.first_partition_size,
+                     input.bitstream_size);
+    }
+    ok = check(parsed, "VP9 parsed header did not expose expected keyframe values") && ok;
+
+    vp9->state_destroy(state);
+    return ok;
 }
 
 } // namespace
@@ -54,8 +151,14 @@ int main(void) {
                "H.264 encode entrypoint must not resolve decode ops") && ok;
     ok = check(vkvv_decode_ops_for_profile_entrypoint(VAProfileHEVCMain, VAEntrypointVLD) == nullptr,
                "HEVC should not have decode ops before its decoder is wired") && ok;
-    ok = check(vkvv_decode_ops_for_profile_entrypoint(VAProfileVP9Profile0, VAEntrypointVLD) == nullptr,
-               "VP9 should not have decode ops before its decoder is wired") && ok;
+    const VkvvDecodeOps *vp9 = vkvv_decode_ops_for_profile_entrypoint(VAProfileVP9Profile0, VAEntrypointVLD);
+    ok = check(ops_complete(vp9), "VP9 decode ops are incomplete") && ok;
+    if (vp9 != nullptr) {
+        ok = check(std::strcmp(vp9->name, "vp9") == 0, "VP9 decode ops used the wrong name") && ok;
+        ok = check_vp9_parser(vp9) && ok;
+    }
+    ok = check(vkvv_decode_ops_for_profile_entrypoint(VAProfileVP9Profile2, VAEntrypointVLD) == nullptr,
+               "VP9 Profile2 should not have decode ops before P010 decode is wired") && ok;
     ok = check(vkvv_decode_ops_for_profile_entrypoint(VAProfileAV1Profile0, VAEntrypointVLD) == nullptr,
                "AV1 should not have decode ops before its decoder is wired") && ok;
     ok = check(vkvv_encode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointEncSlice) == nullptr,
@@ -89,6 +192,21 @@ int main(void) {
                    h264_decode->format_count == 1 &&
                    h264_decode->formats[0].fourcc == VA_FOURCC_NV12,
                "H.264 decode capability should expose one NV12 format variant") && ok;
+
+    const VkvvProfileCapability *vp9_decode = vkvv_profile_capability_for_entrypoint(
+        &drv, VAProfileVP9Profile0, VAEntrypointVLD);
+    ok = check(vp9_decode != nullptr && vp9_decode->advertise &&
+                   vp9_decode->direction == VKVV_CODEC_DIRECTION_DECODE &&
+                   vp9_decode->format_count == 1 &&
+                   vp9_decode->formats[0].fourcc == VA_FOURCC_NV12,
+               "VP9 Profile0 should be advertised with one NV12 format variant") && ok;
+
+    const VkvvProfileCapability *vp9_profile2_hidden = vkvv_profile_capability_record(
+        &drv, VAProfileVP9Profile2, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
+    ok = check(vp9_profile2_hidden != nullptr &&
+                   vp9_profile2_hidden->format_count == 2 &&
+                   !vp9_profile2_hidden->advertise,
+               "VP9 Profile2 should stay hidden until P010 decode is wired") && ok;
 
     const VkvvProfileCapability *hevc_hidden = vkvv_profile_capability_record(
         &drv, VAProfileHEVCMain, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
