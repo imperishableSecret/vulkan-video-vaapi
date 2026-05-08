@@ -70,6 +70,12 @@ VAStatus vkvv_vulkan_decode_h264(
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
 
+    const VASurfaceID target_surface_id = vctx->render_target;
+    if (target_surface_id == VA_INVALID_ID) {
+        std::snprintf(reason, reason_size, "missing H.264 target surface id");
+        return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+
     bool used_slots[max_h264_dpb_slots] = {};
 
     struct ReferenceRecord {
@@ -94,12 +100,13 @@ VAStatus vkvv_vulkan_decode_h264(
             std::snprintf(reason, reason_size, "H.264 reference surface %u is missing", ref_pic.picture_id);
             return VA_STATUS_ERROR_INVALID_SURFACE;
         }
-        if (!ref_surface->decoded || ref_surface->vulkan == nullptr || ref_surface->dpb_slot < 0) {
+        const int ref_dpb_slot = h264_dpb_slot_for_surface(session, ref_pic.picture_id);
+        if (!ref_surface->decoded || ref_surface->vulkan == nullptr || ref_dpb_slot < 0) {
             std::snprintf(reason, reason_size, "H.264 reference surface %u is not decoded yet", ref_pic.picture_id);
             return VA_STATUS_ERROR_INVALID_SURFACE;
         }
 
-        const uint32_t slot = static_cast<uint32_t>(ref_surface->dpb_slot);
+        const uint32_t slot = static_cast<uint32_t>(ref_dpb_slot);
         if (slot >= max_h264_dpb_slots) {
             std::snprintf(reason, reason_size, "H.264 reference surface %u has invalid DPB slot", ref_pic.picture_id);
             return VA_STATUS_ERROR_INVALID_SURFACE;
@@ -116,7 +123,7 @@ VAStatus vkvv_vulkan_decode_h264(
         record.h264_slot.pStdReferenceInfo = &record.std_ref;
         record.slot.sType = VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR;
         record.slot.pNext = &record.h264_slot;
-        record.slot.slotIndex = ref_surface->dpb_slot;
+        record.slot.slotIndex = ref_dpb_slot;
         record.slot.pPictureResource = &record.picture;
     }
 
@@ -131,15 +138,18 @@ VAStatus vkvv_vulkan_decode_h264(
     const uint16_t current_idr_pic_id = static_cast<uint16_t>(std::min<uint32_t>(input->idr_pic_id, 65535));
     const int32_t current_top_poc = input->pic->CurrPic.TopFieldOrderCnt;
     const int32_t current_bottom_poc = input->pic->CurrPic.BottomFieldOrderCnt;
-    if (target->dpb_slot < 0 || target->dpb_slot >= static_cast<int>(max_h264_dpb_slots) || used_slots[target->dpb_slot]) {
-        const int slot = allocate_dpb_slot(vctx, used_slots);
-        if (slot < 0) {
+    int target_dpb_slot = h264_dpb_slot_for_surface(session, target_surface_id);
+    if (target_dpb_slot < 0 ||
+        target_dpb_slot >= static_cast<int>(max_h264_dpb_slots) ||
+        used_slots[target_dpb_slot]) {
+        target_dpb_slot = allocate_dpb_slot(session, used_slots);
+        if (target_dpb_slot < 0) {
             std::snprintf(reason, reason_size, "no free H.264 DPB slot for current picture");
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
-        target->dpb_slot = slot;
+        h264_set_dpb_slot_for_surface(session, target_surface_id, target_dpb_slot);
     }
-    used_slots[target->dpb_slot] = true;
+    used_slots[target_dpb_slot] = true;
 
     H264StdParameters std_params{};
     build_h264_std_parameters(session, profile, input, &std_params);
@@ -246,7 +256,7 @@ VAStatus vkvv_vulkan_decode_h264(
     setup_h264_slot.pStdReferenceInfo = &setup_std_ref;
     setup_slot.sType = VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR;
     setup_slot.pNext = &setup_h264_slot;
-    setup_slot.slotIndex = target->dpb_slot;
+    setup_slot.slotIndex = target_dpb_slot;
     setup_slot.pPictureResource = &setup_picture;
     setup_slot_ptr = &setup_slot;
 
@@ -331,7 +341,7 @@ VAStatus vkvv_vulkan_decode_h264(
         std::snprintf(reason, reason_size,
                       "vkEndCommandBuffer for H.264 decode failed: %d vaProfile=%d nal=%u/%u ref=%u setup=%u slot=%d pps=%u frame=%u idr=%u refs=%u off0=%u bytes=%02x%02x%02x%02x seq=%08x pic=%08x curr(flags=%08x idx=%u rawpoc=%d/%d poc=%d/%d) s0(type=%u bit=%u l0=%u l1=%u) sps(profile=%d level=%d refs=%u poc=%d log2poc=%u) pps(l0=%u l1=%u)",
                       result, profile, input->first_nal_unit_type, input->first_nal_ref_idc,
-                      current_is_reference, setup_slot_ptr != nullptr, target->dpb_slot,
+                      current_is_reference, setup_slot_ptr != nullptr, target_dpb_slot,
                       std_picture.pic_parameter_set_id,
                       std_picture.frame_num, std_picture.idr_pic_id, reference_count,
                       vulkan_slice_offsets.empty() ? 0 : vulkan_slice_offsets[0],
@@ -366,7 +376,7 @@ VAStatus vkvv_vulkan_decode_h264(
     std::snprintf(reason, reason_size,
                   "submitted async H.264 Vulkan decode: %ux%u slices=%u bytes=%zu refs=%u slot=%d decode_mem=%llu upload_mem=%llu session_mem=%llu",
                   coded_extent.width, coded_extent.height, input->slice_count, input->bitstream_size,
-                  reference_count, target->dpb_slot,
+                  reference_count, target_dpb_slot,
                   static_cast<unsigned long long>(target_resource->allocation_size),
                   static_cast<unsigned long long>(upload_allocation_size),
                   static_cast<unsigned long long>(session->video.memory_bytes));

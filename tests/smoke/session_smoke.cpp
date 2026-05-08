@@ -96,7 +96,6 @@ bool check_async_completion(vkvv::VulkanRuntime *runtime) {
     VkvvSurface surface{};
     surface.work_state = VKVV_SURFACE_WORK_RENDERING;
     surface.sync_status = VA_STATUS_ERROR_TIMEDOUT;
-    surface.dpb_slot = -1;
 
     char reason[512] = {};
     {
@@ -147,9 +146,35 @@ bool check_async_completion(vkvv::VulkanRuntime *runtime) {
                  "async surface completion did not mark the surface ready");
 }
 
+bool check_h264_dpb_slots() {
+    vkvv::H264VideoSession session{};
+    bool used_slots[vkvv::max_h264_dpb_slots] = {};
+
+    const int first_slot = vkvv::allocate_dpb_slot(&session, used_slots);
+    if (!check(first_slot == 0, "first H.264 DPB slot allocation did not start at zero")) {
+        return false;
+    }
+    vkvv::h264_set_dpb_slot_for_surface(&session, 41, first_slot);
+    if (!check(vkvv::h264_dpb_slot_for_surface(&session, 41) == first_slot,
+               "H.264 DPB slot lookup did not return the stored surface slot")) {
+        return false;
+    }
+
+    used_slots[first_slot] = true;
+    const int second_slot = vkvv::allocate_dpb_slot(&session, used_slots);
+    if (!check(second_slot == 1, "H.264 DPB slot allocation did not skip a used slot")) {
+        return false;
+    }
+    vkvv::h264_set_dpb_slot_for_surface(&session, 41, second_slot);
+    return check(vkvv::h264_dpb_slot_for_surface(&session, 41) == second_slot,
+                 "H.264 DPB slot update did not replace the old surface slot");
+}
+
 } // namespace
 
 int main(void) {
+    bool ok = check_h264_dpb_slots();
+
     char reason[512] = {};
     void *runtime = vkvv_vulkan_runtime_create(reason, sizeof(reason));
     std::printf("%s\n", reason);
@@ -157,7 +182,7 @@ int main(void) {
         return 1;
     }
     auto *typed_runtime = static_cast<vkvv::VulkanRuntime *>(runtime);
-    bool ok = check(
+    ok = check(
         typed_runtime->decode_queue_family != vkvv::invalid_queue_family,
         "runtime did not select a decode queue family");
     ok = check(

@@ -127,7 +127,6 @@ VAStatus vkvvCreateSurfaces2(
         surface->width = width;
         surface->height = height;
         surface->fourcc = vkvv_surface_fourcc_for_format(selected_format);
-        surface->dpb_slot = -1;
         surface->work_state = VKVV_SURFACE_WORK_READY;
         surface->sync_status = VA_STATUS_SUCCESS;
         surfaces[i] = vkvv_object_add(drv, VKVV_OBJECT_SURFACE, surface);

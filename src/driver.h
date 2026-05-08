@@ -98,7 +98,6 @@ typedef struct VkvvSurface {
     unsigned int height;
     unsigned int fourcc;
     void *vulkan;
-    int dpb_slot;
     VkvvSurfaceWorkState work_state;
     VAStatus sync_status;
     bool destroying;
@@ -146,7 +145,6 @@ typedef struct VkvvContext {
     const VkvvCodecOps *codec_ops;
     void *codec_state;
     void *codec_session;
-    unsigned int next_dpb_slot;
 } VkvvContext;
 
 typedef struct VkvvObject {

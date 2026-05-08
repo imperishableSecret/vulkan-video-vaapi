@@ -21,10 +21,12 @@ void destroy_h264_video_session(VulkanRuntime *runtime, H264VideoSession *sessio
     }
     destroy_upload_buffer(runtime, &session->upload);
     destroy_video_session(runtime, &session->video);
+    session->surface_slots.clear();
     session->bitstream_offset_alignment = 1;
     session->bitstream_size_alignment = 1;
     session->max_level = STD_VIDEO_H264_LEVEL_IDC_5_2;
     session->decode_flags = 0;
+    session->next_dpb_slot = 0;
     session->max_dpb_slots = 0;
     session->max_active_reference_pictures = 0;
 }

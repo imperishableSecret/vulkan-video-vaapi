@@ -45,7 +45,6 @@ int main(void) {
     surface.width = 64;
     surface.height = 64;
     surface.fourcc = VA_FOURCC_NV12;
-    surface.dpb_slot = -1;
 
     auto *typed_runtime = static_cast<vkvv::VulkanRuntime *>(runtime);
     std::printf("surface_export=%d\n", typed_runtime->surface_export);
@@ -63,7 +62,6 @@ int main(void) {
     p010_surface.width = 64;
     p010_surface.height = 64;
     p010_surface.fourcc = VA_FOURCC_P010;
-    p010_surface.dpb_slot = -1;
     status = vkvv_vulkan_prepare_surface_export(runtime, &p010_surface, reason, sizeof(reason));
     std::printf("%s\n", reason);
     if (status != VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT) {

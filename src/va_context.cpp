@@ -55,7 +55,6 @@ VAStatus vkvvCreateContext(
     vctx->width = (unsigned int) picture_width;
     vctx->height = (unsigned int) picture_height;
     vctx->render_target = VA_INVALID_ID;
-    vctx->next_dpb_slot = 0;
     vctx->codec_ops = vkvv_codec_ops_for_profile(vctx->profile);
     if (vctx->codec_ops == NULL) {
         delete vctx;

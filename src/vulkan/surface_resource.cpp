@@ -165,7 +165,6 @@ void destroy_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface) {
     surface->work_state = VKVV_SURFACE_WORK_READY;
     surface->sync_status = VA_STATUS_SUCCESS;
     surface->decoded = false;
-    surface->dpb_slot = -1;
 }
 
 bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const DecodeImageKey &key, char *reason, size_t reason_size) {

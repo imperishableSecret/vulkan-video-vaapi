@@ -7,11 +7,42 @@ bool h264_picture_is_invalid(const VAPictureH264 &picture) {
            picture.picture_id == VA_INVALID_ID;
 }
 
-int allocate_dpb_slot(VkvvContext *vctx, const bool used_slots[max_h264_dpb_slots]) {
+int h264_dpb_slot_for_surface(const H264VideoSession *session, VASurfaceID surface_id) {
+    if (session == nullptr || surface_id == VA_INVALID_ID) {
+        return -1;
+    }
+    for (const H264SurfaceDpbSlot &entry : session->surface_slots) {
+        if (entry.surface_id == surface_id) {
+            return entry.slot;
+        }
+    }
+    return -1;
+}
+
+void h264_set_dpb_slot_for_surface(H264VideoSession *session, VASurfaceID surface_id, int slot) {
+    if (session == nullptr || surface_id == VA_INVALID_ID) {
+        return;
+    }
+    for (H264SurfaceDpbSlot &entry : session->surface_slots) {
+        if (entry.surface_id == surface_id) {
+            entry.slot = slot;
+            return;
+        }
+    }
+    session->surface_slots.push_back({
+        .surface_id = surface_id,
+        .slot = slot,
+    });
+}
+
+int allocate_dpb_slot(H264VideoSession *session, const bool used_slots[max_h264_dpb_slots]) {
+    if (session == nullptr) {
+        return -1;
+    }
     for (uint32_t attempt = 0; attempt < max_h264_dpb_slots; attempt++) {
-        const uint32_t slot = (vctx->next_dpb_slot + attempt) % max_h264_dpb_slots;
+        const uint32_t slot = (session->next_dpb_slot + attempt) % max_h264_dpb_slots;
         if (!used_slots[slot]) {
-            vctx->next_dpb_slot = (slot + 1) % max_h264_dpb_slots;
+            session->next_dpb_slot = (slot + 1) % max_h264_dpb_slots;
             return static_cast<int>(slot);
         }
     }
