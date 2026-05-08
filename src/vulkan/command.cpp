@@ -259,6 +259,10 @@ VAStatus complete_pending_work(
     return VA_STATUS_SUCCESS;
 }
 
+VAStatus drain_pending_work_before_sync_command(VulkanRuntime *runtime, char *reason, size_t reason_size) {
+    return complete_pending_work(runtime, nullptr, std::numeric_limits<uint64_t>::max(), reason, reason_size);
+}
+
 } // namespace vkvv
 
 using namespace vkvv;

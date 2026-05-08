@@ -219,6 +219,7 @@ bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reaso
 bool submit_command_buffer(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation);
 bool submit_command_buffer_and_wait(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation);
 void track_pending_decode(VulkanRuntime *runtime, VkvvSurface *surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, const char *operation);
+VAStatus drain_pending_work_before_sync_command(VulkanRuntime *runtime, char *reason, size_t reason_size);
 void add_image_layout_barrier(std::vector<VkImageMemoryBarrier2> *barriers, SurfaceResource *resource, VkImageLayout new_layout, VkAccessFlags2 dst_access);
 VkVideoPictureResourceInfoKHR make_picture_resource(SurfaceResource *resource, VkExtent2D coded_extent);
 

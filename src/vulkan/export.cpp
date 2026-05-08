@@ -27,6 +27,10 @@ VAStatus vkvv_vulkan_prepare_surface_export(
     if (format == nullptr) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
+    VAStatus drain_status = drain_pending_work_before_sync_command(runtime, reason, reason_size);
+    if (drain_status != VA_STATUS_SUCCESS) {
+        return drain_status;
+    }
 
     VkExtent2D extent{
         round_up_16(std::max(1u, surface->width)),
@@ -89,6 +93,10 @@ VAStatus vkvv_vulkan_refresh_surface_export(
     if (format == nullptr) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
+    VAStatus drain_status = drain_pending_work_before_sync_command(runtime, reason, reason_size);
+    if (drain_status != VA_STATUS_SUCCESS) {
+        return drain_status;
+    }
     if (!copy_surface_to_export_resource(runtime, resource, reason, reason_size)) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
@@ -138,6 +146,10 @@ VAStatus vkvv_vulkan_export_surface(
     format = export_format_for_surface(surface, resource, reason, reason_size);
     if (format == nullptr) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
+    }
+    VAStatus drain_status = drain_pending_work_before_sync_command(runtime, reason, reason_size);
+    if (drain_status != VA_STATUS_SUCCESS) {
+        return drain_status;
     }
     VkDeviceMemory export_memory = resource->memory;
     VkDeviceSize export_allocation_size = resource->allocation_size;

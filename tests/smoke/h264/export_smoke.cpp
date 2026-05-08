@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <drm_fourcc.h>
 #include <fcntl.h>
+#include <mutex>
 #include <unistd.h>
 
 namespace {
@@ -45,6 +46,93 @@ bool detached_memory_present(
     return false;
 }
 
+bool check_export_preparation_drains_unrelated_pending_work(vkvv::VulkanRuntime *runtime) {
+    VkvvSurface pending_surface{};
+    pending_surface.id = 901;
+    pending_surface.driver_instance_id = 1;
+    pending_surface.rt_format = VA_RT_FORMAT_YUV420;
+    pending_surface.width = 64;
+    pending_surface.height = 64;
+    pending_surface.fourcc = VA_FOURCC_NV12;
+    pending_surface.work_state = VKVV_SURFACE_WORK_RENDERING;
+    pending_surface.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+
+    char reason[512] = {};
+    {
+        std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+        if (!vkvv::ensure_command_resources(runtime, reason, sizeof(reason))) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
+        if (result != VK_SUCCESS) {
+            std::fprintf(stderr, "vkResetFences failed for export pending-work smoke: %d\n", result);
+            return false;
+        }
+        result = vkResetCommandBuffer(runtime->command_buffer, 0);
+        if (result != VK_SUCCESS) {
+            std::fprintf(stderr, "vkResetCommandBuffer failed for export pending-work smoke: %d\n", result);
+            return false;
+        }
+
+        VkCommandBufferBeginInfo begin_info{};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        result = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
+        if (result != VK_SUCCESS) {
+            std::fprintf(stderr, "vkBeginCommandBuffer failed for export pending-work smoke: %d\n", result);
+            return false;
+        }
+        result = vkEndCommandBuffer(runtime->command_buffer);
+        if (result != VK_SUCCESS) {
+            std::fprintf(stderr, "vkEndCommandBuffer failed for export pending-work smoke: %d\n", result);
+            return false;
+        }
+        if (!vkvv::submit_command_buffer(runtime, reason, sizeof(reason), "export pending-work smoke")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        vkvv::track_pending_decode(runtime, &pending_surface, VK_NULL_HANDLE, 0, "export pending-work smoke");
+    }
+
+    VkvvSurface export_surface{};
+    export_surface.id = 902;
+    export_surface.driver_instance_id = pending_surface.driver_instance_id;
+    export_surface.rt_format = pending_surface.rt_format;
+    export_surface.width = pending_surface.width;
+    export_surface.height = pending_surface.height;
+    export_surface.fourcc = pending_surface.fourcc;
+    VAStatus status = vkvv_vulkan_prepare_surface_export(runtime, &export_surface, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+
+    const bool drained_pending =
+        runtime->pending_surface == nullptr &&
+        pending_surface.work_state == VKVV_SURFACE_WORK_READY &&
+        pending_surface.sync_status == VA_STATUS_SUCCESS &&
+        pending_surface.decoded;
+    if (pending_surface.work_state == VKVV_SURFACE_WORK_RENDERING) {
+        char completion_reason[512] = {};
+        (void) vkvv_vulkan_complete_surface_work(
+            runtime, &pending_surface, VA_TIMEOUT_INFINITE,
+            completion_reason, sizeof(completion_reason));
+        if (completion_reason[0] != '\0') {
+            std::printf("%s\n", completion_reason);
+        }
+    }
+    vkvv_vulkan_surface_destroy(runtime, &export_surface);
+
+    if (status != VA_STATUS_SUCCESS) {
+        std::fprintf(stderr, "export preparation failed during pending-work smoke\n");
+        return false;
+    }
+    if (!drained_pending) {
+        std::fprintf(stderr,
+                     "export preparation used command resources while unrelated decode work was still pending\n");
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int main(void) {
@@ -66,6 +154,11 @@ int main(void) {
 
     auto *typed_runtime = static_cast<vkvv::VulkanRuntime *>(runtime);
     std::printf("surface_export=%d\n", typed_runtime->surface_export);
+    if (!check_export_preparation_drains_unrelated_pending_work(typed_runtime)) {
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+
     VAStatus status = vkvv_vulkan_prepare_surface_export(runtime, &surface, reason, sizeof(reason));
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
