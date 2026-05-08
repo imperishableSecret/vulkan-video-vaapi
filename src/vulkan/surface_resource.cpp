@@ -1,4 +1,5 @@
 #include "../vulkan_runtime_internal.h"
+#include "../telemetry.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -384,9 +385,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
         existing->image != VK_NULL_HANDLE &&
         decode_image_key_matches(existing->decode_key, key)) {
         const uint64_t stream_id = surface->stream_id;
-        const auto codec_operation =
-            static_cast<VkVideoCodecOperationFlagsKHR>(
-                surface->codec_operation != 0 ? surface->codec_operation : key.codec_operation);
+        const auto codec_operation = static_cast<VkVideoCodecOperationFlagsKHR>(key.codec_operation);
         if (existing->stream_id != stream_id ||
             existing->codec_operation != codec_operation) {
             unregister_export_seed_resource(runtime, existing);
@@ -398,6 +397,17 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
         existing->codec_operation = codec_operation;
         existing->surface_id = surface->id;
         existing->visible_extent = {surface->width, surface->height};
+        vkvv_trace("surface-resource-reuse",
+                   "surface=%u driver=%llu stream=%llu surface_codec=0x%x key_codec=0x%x resource_codec=0x%x content_gen=%llu shadow_gen=%llu predecode=%u",
+                   surface->id,
+                   static_cast<unsigned long long>(surface->driver_instance_id),
+                   static_cast<unsigned long long>(stream_id),
+                   surface->codec_operation,
+                   key.codec_operation,
+                   existing->codec_operation,
+                   static_cast<unsigned long long>(existing->content_generation),
+                   static_cast<unsigned long long>(existing->export_resource.content_generation),
+                   existing->export_resource.predecode_exported ? 1U : 0U);
         return true;
     }
     if (existing != nullptr && existing->image != VK_NULL_HANDLE && surface->decoded) {
@@ -575,9 +585,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
     resource->visible_extent = {surface->width, surface->height};
     resource->driver_instance_id = surface->driver_instance_id;
     resource->stream_id = surface->stream_id;
-    resource->codec_operation =
-        static_cast<VkVideoCodecOperationFlagsKHR>(
-            surface->codec_operation != 0 ? surface->codec_operation : key.codec_operation);
+    resource->codec_operation = static_cast<VkVideoCodecOperationFlagsKHR>(key.codec_operation);
     resource->surface_id = surface->id;
     resource->format = key.picture_format;
     resource->va_rt_format = key.va_rt_format;
@@ -618,6 +626,19 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
     if (new_resource) {
         surface->vulkan = resource;
     }
+    vkvv_trace("surface-resource-create",
+               "surface=%u driver=%llu stream=%llu surface_codec=0x%x key_codec=0x%x resource_codec=0x%x extent=%ux%u exportable=%u decode_mem=%llu shadow_mem=0x%llx",
+               surface->id,
+               static_cast<unsigned long long>(surface->driver_instance_id),
+               static_cast<unsigned long long>(surface->stream_id),
+               surface->codec_operation,
+               key.codec_operation,
+               resource->codec_operation,
+               extent.width,
+               extent.height,
+               resource->exportable ? 1U : 0U,
+               static_cast<unsigned long long>(resource->allocation_size),
+               vkvv_trace_handle(resource->export_resource.memory));
     return true;
 }
 

@@ -1,4 +1,5 @@
 #include "va_private.h"
+#include "telemetry.h"
 #include "vulkan_runtime.h"
 
 #include <new>
@@ -141,8 +142,15 @@ VAStatus vkvvCreateSurfaces2(
         if (drv->vulkan != NULL) {
             vkvv_vulkan_note_surface_created(drv->vulkan, surface);
         }
-        vkvv_log("created surface %u: %ux%u fourcc=0x%x rt=0x%x",
-                 surfaces[i], width, height, surface->fourcc, surface->rt_format);
+        vkvv_log("created surface %u: driver=%llu stream=%llu codec=0x%x %ux%u fourcc=0x%x rt=0x%x",
+                 surfaces[i],
+                 (unsigned long long) surface->driver_instance_id,
+                 (unsigned long long) surface->stream_id,
+                 surface->codec_operation,
+                 width,
+                 height,
+                 surface->fourcc,
+                 surface->rt_format);
     }
 
     return VA_STATUS_SUCCESS;
@@ -300,7 +308,43 @@ VAStatus vkvvExportSurfaceHandle(
     if (surface->destroying) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
+    vkvv_trace("va-export-enter",
+               "driver=%llu surface=%u active_stream=%llu active_codec=0x%x surface_stream=%llu surface_codec=0x%x decoded=%u pending=%u",
+               (unsigned long long) drv->driver_instance_id,
+               surface->id,
+               (unsigned long long) drv->active_decode_stream_id,
+               drv->active_decode_codec_operation,
+               (unsigned long long) surface->stream_id,
+               surface->codec_operation,
+               surface->decoded ? 1U : 0U,
+               vkvv_surface_has_pending_work(surface) ? 1U : 0U);
+    const bool applied_active_domain = vkvv_driver_apply_active_decode_domain_locked(drv, surface);
+    if (applied_active_domain) {
+        vkvv_log("tagged export surface %u from active decode domain: driver=%llu stream=%llu codec=0x%x %ux%u fourcc=0x%x rt=0x%x",
+                 surface->id,
+                 (unsigned long long) surface->driver_instance_id,
+                 (unsigned long long) surface->stream_id,
+                 surface->codec_operation,
+                 surface->width,
+                 surface->height,
+                 surface->fourcc,
+                 surface->rt_format);
+    }
+    vkvv_trace("va-export-domain",
+               "driver=%llu surface=%u applied=%u stream=%llu codec=0x%x decoded=%u",
+               (unsigned long long) drv->driver_instance_id,
+               surface->id,
+               applied_active_domain ? 1U : 0U,
+               (unsigned long long) surface->stream_id,
+               surface->codec_operation,
+               surface->decoded ? 1U : 0U);
     if (vkvv_surface_has_pending_work(surface)) {
+        vkvv_trace("va-export-drain",
+                   "driver=%llu surface=%u stream=%llu codec=0x%x",
+                   (unsigned long long) drv->driver_instance_id,
+                   surface->id,
+                   (unsigned long long) surface->stream_id,
+                   surface->codec_operation);
         VAStatus status = complete_vulkan_surface_work(drv, surface, VA_TIMEOUT_INFINITE);
         if (status != VA_STATUS_SUCCESS) {
             return status;
@@ -330,6 +374,14 @@ VAStatus vkvvExportSurfaceHandle(
         static_cast<VADRMPRIMESurfaceDescriptor *>(descriptor),
         reason, sizeof(reason));
     vkvv_log("%s", reason);
+    vkvv_trace("va-export-return",
+               "driver=%llu surface=%u status=%d stream=%llu codec=0x%x decoded=%u",
+               (unsigned long long) drv->driver_instance_id,
+               surface->id,
+               status,
+               (unsigned long long) surface->stream_id,
+               surface->codec_operation,
+               surface->decoded ? 1U : 0U);
     return status;
 }
 

@@ -1,4 +1,5 @@
 #include "va_private.h"
+#include "telemetry.h"
 #include "vulkan_runtime.h"
 
 #include <new>
@@ -96,6 +97,7 @@ VAStatus vkvvCreateContext(
             delete vctx;
             return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
         }
+        vctx->codec_operation = codec_operation_for_decode_profile(vctx->profile);
         {
             VkvvLockGuard state_lock(&drv->state_mutex);
             vctx->stream_id = drv->next_stream_id++;
@@ -103,7 +105,6 @@ VAStatus vkvvCreateContext(
                 vctx->stream_id = drv->next_stream_id++;
             }
         }
-        vctx->codec_operation = codec_operation_for_decode_profile(vctx->profile);
         vctx->decode_state = vctx->decode_ops->state_create();
         vctx->decode_session = vctx->decode_ops->session_create();
         if (vctx->decode_state == NULL || vctx->decode_session == NULL) {
@@ -140,6 +141,18 @@ VAStatus vkvvDestroyContext(VADriverContextP ctx, VAContextID context) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
     {
+        VkvvLockGuard state_lock(&drv->state_mutex);
+        if (drv->active_decode_stream_id == vctx->stream_id &&
+            drv->active_decode_codec_operation == vctx->codec_operation) {
+            drv->active_decode_stream_id = 0;
+            drv->active_decode_codec_operation = 0;
+            drv->active_decode_width = 0;
+            drv->active_decode_height = 0;
+            drv->active_decode_rt_format = 0;
+            drv->active_decode_fourcc = 0;
+        }
+    }
+    {
         VkvvLockGuard context_lock(&vctx->mutex);
         if (vctx->render_target != VA_INVALID_ID) {
             auto *surface = static_cast<VkvvSurface *>(vkvv_object_get(drv, vctx->render_target, VKVV_OBJECT_SURFACE));
@@ -161,6 +174,28 @@ VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID
     auto *vctx = static_cast<VkvvContext *>(vkvv_object_get(drv, context, VKVV_OBJECT_CONTEXT));
     if (vctx == NULL) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
+    }
+    {
+        VkvvLockGuard state_lock(&drv->state_mutex);
+        auto *domain_surface = vkvv_surface_get_locked(drv, render_target);
+        if (domain_surface != NULL) {
+            vkvv_trace("va-begin-domain",
+                       "driver=%llu ctx=%u profile=%d target=%u ctx_stream=%llu ctx_codec=0x%x surface_stream=%llu surface_codec=0x%x decoded=%u pending=%u",
+                       (unsigned long long) drv->driver_instance_id,
+                       context,
+                       vctx->profile,
+                       render_target,
+                       (unsigned long long) vctx->stream_id,
+                       vctx->codec_operation,
+                       (unsigned long long) domain_surface->stream_id,
+                       domain_surface->codec_operation,
+                       domain_surface->decoded ? 1U : 0U,
+                       vkvv_surface_has_pending_work(domain_surface) ? 1U : 0U);
+            if (!domain_surface->destroying) {
+                vkvv_driver_note_decode_domain_locked(drv, vctx, domain_surface);
+            }
+            vkvv_surface_unlock(domain_surface);
+        }
     }
     VkvvLockGuard context_lock(&vctx->mutex);
     if (vctx->mode == VKVV_CONTEXT_MODE_ENCODE) {
@@ -190,6 +225,15 @@ VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID
     surface->codec_operation = vctx->codec_operation;
     vctx->render_target = render_target;
     vkvv_surface_begin_work(surface);
+    vkvv_trace("va-begin-bound",
+               "driver=%llu ctx=%u target=%u stream=%llu codec=0x%x decoded=%u predecode_export=%u",
+               (unsigned long long) drv->driver_instance_id,
+               context,
+               render_target,
+               (unsigned long long) surface->stream_id,
+               surface->codec_operation,
+               surface->decoded ? 1U : 0U,
+               vkvv_vulkan_surface_has_predecode_export(surface) ? 1U : 0U);
     if (vctx->decode_ops != NULL) {
         vctx->decode_ops->begin_picture(vctx->decode_state);
     }
@@ -241,9 +285,27 @@ VAStatus end_decode_picture(VkvvDriver *drv, VkvvContext *vctx) {
     if (target->destroying) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
-    auto finish_surface = [vctx, target](VAStatus status) {
+    vkvv_trace("va-end-enter",
+               "driver=%llu ctx_stream=%llu ctx_codec=0x%x target=%u surface_stream=%llu surface_codec=0x%x decoded=%u pending=%u predecode_export=%u",
+               (unsigned long long) drv->driver_instance_id,
+               (unsigned long long) vctx->stream_id,
+               vctx->codec_operation,
+               vctx->render_target,
+               (unsigned long long) target->stream_id,
+               target->codec_operation,
+               target->decoded ? 1U : 0U,
+               vkvv_surface_has_pending_work(target) ? 1U : 0U,
+               vkvv_vulkan_surface_has_predecode_export(target) ? 1U : 0U);
+    auto finish_surface = [drv, vctx, target](VAStatus status) {
         vkvv_surface_complete_work(target, status);
         vctx->render_target = VA_INVALID_ID;
+        vkvv_trace("va-end-finish",
+                   "driver=%llu target=%u status=%d decoded=%u pending=%u",
+                   (unsigned long long) drv->driver_instance_id,
+                   target->id,
+                   status,
+                   target->decoded ? 1U : 0U,
+                   vkvv_surface_has_pending_work(target) ? 1U : 0U);
         return status;
     };
 
@@ -286,6 +348,32 @@ VAStatus end_decode_picture(VkvvDriver *drv, VkvvContext *vctx) {
         return finish_surface(status);
     }
 
+    if (vkvv_surface_has_pending_work(target) &&
+        vkvv_vulkan_surface_has_predecode_export(target)) {
+        vkvv_trace("va-end-predecode-drain",
+                   "driver=%llu target=%u stream=%llu codec=0x%x",
+                   (unsigned long long) drv->driver_instance_id,
+                   target->id,
+                   (unsigned long long) target->stream_id,
+                   target->codec_operation);
+        status = vkvv_vulkan_complete_surface_work(
+            drv->vulkan, target, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            vkvv_log("%s", reason);
+        }
+        if (status != VA_STATUS_SUCCESS) {
+            return finish_surface(status);
+        }
+    }
+
+    vkvv_trace("va-end-submitted",
+               "driver=%llu target=%u stream=%llu codec=0x%x pending=%u predecode_export=%u",
+               (unsigned long long) drv->driver_instance_id,
+               target->id,
+               (unsigned long long) target->stream_id,
+               target->codec_operation,
+               vkvv_surface_has_pending_work(target) ? 1U : 0U,
+               vkvv_vulkan_surface_has_predecode_export(target) ? 1U : 0U);
     vctx->render_target = VA_INVALID_ID;
     return VA_STATUS_SUCCESS;
 }

@@ -21,6 +21,7 @@ exports_map = meson.current_source_dir() / 'src' / 'exports.map'
 src_inc = include_directories('src')
 
 vulkan_runtime_sources = files(
+  'src/telemetry.cpp',
   'src/vulkan_runtime.cpp',
   'src/vulkan/common.cpp',
   'src/vulkan/command.cpp',
@@ -59,6 +60,7 @@ driver_sources = files(
   'src/caps/formats.cpp',
   'src/codecs/registry.cpp',
   'src/driver.cpp',
+  'src/driver_domain.cpp',
   'src/va_buffers.cpp',
   'src/va_config.cpp',
   'src/va_context.cpp',
@@ -152,6 +154,7 @@ export_smoke = executable(
   'vkvv-export-smoke',
   files(
     'tests/smoke/h264/export_smoke.cpp',
+    'src/driver_domain.cpp',
     'src/object.cpp',
   ) + vulkan_runtime_sources + h264_vulkan_sources + vp9_vulkan_sources + av1_vulkan_sources,
   include_directories: src_inc,

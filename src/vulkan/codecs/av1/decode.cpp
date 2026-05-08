@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "api.h"
+#include "telemetry.h"
 
 #include <algorithm>
 #include <array>
@@ -8,6 +9,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <string>
 #include <vector>
 
 using namespace vkvv;
@@ -372,6 +374,64 @@ bool validate_av1_decode_input_bounds(const VkvvAV1DecodeInput *input, char *rea
     return true;
 }
 
+uint32_t used_slot_mask(const bool used_slots[max_av1_dpb_slots]) {
+    uint32_t mask = 0;
+    if (used_slots == nullptr) {
+        return mask;
+    }
+    for (uint32_t i = 0; i < max_av1_dpb_slots; i++) {
+        if (used_slots[i]) {
+            mask |= 1U << i;
+        }
+    }
+    return mask;
+}
+
+std::string av1_reference_slots_string(const AV1VideoSession *session) {
+    std::string text;
+    if (session == nullptr) {
+        return text;
+    }
+    char item[96] = {};
+    for (uint32_t i = 0; i < max_av1_reference_slots; i++) {
+        const AV1ReferenceSlot &entry = session->reference_slots[i];
+        if (entry.surface_id == VA_INVALID_ID || entry.slot < 0) {
+            continue;
+        }
+        std::snprintf(item, sizeof(item), "%s%u:%u/%d/oh%u",
+                      text.empty() ? "" : ",",
+                      i,
+                      entry.surface_id,
+                      entry.slot,
+                      entry.info.OrderHint);
+        text += item;
+    }
+    return text.empty() ? "-" : text;
+}
+
+std::string av1_active_refs_string(
+        const VkvvAV1DecodeInput *input,
+        const int32_t reference_name_slot_indices[VK_MAX_VIDEO_AV1_REFERENCES_PER_FRAME_KHR]) {
+    std::string text;
+    if (input == nullptr || input->pic == nullptr || reference_name_slot_indices == nullptr) {
+        return "-";
+    }
+    char item[112] = {};
+    for (uint32_t i = 0; i < VK_MAX_VIDEO_AV1_REFERENCES_PER_FRAME_KHR; i++) {
+        const uint8_t ref_index = av1_va_ref_frame_index(input->pic, i);
+        const VASurfaceID ref_surface =
+            ref_index < max_av1_reference_slots ? input->pic->ref_frame_map[ref_index] : VA_INVALID_ID;
+        std::snprintf(item, sizeof(item), "%s%u:idx%u/surf%u/slot%d",
+                      text.empty() ? "" : ",",
+                      i,
+                      ref_index,
+                      ref_surface,
+                      reference_name_slot_indices[i]);
+        text += item;
+    }
+    return text.empty() ? "-" : text;
+}
+
 } // namespace
 
 VAStatus vkvv_vulkan_decode_av1(
@@ -539,6 +599,34 @@ VAStatus vkvv_vulkan_decode_av1(
     if (target_dpb_slot < 0) {
         std::snprintf(reason, reason_size, "no free AV1 DPB slot for current picture");
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
+    }
+    const bool trace_enabled = vkvv_trace_enabled();
+    if (trace_enabled) {
+        const std::string ref_slots_before = av1_reference_slots_string(session);
+        const std::string active_refs = av1_active_refs_string(input, reference_name_slot_indices);
+        const auto *target_resource_before = static_cast<const SurfaceResource *>(target->vulkan);
+        vkvv_trace("av1-decode-plan",
+                   "driver=%llu ctx_stream=%llu target=%u surface_stream=%llu surface_codec=0x%x frame_type=%u show=%u current_frame=%u order_hint=%u primary_ref=%u refresh=0x%02x refs=%u current_ref=%u target_slot=%d used_mask=0x%03x content_gen=%llu shadow_gen=%llu predecode=%u active_refs=\"%s\" ref_slots=\"%s\"",
+                   static_cast<unsigned long long>(drv->driver_instance_id),
+                   static_cast<unsigned long long>(vctx->stream_id),
+                   target_surface_id,
+                   static_cast<unsigned long long>(target->stream_id),
+                   target->codec_operation,
+                   input->pic->pic_info_fields.bits.frame_type,
+                   input->pic->pic_info_fields.bits.show_frame,
+                   input->pic->current_frame,
+                   input->pic->order_hint,
+                   input->pic->primary_ref_frame,
+                   input->header.refresh_frame_flags,
+                   reference_count,
+                   current_is_reference ? 1U : 0U,
+                   target_dpb_slot,
+                   used_slot_mask(used_slots),
+                   target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->content_generation) : 0ULL,
+                   target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->export_resource.content_generation) : 0ULL,
+                   target_resource_before != nullptr && target_resource_before->export_resource.predecode_exported ? 1U : 0U,
+                   active_refs.c_str(),
+                   ref_slots_before.c_str());
     }
     used_slots[target_dpb_slot] = true;
 
@@ -728,9 +816,41 @@ VAStatus vkvv_vulkan_decode_av1(
 
     if (current_is_reference) {
         av1_update_reference_slots_from_refresh(session, input, target_surface_id, target_dpb_slot, setup_std_ref);
+        if (trace_enabled) {
+            const std::string ref_slots_after = av1_reference_slots_string(session);
+            vkvv_trace("av1-ref-update",
+                       "driver=%llu ctx_stream=%llu target=%u refresh=0x%02x target_slot=%d order_hint=%u ref_slots=\"%s\"",
+                       static_cast<unsigned long long>(drv->driver_instance_id),
+                       static_cast<unsigned long long>(vctx->stream_id),
+                       target_surface_id,
+                       input->header.refresh_frame_flags,
+                       target_dpb_slot,
+                       input->pic->order_hint,
+                       ref_slots_after.c_str());
+        }
+    } else {
+        vkvv_trace("av1-ref-update-skip",
+                   "driver=%llu ctx_stream=%llu target=%u refresh=0x%02x scratch_slot=%d order_hint=%u",
+                   static_cast<unsigned long long>(drv->driver_instance_id),
+                   static_cast<unsigned long long>(vctx->stream_id),
+                   target_surface_id,
+                   input->header.refresh_frame_flags,
+                   target_dpb_slot,
+                   input->pic->order_hint);
     }
 
     track_pending_decode(runtime, target, parameters, upload_allocation_size, "AV1 decode");
+    vkvv_trace("av1-submit",
+               "driver=%llu ctx_stream=%llu target=%u slot=%d refresh=0x%02x refs=%u bytes=%zu upload_mem=%llu session_mem=%llu",
+               static_cast<unsigned long long>(drv->driver_instance_id),
+               static_cast<unsigned long long>(vctx->stream_id),
+               target_surface_id,
+               target_dpb_slot,
+               input->header.refresh_frame_flags,
+               reference_count,
+               input->bitstream_size,
+               static_cast<unsigned long long>(upload_allocation_size),
+               static_cast<unsigned long long>(session->video.memory_bytes));
     std::snprintf(reason, reason_size,
                   "submitted async AV1 Vulkan decode: %ux%u tiles=%zu bytes=%zu refs=%u setup=%u slot=%d refresh=0x%02x header=%u tile0=%u/%u decode_mem=%llu upload_mem=%llu session_mem=%llu",
                   coded_extent.width, coded_extent.height, input->tile_count, input->bitstream_size,

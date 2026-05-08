@@ -1,3 +1,4 @@
+#include "va_private.h"
 #include "vulkan/codecs/h264/api.h"
 #include "vulkan/codecs/h264/internal.h"
 #include "vulkan/codecs/vp9/api.h"
@@ -328,6 +329,234 @@ bool check_export_time_last_good_seeding(vkvv::VulkanRuntime *runtime) {
     return true;
 }
 
+bool check_untagged_export_adopts_active_decode_domain(vkvv::VulkanRuntime *runtime) {
+    char reason[512] = {};
+    void *session = nullptr;
+    VADRMPRIMESurfaceDescriptor descriptor{};
+    descriptor.objects[0].fd = -1;
+
+    VkvvDriver driver{};
+    driver.driver_instance_id = 1;
+
+    VkvvContext context{};
+    context.mode = VKVV_CONTEXT_MODE_DECODE;
+    context.stream_id = h264_stream_id + 2;
+    context.codec_operation = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR;
+    context.width = 64;
+    context.height = 64;
+
+    VkvvSurface decoded{};
+    init_nv12_surface(&decoded, 909, context.stream_id,
+                      VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+
+    VkvvSurface late_export{};
+    init_nv12_surface(&late_export, 910, 0, 0);
+
+    auto cleanup = [&]() {
+        if (descriptor.objects[0].fd >= 0) {
+            close(descriptor.objects[0].fd);
+            descriptor.objects[0].fd = -1;
+        }
+        vkvv_vulkan_surface_destroy(runtime, &late_export);
+        vkvv_vulkan_surface_destroy(runtime, &decoded);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+    };
+
+    vkvv_driver_note_decode_domain(&driver, &context, &decoded);
+
+    session = vkvv_vulkan_h264_session_create();
+    if (session == nullptr) {
+        cleanup();
+        return false;
+    }
+    VAStatus status = vkvv_vulkan_ensure_h264_session(runtime, session, 64, 64, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    if (status != VA_STATUS_SUCCESS) {
+        cleanup();
+        return false;
+    }
+
+    auto *typed_session = static_cast<vkvv::H264VideoSession *>(session);
+    const vkvv::DecodeImageKey decode_key = h264_decode_key(typed_session, &decoded, {64, 64});
+    if (!vkvv::ensure_surface_resource(runtime, &decoded, decode_key, reason, sizeof(reason))) {
+        std::fprintf(stderr, "%s\n", reason);
+        cleanup();
+        return false;
+    }
+    auto *decoded_resource = static_cast<vkvv::SurfaceResource *>(decoded.vulkan);
+    decoded.decoded = true;
+    decoded_resource->content_generation++;
+    status = vkvv_vulkan_refresh_surface_export(runtime, &decoded, reason, sizeof(reason));
+    if (reason[0] != '\0') {
+        std::printf("%s\n", reason);
+    }
+    if (status != VA_STATUS_SUCCESS) {
+        cleanup();
+        return false;
+    }
+
+    if (!vkvv_driver_apply_active_decode_domain(&driver, &late_export) ||
+        late_export.stream_id != context.stream_id ||
+        late_export.codec_operation != context.codec_operation) {
+        std::fprintf(stderr, "active decode domain did not tag the unowned export surface\n");
+        cleanup();
+        return false;
+    }
+
+    status = vkvv_vulkan_prepare_surface_export(runtime, &late_export, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    if (status != VA_STATUS_SUCCESS) {
+        cleanup();
+        return false;
+    }
+    status = vkvv_vulkan_export_surface(
+        runtime, &late_export, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
+        &descriptor, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    auto *late_resource = static_cast<vkvv::SurfaceResource *>(late_export.vulkan);
+    if (status != VA_STATUS_SUCCESS ||
+        late_resource == nullptr ||
+        late_resource->stream_id != context.stream_id ||
+        late_resource->codec_operation != context.codec_operation ||
+        !late_resource->export_resource.predecode_exported ||
+        !late_resource->export_resource.predecode_seeded ||
+        late_resource->export_resource.black_placeholder ||
+        late_resource->export_resource.seed_source_surface_id != decoded.id ||
+        late_resource->export_resource.seed_source_generation != decoded_resource->content_generation) {
+        std::fprintf(stderr, "untagged Chrome-style export was not seeded after active-domain tagging\n");
+        cleanup();
+        return false;
+    }
+    if (!vkvv_vulkan_surface_has_predecode_export(&late_export)) {
+        std::fprintf(stderr, "seeded predecode export was not marked for synchronous decode completion\n");
+        cleanup();
+        return false;
+    }
+
+    const vkvv::DecodeImageKey late_decode_key = h264_decode_key(typed_session, &late_export, {64, 64});
+    if (!vkvv::ensure_surface_resource(runtime, &late_export, late_decode_key, reason, sizeof(reason))) {
+        std::fprintf(stderr, "%s\n", reason);
+        cleanup();
+        return false;
+    }
+    late_resource = static_cast<vkvv::SurfaceResource *>(late_export.vulkan);
+    late_export.decoded = true;
+    late_resource->content_generation++;
+    status = vkvv_vulkan_refresh_surface_export(runtime, &late_export, reason, sizeof(reason));
+    if (reason[0] != '\0') {
+        std::printf("%s\n", reason);
+    }
+    if (status != VA_STATUS_SUCCESS ||
+        vkvv_vulkan_surface_has_predecode_export(&late_export) ||
+        late_resource->export_resource.content_generation != late_resource->content_generation) {
+        std::fprintf(stderr, "decoded pre-exported surface did not refresh and clear predecode state\n");
+        cleanup();
+        return false;
+    }
+
+    const VkDeviceMemory first_decoded_export_memory = late_resource->export_resource.memory;
+    late_resource->content_generation++;
+    status = vkvv_vulkan_refresh_surface_export(runtime, &late_export, reason, sizeof(reason));
+    if (reason[0] != '\0') {
+        std::printf("%s\n", reason);
+    }
+    if (status != VA_STATUS_SUCCESS ||
+        late_resource->export_resource.memory != first_decoded_export_memory ||
+        late_resource->export_resource.content_generation != late_resource->content_generation ||
+        detached_memory_present(runtime, first_decoded_export_memory,
+                                late_export.driver_instance_id, late_export.id)) {
+        std::fprintf(stderr, "surface reuse rotated an exported pool fd instead of updating it in place\n");
+        cleanup();
+        return false;
+    }
+
+    cleanup();
+    return true;
+}
+
+bool check_unknown_predecode_export_uses_first_decode_domain(vkvv::VulkanRuntime *runtime) {
+    char reason[512] = {};
+    void *session = nullptr;
+    VADRMPRIMESurfaceDescriptor descriptor{};
+    descriptor.objects[0].fd = -1;
+
+    VkvvSurface surface{};
+    init_nv12_surface(&surface, 911, 0, 0);
+
+    auto cleanup = [&]() {
+        if (descriptor.objects[0].fd >= 0) {
+            close(descriptor.objects[0].fd);
+            descriptor.objects[0].fd = -1;
+        }
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+    };
+
+    VAStatus status = vkvv_vulkan_prepare_surface_export(runtime, &surface, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    if (status != VA_STATUS_SUCCESS) {
+        cleanup();
+        return false;
+    }
+    status = vkvv_vulkan_export_surface(
+        runtime, &surface, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
+        &descriptor, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    auto *resource = static_cast<vkvv::SurfaceResource *>(surface.vulkan);
+    if (status != VA_STATUS_SUCCESS ||
+        resource == nullptr ||
+        !resource->export_resource.predecode_exported ||
+        resource->export_resource.stream_id != 0 ||
+        resource->export_resource.codec_operation != 0) {
+        std::fprintf(stderr, "unknown predecode export should remain untagged before first decode\n");
+        cleanup();
+        return false;
+    }
+    const VkDeviceMemory predecode_memory = resource->export_resource.memory;
+
+    surface.stream_id = h264_stream_id + 3;
+    surface.codec_operation = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR;
+    session = vkvv_vulkan_h264_session_create();
+    if (session == nullptr) {
+        cleanup();
+        return false;
+    }
+    status = vkvv_vulkan_ensure_h264_session(runtime, session, 64, 64, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    if (status != VA_STATUS_SUCCESS) {
+        cleanup();
+        return false;
+    }
+
+    auto *typed_session = static_cast<vkvv::H264VideoSession *>(session);
+    const vkvv::DecodeImageKey decode_key = h264_decode_key(typed_session, &surface, {64, 64});
+    if (!vkvv::ensure_surface_resource(runtime, &surface, decode_key, reason, sizeof(reason))) {
+        std::fprintf(stderr, "%s\n", reason);
+        cleanup();
+        return false;
+    }
+    resource = static_cast<vkvv::SurfaceResource *>(surface.vulkan);
+    surface.decoded = true;
+    resource->content_generation++;
+    status = vkvv_vulkan_refresh_surface_export(runtime, &surface, reason, sizeof(reason));
+    if (reason[0] != '\0') {
+        std::printf("%s\n", reason);
+    }
+    if (status != VA_STATUS_SUCCESS ||
+        resource->export_resource.memory != predecode_memory ||
+        resource->export_resource.predecode_exported ||
+        resource->export_resource.stream_id != surface.stream_id ||
+        resource->export_resource.codec_operation != surface.codec_operation ||
+        resource->export_resource.content_generation != resource->content_generation) {
+        std::fprintf(stderr, "first decode did not retag and fill the existing unknown predecode export\n");
+        cleanup();
+        return false;
+    }
+
+    cleanup();
+    return true;
+}
+
 bool check_predecode_seed_rejects_cross_codec(vkvv::VulkanRuntime *runtime) {
     char reason[512] = {};
     void *vp9_session = nullptr;
@@ -460,6 +689,14 @@ int main(void) {
         return 1;
     }
     if (!check_export_time_last_good_seeding(typed_runtime)) {
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    if (!check_untagged_export_adopts_active_decode_domain(typed_runtime)) {
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    if (!check_unknown_predecode_export_uses_first_decode_domain(typed_runtime)) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }

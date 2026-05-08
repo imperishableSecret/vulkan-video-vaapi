@@ -1,4 +1,5 @@
 #include "vulkan/export/internal.h"
+#include "telemetry.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -580,6 +581,42 @@ bool export_resource_matches_surface(const SurfaceResource *source) {
            resource.extent.height >= source->coded_extent.height;
 }
 
+void retag_predecode_export_to_source(SurfaceResource *source) {
+    if (source == nullptr ||
+        source->content_generation == 0 ||
+        source->stream_id == 0 ||
+        source->codec_operation == 0) {
+        return;
+    }
+
+    ExportResource &resource = source->export_resource;
+    if (!resource.predecode_exported ||
+        resource.content_generation != 0 ||
+        resource.image == VK_NULL_HANDLE ||
+        resource.memory == VK_NULL_HANDLE ||
+        resource.format != source->format ||
+        resource.va_fourcc != source->va_fourcc ||
+        resource.extent.width < source->coded_extent.width ||
+        resource.extent.height < source->coded_extent.height) {
+        return;
+    }
+
+    resource.driver_instance_id = source->driver_instance_id;
+    resource.stream_id = source->stream_id;
+    resource.codec_operation = source->codec_operation;
+    resource.owner_surface_id = source->surface_id;
+    vkvv_trace("export-retag-predecode",
+               "surface=%u driver=%llu stream=%llu codec=0x%x shadow_mem=0x%llx content_gen=%llu seed_surface=%u seed_gen=%llu",
+               source->surface_id,
+               static_cast<unsigned long long>(source->driver_instance_id),
+               static_cast<unsigned long long>(source->stream_id),
+               source->codec_operation,
+               vkvv_trace_handle(resource.memory),
+               static_cast<unsigned long long>(source->content_generation),
+               resource.seed_source_surface_id,
+               static_cast<unsigned long long>(resource.seed_source_generation));
+}
+
 bool predecode_seed_target_matches(const ExportResource *target, const SurfaceResource *source) {
     return target != nullptr &&
            source != nullptr &&
@@ -955,7 +992,28 @@ bool copy_surface_to_export_resource(
     if (format == nullptr) {
         return false;
     }
+    vkvv_trace("export-copy-enter",
+               "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u seeded=%u",
+               source != nullptr ? source->surface_id : VA_INVALID_ID,
+               source != nullptr ? static_cast<unsigned long long>(source->driver_instance_id) : 0ULL,
+               source != nullptr ? static_cast<unsigned long long>(source->stream_id) : 0ULL,
+               source != nullptr ? source->codec_operation : 0U,
+               source != nullptr ? static_cast<unsigned long long>(source->content_generation) : 0ULL,
+               source != nullptr ? vkvv_trace_handle(source->export_resource.memory) : 0ULL,
+               source != nullptr ? static_cast<unsigned long long>(source->export_resource.content_generation) : 0ULL,
+               source != nullptr && source->export_resource.predecode_exported ? 1U : 0U,
+               source != nullptr && source->export_resource.predecode_seeded ? 1U : 0U);
+    retag_predecode_export_to_source(source);
     if (source->export_resource.exported && !export_resource_matches_surface(source)) {
+        vkvv_trace("export-copy-detach-mismatch",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x shadow_stream=%llu shadow_codec=0x%x shadow_mem=0x%llx",
+                   source->surface_id,
+                   static_cast<unsigned long long>(source->driver_instance_id),
+                   static_cast<unsigned long long>(source->stream_id),
+                   source->codec_operation,
+                   static_cast<unsigned long long>(source->export_resource.stream_id),
+                   source->export_resource.codec_operation,
+                   vkvv_trace_handle(source->export_resource.memory));
         detach_export_resource(runtime, source);
     }
     if (!ensure_export_resource(runtime, source, reason, reason_size)) {
@@ -970,6 +1028,15 @@ bool copy_surface_to_export_resource(
         source->export_resource.content_generation == source->content_generation;
     if (owner_export_current && predecode_seed_targets.empty()) {
         remember_export_seed_resource_locked(runtime, source);
+        vkvv_trace("export-copy-skip-current",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu",
+                   source->surface_id,
+                   static_cast<unsigned long long>(source->driver_instance_id),
+                   static_cast<unsigned long long>(source->stream_id),
+                   source->codec_operation,
+                   static_cast<unsigned long long>(source->content_generation),
+                   vkvv_trace_handle(source->export_resource.memory),
+                   static_cast<unsigned long long>(source->export_resource.content_generation));
         return true;
     }
 
@@ -988,6 +1055,18 @@ bool copy_surface_to_export_resource(
     if (seeded_predecode_exports != nullptr) {
         *seeded_predecode_exports = static_cast<uint32_t>(predecode_seed_targets.size());
     }
+    vkvv_trace("export-copy-done",
+               "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu seeded_targets=%zu predecode=%u seeded=%u",
+               source->surface_id,
+               static_cast<unsigned long long>(source->driver_instance_id),
+               static_cast<unsigned long long>(source->stream_id),
+               source->codec_operation,
+               static_cast<unsigned long long>(source->content_generation),
+               vkvv_trace_handle(source->export_resource.memory),
+               static_cast<unsigned long long>(source->export_resource.content_generation),
+               predecode_seed_targets.size(),
+               source->export_resource.predecode_exported ? 1U : 0U,
+               source->export_resource.predecode_seeded ? 1U : 0U);
     return true;
 }
 
@@ -1006,10 +1085,25 @@ bool seed_predecode_export_from_last_good(
     std::unique_lock<std::mutex> export_lock(runtime->export_mutex);
     SurfaceResource *source = find_export_seed_source_locked(runtime, target);
     if (source == nullptr || source == target) {
+        vkvv_trace("export-seed-miss",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x",
+                   target->surface_id,
+                   static_cast<unsigned long long>(target->driver_instance_id),
+                   static_cast<unsigned long long>(target->stream_id),
+                   target->codec_operation);
         return true;
     }
 
     std::vector<ExportResource *> targets{&target->export_resource};
+    vkvv_trace("export-seed-hit",
+               "surface=%u driver=%llu stream=%llu codec=0x%x source_surface=%u source_gen=%llu target_mem=0x%llx",
+               target->surface_id,
+               static_cast<unsigned long long>(target->driver_instance_id),
+               static_cast<unsigned long long>(target->stream_id),
+               target->codec_operation,
+               source->surface_id,
+               static_cast<unsigned long long>(source->content_generation),
+               vkvv_trace_handle(target->export_resource.memory));
     return copy_surface_to_export_targets_locked(
         runtime, source, nullptr, false, targets, reason, reason_size);
 }

@@ -243,6 +243,12 @@ typedef struct VkvvDriver {
     unsigned int next_id;
     uint64_t driver_instance_id = 0;
     uint64_t next_stream_id = 1;
+    uint64_t active_decode_stream_id = 0;
+    unsigned int active_decode_codec_operation = 0;
+    unsigned int active_decode_width = 0;
+    unsigned int active_decode_height = 0;
+    unsigned int active_decode_rt_format = 0;
+    unsigned int active_decode_fourcc = 0;
     void *vulkan;
 } VkvvDriver;
 
