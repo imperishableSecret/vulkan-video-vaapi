@@ -12,8 +12,6 @@
 namespace vkvv {
 
 inline constexpr uint32_t invalid_queue_family = UINT32_MAX;
-inline constexpr uint32_t max_va_h264_reference_frames = 16;
-inline constexpr uint32_t max_h264_dpb_slots = 17;
 
 struct VideoCapabilitiesChain {
     VkVideoDecodeH264CapabilitiesKHR h264{};
@@ -193,17 +191,6 @@ struct VideoSession {
     bool initialized = false;
 };
 
-struct H264VideoSession {
-    VideoSession video;
-    UploadBuffer upload;
-    VkDeviceSize bitstream_offset_alignment = 1;
-    VkDeviceSize bitstream_size_alignment = 1;
-    StdVideoH264LevelIdc max_level = STD_VIDEO_H264_LEVEL_IDC_5_2;
-    VkVideoDecodeCapabilityFlagsKHR decode_flags = 0;
-    uint32_t max_dpb_slots = 0;
-    uint32_t max_active_reference_pictures = 0;
-};
-
 class VulkanRuntime {
   public:
     ~VulkanRuntime() {
@@ -279,21 +266,17 @@ bool find_memory_type(const VkPhysicalDeviceMemoryProperties &properties, uint32
 bool enumerate_drm_format_modifiers(VulkanRuntime *runtime, VkFormat format, VkFormatFeatureFlags2 required, std::vector<uint64_t> *modifiers);
 
 void destroy_video_session(VulkanRuntime *runtime, VideoSession *session);
-void destroy_h264_video_session(VulkanRuntime *runtime, H264VideoSession *session);
 bool bind_video_session_memory(VulkanRuntime *runtime, VideoSession *session, char *reason, size_t reason_size);
 void destroy_export_resource(VulkanRuntime *runtime, ExportResource *resource);
 VkDeviceSize export_memory_bytes(const SurfaceResource *resource);
 void retire_export_resource(SurfaceResource *resource);
 void destroy_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface);
-VkImageUsageFlags h264_surface_image_usage();
 bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const DecodeImageKey &key, char *reason, size_t reason_size);
 void destroy_upload_buffer(VulkanRuntime *runtime, UploadBuffer *upload);
-bool ensure_upload_buffer(VulkanRuntime *runtime, const H264VideoSession *session, const VkvvH264DecodeInput *input, UploadBuffer *upload, char *reason, size_t reason_size);
 bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reason_size);
 bool submit_command_buffer(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation);
 bool submit_command_buffer_and_wait(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation);
 void track_pending_decode(VulkanRuntime *runtime, VkvvSurface *surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, const char *operation);
-bool reset_h264_session(VulkanRuntime *runtime, H264VideoSession *session, VkVideoSessionParametersKHR parameters, char *reason, size_t reason_size);
 void add_image_layout_barrier(std::vector<VkImageMemoryBarrier2> *barriers, SurfaceResource *resource, VkImageLayout new_layout, VkAccessFlags2 dst_access);
 VkVideoPictureResourceInfoKHR make_picture_resource(SurfaceResource *resource, VkExtent2D coded_extent);
 

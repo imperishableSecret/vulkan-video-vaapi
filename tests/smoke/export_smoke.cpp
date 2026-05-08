@@ -1,4 +1,5 @@
-#include "vulkan_runtime_internal.h"
+#include "vulkan/h264/api.h"
+#include "vulkan/h264/internal.h"
 
 #include <cstdio>
 #include <drm_fourcc.h>

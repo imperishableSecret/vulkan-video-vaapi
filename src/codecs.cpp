@@ -1,6 +1,6 @@
 #include "va_private.h"
 #include "h264.h"
-#include "vulkan_runtime.h"
+#include "vulkan/h264/api.h"
 
 namespace {
 

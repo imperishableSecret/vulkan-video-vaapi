@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "api.h"
 
 #include <algorithm>
 #include <cstdio>
