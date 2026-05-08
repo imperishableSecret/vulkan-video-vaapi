@@ -156,7 +156,7 @@ void add_vp9_profile2(VkvvDriver *drv) {
         VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME,
         drv->caps.vp9_10_limits,
         drv->caps.vp9_10 || drv->caps.vp9_12,
-        false, false);
+        true, true);
     add_format_variant(cap, VA_RT_FORMAT_YUV420_10, drv->caps.vp9_10, drv->caps.surface_export_p010);
     add_format_variant(cap, VA_RT_FORMAT_YUV420_12, drv->caps.vp9_12, drv->caps.surface_export_p012);
 }

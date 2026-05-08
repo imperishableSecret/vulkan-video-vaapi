@@ -9,6 +9,23 @@
 
 namespace vkvv {
 
+VP9VideoSession *create_vp9_session(
+        VAProfile va_profile,
+        unsigned int va_rt_format,
+        unsigned int va_fourcc,
+        uint8_t bitstream_profile,
+        uint8_t bit_depth,
+        VideoProfileSpec profile_spec) {
+    auto *session = new VP9VideoSession();
+    session->va_profile = va_profile;
+    session->va_rt_format = va_rt_format;
+    session->va_fourcc = va_fourcc;
+    session->bitstream_profile = bitstream_profile;
+    session->bit_depth = bit_depth;
+    session->profile_spec = profile_spec;
+    return session;
+}
+
 VkImageUsageFlags vp9_surface_image_usage() {
     return VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR |
            VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR |
@@ -106,7 +123,19 @@ using namespace vkvv;
 
 void *vkvv_vulkan_vp9_session_create(void) {
     try {
-        return new VP9VideoSession();
+        return create_vp9_session(
+            VAProfileVP9Profile0, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12,
+            0, 8, vp9_profile0_spec);
+    } catch (const std::bad_alloc &) {
+        return nullptr;
+    }
+}
+
+void *vkvv_vulkan_vp9_profile2_session_create(void) {
+    try {
+        return create_vp9_session(
+            VAProfileVP9Profile2, VA_RT_FORMAT_YUV420_10, VA_FOURCC_P010,
+            2, 10, vp9_profile2_10bit_spec);
     } catch (const std::bad_alloc &) {
         return nullptr;
     }
@@ -151,8 +180,8 @@ VAStatus vkvv_vulkan_ensure_vp9_session(
 
     destroy_vp9_video_session(runtime, session);
 
-    VideoProfileChain profile_chain(vp9_profile0_spec);
-    VideoCapabilitiesChain capabilities(vp9_profile0_spec);
+    VideoProfileChain profile_chain(session->profile_spec);
+    VideoCapabilitiesChain capabilities(session->profile_spec);
     VkResult result = runtime->get_video_capabilities(runtime->physical_device, &profile_chain.profile, &capabilities.video);
     if (result != VK_SUCCESS) {
         std::snprintf(reason, reason_size, "vkGetPhysicalDeviceVideoCapabilitiesKHR(VP9) failed: %d", result);
@@ -176,7 +205,7 @@ VAStatus vkvv_vulkan_ensure_vp9_session(
             runtime,
             &profile_chain.profile,
             VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR,
-            preferred_vk_format_for_rt_format(VA_RT_FORMAT_YUV420),
+            preferred_vk_format_for_rt_format(session->va_rt_format),
             runtime->surface_export,
             &format_selection,
             reason,

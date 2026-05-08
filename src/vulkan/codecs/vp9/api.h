@@ -8,6 +8,7 @@ extern "C" {
 #endif
 
 void *vkvv_vulkan_vp9_session_create(void);
+void *vkvv_vulkan_vp9_profile2_session_create(void);
 void vkvv_vulkan_vp9_session_destroy(void *runtime, void *session);
 VAStatus vkvv_vulkan_ensure_vp9_session(
         void *runtime,

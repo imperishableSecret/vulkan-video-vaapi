@@ -155,6 +155,11 @@ bool parse_vp9_frame_header(VP9State *vp9, char *reason, size_t reason_size) {
     return true;
 }
 
+bool supported_profile_depth(uint8_t profile, uint8_t bit_depth) {
+    return (profile == 0 && bit_depth == 8) ||
+           (profile == 2 && bit_depth == 10);
+}
+
 } // namespace
 
 void *vkvv_vp9_state_create(void) {
@@ -253,8 +258,9 @@ VAStatus vkvv_vp9_prepare_decode(void *state, unsigned int *width, unsigned int 
         std::snprintf(reason, reason_size, "missing VP9 slice data");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
-    if (vp9->pic.profile != 0 || vp9->pic.bit_depth != 8) {
-        std::snprintf(reason, reason_size, "VP9 path currently supports only Profile0 8-bit");
+    if (!supported_profile_depth(vp9->pic.profile, vp9->pic.bit_depth)) {
+        std::snprintf(reason, reason_size,
+                      "VP9 path currently supports only Profile0 8-bit and Profile2 10-bit 4:2:0");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
     if (!vp9->pic.pic_fields.bits.subsampling_x || !vp9->pic.pic_fields.bits.subsampling_y) {

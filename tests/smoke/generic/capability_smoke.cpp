@@ -86,7 +86,11 @@ bool find_integer_attrib(
     return false;
 }
 
-bool check_h264_profile(VADisplay display, VAProfile profile) {
+bool check_decode_profile(
+        VADisplay display,
+        VAProfile profile,
+        unsigned int rt_format,
+        unsigned int fourcc) {
     VAEntrypoint entrypoints[4] = {};
     int entrypoint_count = 0;
     if (!check_va(vaQueryConfigEntrypoints(display, profile, entrypoints, &entrypoint_count),
@@ -108,7 +112,7 @@ bool check_h264_profile(VADisplay display, VAProfile profile) {
                   "vaGetConfigAttributes")) {
         return false;
     }
-    if ((attribs[0].value & VA_RT_FORMAT_YUV420) == 0 ||
+    if ((attribs[0].value & rt_format) == 0 ||
         attribs[1].value != VA_DEC_SLICE_MODE_NORMAL ||
         attribs[2].value == 0 ||
         attribs[3].value == 0) {
@@ -121,7 +125,7 @@ bool check_h264_profile(VADisplay display, VAProfile profile) {
 
     VAConfigAttrib create_attrib{};
     create_attrib.type = VAConfigAttribRTFormat;
-    create_attrib.value = VA_RT_FORMAT_YUV420;
+    create_attrib.value = rt_format;
     VAConfigID config = VA_INVALID_ID;
     if (!check_va(vaCreateConfig(display, profile, VAEntrypointVLD, &create_attrib, 1, &config),
                   "vaCreateConfig")) {
@@ -154,7 +158,7 @@ bool check_h264_profile(VADisplay display, VAProfile profile) {
         min_height <= 0 ||
         max_width < min_width ||
         max_height < min_height ||
-        pixel_format != static_cast<int>(VA_FOURCC_NV12) ||
+        pixel_format != static_cast<int>(fourcc) ||
         (memory_type & VA_SURFACE_ATTRIB_MEM_TYPE_VA) == 0 ||
         (memory_type & VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2) == 0) {
         std::fprintf(stderr,
@@ -298,24 +302,26 @@ int main(void) {
     int profile_count = 0;
     ok = check_va(vaQueryConfigProfiles(display, profiles.data(), &profile_count),
                   "vaQueryConfigProfiles") && ok;
-    if (ok && profile_count != 4) {
-        std::fprintf(stderr, "expected exactly 4 usable profiles, got %d\n", profile_count);
+    if (ok && profile_count != 5) {
+        std::fprintf(stderr, "expected exactly 5 usable profiles, got %d\n", profile_count);
         ok = false;
     }
     ok = profile_present(profiles, profile_count, VAProfileH264ConstrainedBaseline) && ok;
     ok = profile_present(profiles, profile_count, VAProfileH264Main) && ok;
     ok = profile_present(profiles, profile_count, VAProfileH264High) && ok;
     ok = profile_present(profiles, profile_count, VAProfileVP9Profile0) && ok;
+    ok = profile_present(profiles, profile_count, VAProfileVP9Profile2) && ok;
     if (profile_present(profiles, profile_count, VAProfileHEVCMain) ||
         profile_present(profiles, profile_count, VAProfileAV1Profile0)) {
         std::fprintf(stderr, "driver advertised a profile without wired decode/export\n");
         ok = false;
     }
 
-    ok = check_h264_profile(display, VAProfileH264ConstrainedBaseline) && ok;
-    ok = check_h264_profile(display, VAProfileH264Main) && ok;
-    ok = check_h264_profile(display, VAProfileH264High) && ok;
-    ok = check_h264_profile(display, VAProfileVP9Profile0) && ok;
+    ok = check_decode_profile(display, VAProfileH264ConstrainedBaseline, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
+    ok = check_decode_profile(display, VAProfileH264Main, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
+    ok = check_decode_profile(display, VAProfileH264High, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
+    ok = check_decode_profile(display, VAProfileVP9Profile0, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
+    ok = check_decode_profile(display, VAProfileVP9Profile2, VA_RT_FORMAT_YUV420_10, VA_FOURCC_P010) && ok;
     ok = check_encode_entrypoint_not_advertised(
              display, VAProfileH264High, VAEntrypointEncSlice,
              "H.264 EncSlice advertising") && ok;
@@ -328,7 +334,6 @@ int main(void) {
 
     ok = check_profile_not_advertised(display, VAProfileHEVCMain, "HEVC Main advertising") && ok;
     ok = check_profile_not_advertised(display, VAProfileHEVCMain10, "HEVC Main10 advertising") && ok;
-    ok = check_profile_not_advertised(display, VAProfileVP9Profile2, "VP9 Profile2 advertising") && ok;
     ok = check_profile_not_advertised(display, VAProfileAV1Profile0, "AV1 Profile0 advertising") && ok;
 
     VAImageFormat image_formats[4] = {};
@@ -344,10 +349,12 @@ int main(void) {
     }
 
     VASurfaceID p010_surface = VA_INVALID_SURFACE;
-    ok = expect_status(
+    ok = check_va(
              vaCreateSurfaces(display, VA_RT_FORMAT_YUV420_10, 64, 64, &p010_surface, 1, nullptr, 0),
-             VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT,
              "vaCreateSurfaces(P010)") && ok;
+    if (p010_surface != VA_INVALID_SURFACE) {
+        ok = check_va(vaDestroySurfaces(display, &p010_surface, 1), "vaDestroySurfaces(P010)") && ok;
+    }
     ok = check_buffer_mapping(display) && ok;
 
     ok = check_va(vaTerminate(display), "vaTerminate") && ok;

@@ -56,11 +56,24 @@ VAStatus vp9_decode(
     return vkvv_vulkan_decode_vp9(runtime, session, drv, vctx, target, profile, &input, reason, reason_size);
 }
 
-const VkvvDecodeOps vp9_decode_ops = {
+const VkvvDecodeOps vp9_profile0_decode_ops = {
     "vp9",
     vkvv_vp9_state_create,
     vkvv_vp9_state_destroy,
     vkvv_vulkan_vp9_session_create,
+    vkvv_vulkan_vp9_session_destroy,
+    vkvv_vp9_begin_picture,
+    vkvv_vp9_render_buffer,
+    vkvv_vp9_prepare_decode,
+    vkvv_vulkan_ensure_vp9_session,
+    vp9_decode,
+};
+
+const VkvvDecodeOps vp9_profile2_decode_ops = {
+    "vp9-profile2",
+    vkvv_vp9_state_create,
+    vkvv_vp9_state_destroy,
+    vkvv_vulkan_vp9_profile2_session_create,
     vkvv_vulkan_vp9_session_destroy,
     vkvv_vp9_begin_picture,
     vkvv_vp9_render_buffer,
@@ -83,9 +96,14 @@ bool vp9_profile_matches(VAProfile profile) {
     return profile == VAProfileVP9Profile0;
 }
 
+bool vp9_profile2_matches(VAProfile profile) {
+    return profile == VAProfileVP9Profile2;
+}
+
 const DecodeRegistryEntry decode_registry[] = {
     {VAEntrypointVLD, h264_profile_matches, &h264_decode_ops},
-    {VAEntrypointVLD, vp9_profile_matches, &vp9_decode_ops},
+    {VAEntrypointVLD, vp9_profile_matches, &vp9_profile0_decode_ops},
+    {VAEntrypointVLD, vp9_profile2_matches, &vp9_profile2_decode_ops},
 };
 
 } // namespace

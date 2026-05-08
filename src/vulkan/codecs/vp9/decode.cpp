@@ -65,11 +65,20 @@ VAStatus vkvv_vulkan_decode_vp9(
         std::snprintf(reason, reason_size, "missing VP9 decode state");
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
-    if (profile != VAProfileVP9Profile0 ||
-        input->pic->profile != 0 ||
-        input->pic->bit_depth != 8) {
-        std::snprintf(reason, reason_size, "VP9 Vulkan path currently supports only Profile0 8-bit");
+    if (profile != session->va_profile ||
+        input->pic->profile != session->bitstream_profile ||
+        input->pic->bit_depth != session->bit_depth) {
+        std::snprintf(reason, reason_size,
+                      "VP9 Vulkan profile mismatch: context=%d session=%d va_profile=%u va_depth=%u expected_profile=%u expected_depth=%u",
+                      profile, session->va_profile, input->pic->profile, input->pic->bit_depth,
+                      session->bitstream_profile, session->bit_depth);
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
+    }
+    if (target->rt_format != session->va_rt_format || target->fourcc != session->va_fourcc) {
+        std::snprintf(reason, reason_size,
+                      "VP9 target surface format mismatch: rt=0x%x fourcc=0x%x expected_rt=0x%x expected_fourcc=0x%x",
+                      target->rt_format, target->fourcc, session->va_rt_format, session->va_fourcc);
+        return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
     if (session->video.session == VK_NULL_HANDLE) {
         std::snprintf(reason, reason_size, "missing VP9 video session");
@@ -210,7 +219,7 @@ VAStatus vkvv_vulkan_decode_vp9(
     UploadBuffer *upload = &session->upload;
     if (!ensure_bitstream_upload_buffer(
             runtime,
-            vp9_profile0_spec,
+            session->profile_spec,
             input->bitstream,
             input->bitstream_size,
             session->bitstream_size_alignment,
@@ -333,7 +342,7 @@ VAStatus vkvv_vulkan_decode_vp9(
     std_picture.flags.segmentation_enabled = input->pic->pic_fields.bits.segmentation_enabled;
     std_picture.flags.show_frame = input->header.show_frame;
     std_picture.flags.UsePrevFrameMvs = input->header.use_prev_frame_mvs;
-    std_picture.profile = STD_VIDEO_VP9_PROFILE_0;
+    std_picture.profile = static_cast<StdVideoVP9Profile>(session->profile_spec.std_profile);
     std_picture.frame_type = input->header.frame_type ?
                              STD_VIDEO_VP9_FRAME_TYPE_NON_KEY :
                              STD_VIDEO_VP9_FRAME_TYPE_KEY;

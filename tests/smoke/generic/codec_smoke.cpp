@@ -41,7 +41,21 @@ std::vector<uint8_t> make_vp9_keyframe() {
     };
 }
 
-bool check_vp9_parser(const VkvvDecodeOps *vp9) {
+std::vector<uint8_t> make_vp9_profile2_keyframe() {
+    return {
+        0x92, 0x49, 0x83, 0x42, 0x00, 0x00, 0x78, 0x00,
+        0x7b, 0x03, 0x1c, 0x12, 0x0e, 0x0c, 0x29, 0x00,
+        0x00, 0x10, 0x40, 0x00, 0x10, 0xbf, 0xff, 0xfd,
+        0x25, 0x10, 0xdf, 0x98, 0x00,
+    };
+}
+
+bool check_vp9_parser(
+        const VkvvDecodeOps *vp9,
+        uint8_t profile,
+        uint8_t bit_depth,
+        const std::vector<uint8_t> &bitstream,
+        const char *label) {
     void *state = vp9 != nullptr ? vp9->state_create() : nullptr;
     if (!check(state != nullptr, "VP9 codec state allocation failed")) {
         return false;
@@ -55,10 +69,8 @@ bool check_vp9_parser(const VkvvDecodeOps *vp9) {
     pic.pic_fields.bits.subsampling_x = 1;
     pic.pic_fields.bits.subsampling_y = 1;
     pic.pic_fields.bits.error_resilient_mode = 1;
-    pic.profile = 0;
-    pic.bit_depth = 8;
-
-    std::vector<uint8_t> bitstream = make_vp9_keyframe();
+    pic.profile = profile;
+    pic.bit_depth = bit_depth;
 
     VASliceParameterBufferVP9 slice{};
     slice.slice_data_size = static_cast<uint32_t>(bitstream.size());
@@ -79,7 +91,7 @@ bool check_vp9_parser(const VkvvDecodeOps *vp9) {
     data_buffer.type = VASliceDataBufferType;
     data_buffer.size = static_cast<unsigned int>(bitstream.size());
     data_buffer.num_elements = 1;
-    data_buffer.data = bitstream.data();
+    data_buffer.data = const_cast<uint8_t *>(bitstream.data());
 
     bool ok = check(vp9->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS,
                     "VP9 picture buffer ingestion failed");
@@ -109,15 +121,20 @@ bool check_vp9_parser(const VkvvDecodeOps *vp9) {
         input.bitstream_size == bitstream.size();
     if (!parsed) {
         std::fprintf(stderr,
-                     "VP9 parsed header mismatch: valid=%u refresh=0x%02x q=%u header=%u first_partition=%u bytes=%zu\n",
+                     "%s parsed header mismatch: valid=%u refresh=0x%02x profile=%u depth=%u q=%u header=%u first_partition=%u bytes=%zu\n",
+                     label,
                      input.header.valid,
                      input.header.refresh_frame_flags,
+                     input.header.profile,
+                     input.header.bit_depth,
                      input.header.base_q_idx,
                      input.header.frame_header_length_in_bytes,
                      input.header.first_partition_size,
                      input.bitstream_size);
     }
     ok = check(parsed, "VP9 parsed header did not expose expected keyframe values") && ok;
+    ok = check(input.header.profile == profile && input.header.bit_depth == bit_depth,
+               "VP9 parsed header returned the wrong profile/depth") && ok;
 
     vp9->state_destroy(state);
     return ok;
@@ -155,10 +172,15 @@ int main(void) {
     ok = check(ops_complete(vp9), "VP9 decode ops are incomplete") && ok;
     if (vp9 != nullptr) {
         ok = check(std::strcmp(vp9->name, "vp9") == 0, "VP9 decode ops used the wrong name") && ok;
-        ok = check_vp9_parser(vp9) && ok;
+        ok = check_vp9_parser(vp9, 0, 8, make_vp9_keyframe(), "VP9 Profile0") && ok;
     }
-    ok = check(vkvv_decode_ops_for_profile_entrypoint(VAProfileVP9Profile2, VAEntrypointVLD) == nullptr,
-               "VP9 Profile2 should not have decode ops before P010 decode is wired") && ok;
+    const VkvvDecodeOps *vp9_profile2 = vkvv_decode_ops_for_profile_entrypoint(VAProfileVP9Profile2, VAEntrypointVLD);
+    ok = check(ops_complete(vp9_profile2), "VP9 Profile2 decode ops are incomplete") && ok;
+    if (vp9_profile2 != nullptr) {
+        ok = check(std::strcmp(vp9_profile2->name, "vp9-profile2") == 0,
+                   "VP9 Profile2 decode ops used the wrong name") && ok;
+        ok = check_vp9_parser(vp9_profile2, 2, 10, make_vp9_profile2_keyframe(), "VP9 Profile2") && ok;
+    }
     ok = check(vkvv_decode_ops_for_profile_entrypoint(VAProfileAV1Profile0, VAEntrypointVLD) == nullptr,
                "AV1 should not have decode ops before its decoder is wired") && ok;
     ok = check(vkvv_encode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointEncSlice) == nullptr,
@@ -201,12 +223,21 @@ int main(void) {
                    vp9_decode->formats[0].fourcc == VA_FOURCC_NV12,
                "VP9 Profile0 should be advertised with one NV12 format variant") && ok;
 
-    const VkvvProfileCapability *vp9_profile2_hidden = vkvv_profile_capability_record(
+    const VkvvProfileCapability *vp9_profile2_decode = vkvv_profile_capability_for_entrypoint(
+        &drv, VAProfileVP9Profile2, VAEntrypointVLD);
+    ok = check(vp9_profile2_decode != nullptr && vp9_profile2_decode->advertise &&
+                   vp9_profile2_decode->direction == VKVV_CODEC_DIRECTION_DECODE &&
+                   vp9_profile2_decode->format_count == 2 &&
+                   vp9_profile2_decode->formats[0].fourcc == VA_FOURCC_P010 &&
+                   vp9_profile2_decode->formats[0].advertise &&
+                   vp9_profile2_decode->formats[1].fourcc == VA_FOURCC_P012 &&
+                   !vp9_profile2_decode->formats[1].advertise,
+               "VP9 Profile2 should advertise P010 while keeping P012 hidden") && ok;
+
+    const VkvvProfileCapability *vp9_profile2_record = vkvv_profile_capability_record(
         &drv, VAProfileVP9Profile2, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
-    ok = check(vp9_profile2_hidden != nullptr &&
-                   vp9_profile2_hidden->format_count == 2 &&
-                   !vp9_profile2_hidden->advertise,
-               "VP9 Profile2 should stay hidden until P010 decode is wired") && ok;
+    ok = check(vp9_profile2_record == vp9_profile2_decode,
+               "VP9 Profile2 advertised capability should match its full record") && ok;
 
     const VkvvProfileCapability *hevc_hidden = vkvv_profile_capability_record(
         &drv, VAProfileHEVCMain, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);

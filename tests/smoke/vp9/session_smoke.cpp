@@ -20,7 +20,11 @@ bool ensure_session(
         unsigned int width,
         unsigned int height,
         unsigned int min_expected_width,
-        unsigned int min_expected_height) {
+        unsigned int min_expected_height,
+        uint32_t expected_profile,
+        VkVideoComponentBitDepthFlagsKHR expected_bit_depth,
+        VkFormat expected_format,
+        const char *label) {
     char reason[512] = {};
     VAStatus status = vkvv_vulkan_ensure_vp9_session(
         runtime, session, width, height, reason, sizeof(reason));
@@ -38,13 +42,18 @@ bool ensure_session(
                "VP9 session key did not record the codec operation")) {
         return false;
     }
-    if (!check(video.key.codec_profile == STD_VIDEO_VP9_PROFILE_0,
-               "VP9 session key did not record Profile0")) {
+    if (!check(video.key.codec_profile == expected_profile,
+               "VP9 session key did not record the expected VP9 profile")) {
         return false;
     }
-    if (!check(video.key.picture_format != VK_FORMAT_UNDEFINED &&
+    if (!check(video.key.picture_format == expected_format &&
                video.key.reference_picture_format == video.key.picture_format,
                "VP9 session key did not record picture/reference formats")) {
+        return false;
+    }
+    if (!check(video.key.luma_bit_depth == expected_bit_depth &&
+               video.key.chroma_bit_depth == expected_bit_depth,
+               "VP9 session key did not record the expected bit depth")) {
         return false;
     }
     if (!check(video.key.max_coded_extent.width >= min_expected_width &&
@@ -55,6 +64,11 @@ bool ensure_session(
                      video.key.max_coded_extent.width, video.key.max_coded_extent.height);
         return false;
     }
+    std::printf("%s profile=%u format=%d depth=0x%x\n",
+                label,
+                video.key.codec_profile,
+                video.key.picture_format,
+                video.key.luma_bit_depth);
     return check(video.memory_bytes > 0, "VP9 session memory accounting stayed at zero");
 }
 
@@ -65,7 +79,7 @@ bool ensure_upload(
     char reason[512] = {};
     if (!check(vkvv::ensure_bitstream_upload_buffer(
                    runtime,
-                   vkvv::vp9_profile0_spec,
+                   session->profile_spec,
                    bytes.data(),
                    bytes.size(),
                    session->bitstream_size_alignment,
@@ -137,7 +151,11 @@ int main(void) {
         return 1;
     }
 
-    ok = ensure_session(runtime, session, 64, 64, 64, 64) && ok;
+    ok = ensure_session(runtime, session, 64, 64, 64, 64,
+                        STD_VIDEO_VP9_PROFILE_0,
+                        VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+                        VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
+                        "VP9 Profile0") && ok;
     auto *typed_session = static_cast<vkvv::VP9VideoSession *>(session);
     std::vector<uint8_t> first_upload(256, 0x11);
     ok = ensure_upload(typed_runtime, typed_session, first_upload) && ok;
@@ -152,11 +170,33 @@ int main(void) {
                typed_session->upload.capacity == first_upload_capacity,
                "smaller VP9 upload did not reuse the existing buffer") && ok;
 
-    ok = ensure_session(runtime, session, 640, 360, 640, 368) && ok;
+    ok = ensure_session(runtime, session, 640, 360, 640, 368,
+                        STD_VIDEO_VP9_PROFILE_0,
+                        VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+                        VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
+                        "VP9 Profile0") && ok;
     const VkVideoSessionKHR grown_session = typed_session->video.session;
-    ok = ensure_session(runtime, session, 320, 180, 640, 368) && ok;
+    ok = ensure_session(runtime, session, 320, 180, 640, 368,
+                        STD_VIDEO_VP9_PROFILE_0,
+                        VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+                        VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
+                        "VP9 Profile0") && ok;
     ok = check(typed_session->video.session == grown_session, "VP9 session unexpectedly shrank or recreated") && ok;
 
+    vkvv_vulkan_vp9_session_destroy(runtime, session);
+    session = vkvv_vulkan_vp9_profile2_session_create();
+    if (session == nullptr) {
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    typed_session = static_cast<vkvv::VP9VideoSession *>(session);
+    ok = ensure_session(runtime, session, 64, 64, 64, 64,
+                        STD_VIDEO_VP9_PROFILE_2,
+                        VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
+                        VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16,
+                        "VP9 Profile2") && ok;
+    std::vector<uint8_t> profile2_upload(256, 0x33);
+    ok = ensure_upload(typed_runtime, typed_session, profile2_upload) && ok;
     vkvv_vulkan_vp9_session_destroy(runtime, session);
     vkvv_vulkan_runtime_destroy(runtime);
     if (!ok) {
