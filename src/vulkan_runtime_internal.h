@@ -17,6 +17,7 @@ inline constexpr uint32_t invalid_queue_family = UINT32_MAX;
 struct ExportResource {
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    VASurfaceID owner_surface_id = VA_INVALID_ID;
     VkExtent2D extent{};
     VkFormat format = VK_FORMAT_UNDEFINED;
     unsigned int va_fourcc = 0;
@@ -26,6 +27,7 @@ struct ExportResource {
     uint64_t drm_format_modifier = 0;
     bool has_drm_format_modifier = false;
     bool exported = false;
+    uint64_t content_generation = 0;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 };
 
@@ -49,6 +51,7 @@ struct SurfaceResource {
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    VASurfaceID surface_id = VA_INVALID_ID;
     VkExtent2D extent{};
     VkExtent2D coded_extent{};
     VkExtent2D visible_extent{};
@@ -63,7 +66,7 @@ struct SurfaceResource {
     bool exportable = false;
     bool has_drm_format_modifier = false;
     ExportResource export_resource{};
-    std::vector<ExportResource> retired_exports;
+    uint64_t content_generation = 0;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 };
 
@@ -100,15 +103,7 @@ struct VideoSession {
 
 class VulkanRuntime {
   public:
-    ~VulkanRuntime() {
-        destroy_command_resources();
-        if (device != VK_NULL_HANDLE) {
-            vkDestroyDevice(device, nullptr);
-        }
-        if (instance != VK_NULL_HANDLE) {
-            vkDestroyInstance(instance, nullptr);
-        }
-    }
+    ~VulkanRuntime();
 
     VkInstance instance = VK_NULL_HANDLE;
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
@@ -153,6 +148,11 @@ class VulkanRuntime {
     VkDeviceSize pending_upload_allocation_size = 0;
     char pending_operation[64]{};
     std::mutex command_mutex;
+    std::mutex export_mutex;
+    std::vector<ExportResource> detached_exports;
+    VkDeviceSize detached_export_memory_bytes = 0;
+    VkDeviceSize detached_export_memory_budget = 512ull * 1024ull * 1024ull;
+    size_t detached_export_count_limit = 64;
 
     void destroy_command_resources() {
         if (fence != VK_NULL_HANDLE) {
@@ -165,6 +165,7 @@ class VulkanRuntime {
             command_buffer = VK_NULL_HANDLE;
         }
     }
+    void destroy_detached_export_resources();
 };
 
 bool extension_present(const std::vector<VkExtensionProperties> &extensions, const char *name);
@@ -177,7 +178,9 @@ void destroy_video_session(VulkanRuntime *runtime, VideoSession *session);
 bool bind_video_session_memory(VulkanRuntime *runtime, VideoSession *session, char *reason, size_t reason_size);
 void destroy_export_resource(VulkanRuntime *runtime, ExportResource *resource);
 VkDeviceSize export_memory_bytes(const SurfaceResource *resource);
-void retire_export_resource(SurfaceResource *resource);
+size_t runtime_detached_export_count(VulkanRuntime *runtime);
+VkDeviceSize runtime_detached_export_memory_bytes(VulkanRuntime *runtime);
+void detach_export_resource(VulkanRuntime *runtime, SurfaceResource *resource);
 void destroy_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface);
 bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const DecodeImageKey &key, char *reason, size_t reason_size);
 void destroy_upload_buffer(VulkanRuntime *runtime, UploadBuffer *upload);

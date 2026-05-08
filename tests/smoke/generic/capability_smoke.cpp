@@ -6,6 +6,7 @@
 #include <string>
 #include <unistd.h>
 #include <va/va.h>
+#include <va/va_dec_av1.h>
 #include <va/va_drm.h>
 #include <va/va_drmcommon.h>
 #include <vector>
@@ -103,12 +104,13 @@ bool check_decode_profile(
         return false;
     }
 
-    VAConfigAttrib attribs[4] = {};
+    VAConfigAttrib attribs[5] = {};
     attribs[0].type = VAConfigAttribRTFormat;
     attribs[1].type = VAConfigAttribDecSliceMode;
     attribs[2].type = VAConfigAttribMaxPictureWidth;
     attribs[3].type = VAConfigAttribMaxPictureHeight;
-    if (!check_va(vaGetConfigAttributes(display, profile, VAEntrypointVLD, attribs, 4),
+    attribs[4].type = VAConfigAttribDecAV1Features;
+    if (!check_va(vaGetConfigAttributes(display, profile, VAEntrypointVLD, attribs, 5),
                   "vaGetConfigAttributes")) {
         return false;
     }
@@ -120,6 +122,20 @@ bool check_decode_profile(
                      "profile %d attributes invalid: rt=0x%x slice=0x%x max=%ux%u\n",
                      profile, attribs[0].value, attribs[1].value,
                      attribs[2].value, attribs[3].value);
+        return false;
+    }
+    if (profile == VAProfileAV1Profile0) {
+        VAConfigAttribValDecAV1Features features{};
+        features.value = attribs[4].value;
+        if (attribs[4].value == VA_ATTRIB_NOT_SUPPORTED ||
+            features.bits.lst_support != 0) {
+            std::fprintf(stderr, "AV1 feature attribute invalid: value=0x%x lst=%u\n",
+                         attribs[4].value, features.bits.lst_support);
+            return false;
+        }
+    } else if (attribs[4].value != VA_ATTRIB_NOT_SUPPORTED) {
+        std::fprintf(stderr, "non-AV1 profile %d unexpectedly returned AV1 features: 0x%x\n",
+                     profile, attribs[4].value);
         return false;
     }
 
@@ -302,8 +318,8 @@ int main(void) {
     int profile_count = 0;
     ok = check_va(vaQueryConfigProfiles(display, profiles.data(), &profile_count),
                   "vaQueryConfigProfiles") && ok;
-    if (ok && profile_count != 5) {
-        std::fprintf(stderr, "expected exactly 5 usable profiles, got %d\n", profile_count);
+    if (ok && profile_count != 6) {
+        std::fprintf(stderr, "expected exactly 6 usable profiles, got %d\n", profile_count);
         ok = false;
     }
     ok = profile_present(profiles, profile_count, VAProfileH264ConstrainedBaseline) && ok;
@@ -311,8 +327,8 @@ int main(void) {
     ok = profile_present(profiles, profile_count, VAProfileH264High) && ok;
     ok = profile_present(profiles, profile_count, VAProfileVP9Profile0) && ok;
     ok = profile_present(profiles, profile_count, VAProfileVP9Profile2) && ok;
-    if (profile_present(profiles, profile_count, VAProfileHEVCMain) ||
-        profile_present(profiles, profile_count, VAProfileAV1Profile0)) {
+    ok = profile_present(profiles, profile_count, VAProfileAV1Profile0) && ok;
+    if (profile_present(profiles, profile_count, VAProfileHEVCMain)) {
         std::fprintf(stderr, "driver advertised a profile without wired decode/export\n");
         ok = false;
     }
@@ -322,6 +338,7 @@ int main(void) {
     ok = check_decode_profile(display, VAProfileH264High, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
     ok = check_decode_profile(display, VAProfileVP9Profile0, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
     ok = check_decode_profile(display, VAProfileVP9Profile2, VA_RT_FORMAT_YUV420_10, VA_FOURCC_P010) && ok;
+    ok = check_decode_profile(display, VAProfileAV1Profile0, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
     ok = check_encode_entrypoint_not_advertised(
              display, VAProfileH264High, VAEntrypointEncSlice,
              "H.264 EncSlice advertising") && ok;
@@ -334,7 +351,6 @@ int main(void) {
 
     ok = check_profile_not_advertised(display, VAProfileHEVCMain, "HEVC Main advertising") && ok;
     ok = check_profile_not_advertised(display, VAProfileHEVCMain10, "HEVC Main10 advertising") && ok;
-    ok = check_profile_not_advertised(display, VAProfileAV1Profile0, "AV1 Profile0 advertising") && ok;
 
     VAImageFormat image_formats[4] = {};
     int image_format_count = 0;

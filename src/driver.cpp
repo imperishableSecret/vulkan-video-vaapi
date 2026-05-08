@@ -169,7 +169,8 @@ static VAStatus vkvvDriverInit(VADriverContextP ctx) {
     }
     drv->next_id = 1;
     vkvv_probe_vulkan_video(&drv->caps);
-    if (drv->caps.h264 || drv->caps.vp9 || drv->caps.vp9_10 || drv->caps.vp9_12) {
+    if (drv->caps.h264 || drv->caps.vp9 || drv->caps.vp9_10 || drv->caps.vp9_12 ||
+        drv->caps.av1 || drv->caps.av1_10) {
         char reason[512] = {};
         drv->vulkan = vkvv_get_or_create_vulkan_runtime(reason, sizeof(reason));
         vkvv_log("%s", reason);
@@ -178,6 +179,9 @@ static VAStatus vkvvDriverInit(VADriverContextP ctx) {
             drv->caps.vp9 = false;
             drv->caps.vp9_10 = false;
             drv->caps.vp9_12 = false;
+            drv->caps.av1 = false;
+            drv->caps.av1_10 = false;
+            drv->caps.av1_12 = false;
             drv->caps.surface_export = false;
             drv->caps.surface_export_nv12 = false;
             drv->caps.surface_export_p010 = false;

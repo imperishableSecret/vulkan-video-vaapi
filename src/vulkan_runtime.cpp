@@ -27,6 +27,11 @@ constexpr RuntimeDecodeCodec wired_decode_codecs[] = {
         VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR,
         VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME,
     },
+    {
+        "av1",
+        VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR,
+        VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME,
+    },
 };
 
 struct DecodeQueueSelection {

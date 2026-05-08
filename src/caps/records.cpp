@@ -1,18 +1,20 @@
 #include "va_private.h"
 
+#include <va/va_dec_av1.h>
 #include <vulkan/vulkan.h>
 
 namespace {
 
 constexpr unsigned int fallback_min_surface_dimension = 1;
 constexpr unsigned int fallback_max_decode_surface_dimension = 4096;
-constexpr unsigned int config_attribute_count = 4;
+constexpr unsigned int config_attribute_count = 5;
 
 const VAConfigAttribType config_attribute_types[config_attribute_count] = {
     VAConfigAttribRTFormat,
     VAConfigAttribDecSliceMode,
     VAConfigAttribMaxPictureWidth,
     VAConfigAttribMaxPictureHeight,
+    VAConfigAttribDecAV1Features,
 };
 
 VkvvVideoProfileLimits normalized_limits(VkvvVideoProfileLimits limits) {
@@ -143,9 +145,9 @@ void add_av1_profile0(VkvvDriver *drv) {
         VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME,
         drv->caps.av1_limits,
         drv->caps.av1 || drv->caps.av1_10,
-        false, false);
+        true, true);
     add_format_variant(cap, VA_RT_FORMAT_YUV420, drv->caps.av1, drv->caps.surface_export_nv12);
-    add_format_variant(cap, VA_RT_FORMAT_YUV420_10, drv->caps.av1_10, drv->caps.surface_export_p010);
+    add_format_variant(cap, VA_RT_FORMAT_YUV420_10, drv->caps.av1_10, false);
 }
 
 void add_vp9_profile2(VkvvDriver *drv) {
@@ -331,6 +333,17 @@ void vkvv_fill_config_attribute(const VkvvProfileCapability *cap, VAConfigAttrib
             break;
         case VAConfigAttribMaxPictureHeight:
             attrib->value = cap->max_height;
+            break;
+        case VAConfigAttribDecAV1Features:
+            if (cap->direction == VKVV_CODEC_DIRECTION_DECODE &&
+                cap->profile == VAProfileAV1Profile0 &&
+                cap->entrypoint == VAEntrypointVLD) {
+                VAConfigAttribValDecAV1Features features = {};
+                features.bits.lst_support = 0;
+                attrib->value = features.value;
+            } else {
+                attrib->value = VA_ATTRIB_NOT_SUPPORTED;
+            }
             break;
         default:
             attrib->value = VA_ATTRIB_NOT_SUPPORTED;

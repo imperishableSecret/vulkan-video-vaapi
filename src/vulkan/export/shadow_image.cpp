@@ -115,6 +115,7 @@ bool create_export_resource_with_tiling(
     resource->va_fourcc = format->va_fourcc;
     resource->allocation_size = requirements.size;
     resource->plane_count = format->layer_count;
+    resource->content_generation = 0;
     if (tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
         VkImageDrmFormatModifierPropertiesEXT modifier_properties{};
         modifier_properties.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT;
@@ -146,20 +147,46 @@ bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, cha
         resource->va_fourcc == source->va_fourcc &&
         resource->extent.width >= source->coded_extent.width &&
         resource->extent.height >= source->coded_extent.height) {
+        resource->owner_surface_id = source->surface_id;
         return true;
     }
 
-    destroy_export_resource(runtime, resource);
+    if (resource->image == VK_NULL_HANDLE && source->surface_id != VA_INVALID_ID) {
+        std::lock_guard<std::mutex> lock(runtime->export_mutex);
+        for (auto it = runtime->detached_exports.begin(); it != runtime->detached_exports.end(); ++it) {
+            if (it->owner_surface_id == source->surface_id &&
+                it->format == source->format &&
+                it->va_fourcc == source->va_fourcc &&
+                it->extent.width == source->coded_extent.width &&
+                it->extent.height == source->coded_extent.height) {
+                *resource = *it;
+                resource->owner_surface_id = source->surface_id;
+                resource->content_generation = 0;
+                runtime->detached_export_memory_bytes =
+                    runtime->detached_export_memory_bytes > resource->allocation_size ?
+                        runtime->detached_export_memory_bytes - resource->allocation_size : 0;
+                runtime->detached_exports.erase(it);
+                return true;
+            }
+        }
+    }
+
+    detach_export_resource(runtime, source);
     if (runtime->image_drm_format_modifier &&
         create_export_resource_with_tiling(runtime, resource, format, source->coded_extent,
                                            VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
                                            reason, reason_size)) {
+        resource->owner_surface_id = source->surface_id;
         return true;
     }
     destroy_export_resource(runtime, resource);
-    return create_export_resource_with_tiling(runtime, resource, format, source->coded_extent,
-                                             VK_IMAGE_TILING_LINEAR,
-                                             reason, reason_size);
+    if (!create_export_resource_with_tiling(runtime, resource, format, source->coded_extent,
+                                           VK_IMAGE_TILING_LINEAR,
+                                           reason, reason_size)) {
+        return false;
+    }
+    resource->owner_surface_id = source->surface_id;
+    return true;
 }
 
 bool ensure_export_only_surface_resource(
@@ -191,6 +218,7 @@ bool ensure_export_only_surface_resource(
     resource->extent = extent;
     resource->coded_extent = extent;
     resource->visible_extent = {surface->width, surface->height};
+    resource->surface_id = surface->id;
     resource->format = format->vk_format;
     resource->va_rt_format = surface->rt_format;
     resource->va_fourcc = surface->fourcc;
@@ -256,10 +284,14 @@ bool copy_surface_to_export_resource(VulkanRuntime *runtime, SurfaceResource *so
         return false;
     }
     if (source->export_resource.exported && !export_resource_matches_surface(source)) {
-        retire_export_resource(source);
+        detach_export_resource(runtime, source);
     }
     if (!ensure_export_resource(runtime, source, reason, reason_size)) {
         return false;
+    }
+    if (source->content_generation != 0 &&
+        source->export_resource.content_generation == source->content_generation) {
+        return true;
     }
 
     std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
@@ -364,7 +396,11 @@ bool copy_surface_to_export_resource(VulkanRuntime *runtime, SurfaceResource *so
         std::snprintf(reason, reason_size, "vkEndCommandBuffer for export copy failed: %d", result);
         return false;
     }
-    return submit_command_buffer_and_wait(runtime, reason, reason_size, "surface export copy");
+    if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "surface export copy")) {
+        return false;
+    }
+    export_resource->content_generation = source->content_generation;
+    return true;
 }
 
 } // namespace vkvv

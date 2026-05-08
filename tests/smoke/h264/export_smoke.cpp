@@ -41,6 +41,7 @@ int main(void) {
     void *session = nullptr;
 
     VkvvSurface surface{};
+    surface.id = 77;
     surface.rt_format = VA_RT_FORMAT_YUV420;
     surface.width = 64;
     surface.height = 64;
@@ -58,6 +59,7 @@ int main(void) {
     }
 
     VkvvSurface p010_surface{};
+    p010_surface.id = 78;
     p010_surface.rt_format = VA_RT_FORMAT_YUV420_10;
     p010_surface.width = 64;
     p010_surface.height = 64;
@@ -185,6 +187,7 @@ int main(void) {
         return 1;
     }
     VkDeviceMemory first_export_memory = resource->export_resource.memory;
+    const VkDeviceSize first_export_size = resource->export_resource.allocation_size;
     const int first_fd = descriptor.objects[0].fd;
 
     session = vkvv_vulkan_h264_session_create();
@@ -242,6 +245,7 @@ int main(void) {
     }
 
     surface.decoded = true;
+    resource->content_generation++;
     vkvv::DecodeImageKey larger_key = decode_key;
     larger_key.coded_extent = {128, 64};
     if (vkvv::ensure_surface_resource(typed_runtime, &surface, larger_key, reason, sizeof(reason))) {
@@ -267,9 +271,9 @@ int main(void) {
         return 1;
     }
     if (first_fd < 0 || fcntl(first_fd, F_GETFD) < 0 ||
-        !resource->retired_exports.empty() ||
         resource->export_resource.memory != first_export_memory ||
-        resource->export_resource.allocation_size == 0) {
+        resource->export_resource.allocation_size == 0 ||
+        resource->export_resource.content_generation != resource->content_generation) {
         std::fprintf(stderr, "export refresh did not update the previously exported shadow image in place\n");
         if (first_fd >= 0) {
             close(first_fd);
@@ -296,6 +300,20 @@ int main(void) {
     }
     const int refreshed_fd = refreshed_descriptor.objects[0].fd;
     vkvv_vulkan_surface_destroy(runtime, &surface);
+    if (typed_runtime->detached_exports.empty() ||
+        typed_runtime->detached_export_memory_bytes == 0 ||
+        typed_runtime->detached_exports.back().memory != first_export_memory) {
+        std::fprintf(stderr, "destroying the VA surface should detach the exported shadow image into the runtime pool\n");
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
+        if (refreshed_fd >= 0) {
+            close(refreshed_fd);
+        }
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
     if ((first_fd >= 0 && fcntl(first_fd, F_GETFD) < 0) ||
         (refreshed_fd >= 0 && fcntl(refreshed_fd, F_GETFD) < 0)) {
         std::fprintf(stderr, "destroying the VA surface closed an exported dma-buf fd\n");
@@ -309,6 +327,40 @@ int main(void) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
+
+    const VkDeviceSize detached_bytes_before_reattach = typed_runtime->detached_export_memory_bytes;
+    const size_t detached_count_before_reattach = typed_runtime->detached_exports.size();
+    VkvvSurface replacement{};
+    replacement.id = surface.id;
+    replacement.rt_format = surface.rt_format;
+    replacement.width = surface.width;
+    replacement.height = surface.height;
+    replacement.fourcc = surface.fourcc;
+    status = vkvv_vulkan_prepare_surface_export(runtime, &replacement, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    auto *replacement_resource = static_cast<vkvv::SurfaceResource *>(replacement.vulkan);
+    if (status != VA_STATUS_SUCCESS ||
+        replacement_resource == nullptr ||
+        replacement_resource->export_resource.memory != first_export_memory ||
+        replacement_resource->export_resource.content_generation != 0 ||
+        first_export_size == 0 ||
+        detached_bytes_before_reattach < first_export_size ||
+        typed_runtime->detached_export_memory_bytes + first_export_size != detached_bytes_before_reattach ||
+        detached_count_before_reattach == 0 ||
+        typed_runtime->detached_exports.size() + 1 != detached_count_before_reattach) {
+        std::fprintf(stderr, "replacement VA surface did not reattach its detached exported shadow image\n");
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
+        if (refreshed_fd >= 0) {
+            close(refreshed_fd);
+        }
+        vkvv_vulkan_surface_destroy(runtime, &replacement);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    vkvv_vulkan_surface_destroy(runtime, &replacement);
     if (first_fd >= 0) {
         close(first_fd);
     }

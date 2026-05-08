@@ -161,6 +161,10 @@ VAStatus complete_pending_work(
     }
 
     completed_surface->decoded = true;
+    if (completed_surface->vulkan != nullptr) {
+        auto *resource = static_cast<SurfaceResource *>(completed_surface->vulkan);
+        resource->content_generation++;
+    }
     VAStatus status = ::vkvv_vulkan_refresh_surface_export(runtime, completed_surface, reason, reason_size);
     if (status != VA_STATUS_SUCCESS) {
         complete_surface_status(completed_surface, status);

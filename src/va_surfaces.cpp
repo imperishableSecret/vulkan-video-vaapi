@@ -136,6 +136,7 @@ VAStatus vkvvCreateSurfaces2(
             delete surface;
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
+        surface->id = surfaces[i];
         vkvv_log("created surface %u: %ux%u fourcc=0x%x rt=0x%x",
                  surfaces[i], width, height, surface->fourcc, surface->rt_format);
     }
