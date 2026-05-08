@@ -12,8 +12,7 @@ VAStatus vkvv_vulkan_prepare_surface_export(
         char *reason,
         size_t reason_size) {
     auto *runtime = static_cast<VulkanRuntime *>(runtime_ptr);
-    if (runtime == nullptr) {
-        std::snprintf(reason, reason_size, "missing Vulkan runtime for surface export preparation");
+    if (!ensure_runtime_usable(runtime, reason, reason_size, "surface export preparation")) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
     if (!runtime->surface_export || runtime->get_memory_fd == nullptr) {
@@ -68,6 +67,9 @@ VAStatus vkvv_vulkan_refresh_surface_export(
         }
         return VA_STATUS_SUCCESS;
     }
+    if (!ensure_runtime_usable(runtime, reason, reason_size, "surface export refresh")) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
     if (!surface->decoded) {
         if (reason_size > 0) {
             reason[0] = '\0';
@@ -108,8 +110,7 @@ VAStatus vkvv_vulkan_export_surface(
         char *reason,
         size_t reason_size) {
     auto *runtime = static_cast<VulkanRuntime *>(runtime_ptr);
-    if (runtime == nullptr) {
-        std::snprintf(reason, reason_size, "missing Vulkan runtime for surface export");
+    if (!ensure_runtime_usable(runtime, reason, reason_size, "surface export")) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
     if (!runtime->surface_export || runtime->get_memory_fd == nullptr) {
@@ -182,7 +183,13 @@ VAStatus vkvv_vulkan_export_surface(
     int fd = -1;
     VkResult result = runtime->get_memory_fd(runtime->device, &fd_info, &fd);
     if (result != VK_SUCCESS || fd < 0) {
-        std::snprintf(reason, reason_size, "vkGetMemoryFdKHR failed: result=%d fd=%d", result, fd);
+        if (fd >= 0) {
+            close(fd);
+        }
+        record_vk_result(runtime, result, "vkGetMemoryFdKHR", "surface export", reason, reason_size);
+        if (result == VK_SUCCESS) {
+            std::snprintf(reason, reason_size, "vkGetMemoryFdKHR for surface export returned invalid fd=%d", fd);
+        }
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
@@ -210,4 +217,29 @@ VAStatus vkvv_vulkan_export_surface(
                   static_cast<unsigned long long>(runtime_detached_export_memory_bytes(runtime)),
                   static_cast<unsigned long long>(resource->content_generation));
     return VA_STATUS_SUCCESS;
+}
+
+void vkvv_vulkan_note_surface_created(void *runtime_ptr, const VkvvSurface *surface) {
+    auto *runtime = static_cast<VulkanRuntime *>(runtime_ptr);
+    if (runtime == nullptr || surface == nullptr) {
+        return;
+    }
+
+    char reason[128] = {};
+    const ExportFormatInfo *format = export_format_for_surface(surface, nullptr, reason, sizeof(reason));
+    const VkExtent2D coded_extent{
+        round_up_16(std::max(1u, surface->width)),
+        round_up_16(std::max(1u, surface->height)),
+    };
+    prune_detached_exports_for_surface(
+        runtime,
+        surface->driver_instance_id,
+        surface->id,
+        surface->fourcc,
+        format != nullptr ? format->vk_format : VK_FORMAT_UNDEFINED,
+        coded_extent);
+}
+
+void vkvv_vulkan_prune_driver_exports(void *runtime_ptr, uint64_t driver_instance_id) {
+    prune_detached_exports_for_driver(static_cast<VulkanRuntime *>(runtime_ptr), driver_instance_id);
 }

@@ -86,6 +86,13 @@ int av1_select_target_dpb_slot(
         AV1VideoSession *session,
         VASurfaceID target_surface_id,
         const bool used_slots[max_av1_dpb_slots]);
+int av1_select_current_setup_slot(
+        AV1VideoSession *session,
+        VASurfaceID target_surface_id,
+        const bool used_slots[max_av1_dpb_slots],
+        bool current_is_reference);
+VkImageLayout av1_target_layout(bool current_is_reference);
+VkAccessFlags2 av1_target_access(bool current_is_reference);
 void av1_update_reference_slots_from_refresh(
         AV1VideoSession *session,
         const VkvvAV1DecodeInput *input,

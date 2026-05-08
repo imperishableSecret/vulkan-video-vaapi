@@ -38,8 +38,7 @@ bool copy_upload_buffer(
         size_t reason_size) {
     void *mapped = nullptr;
     VkResult result = vkMapMemory(runtime->device, upload->memory, 0, upload->size, 0, &mapped);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkMapMemory for %s failed: %d", label, result);
+    if (!record_vk_result(runtime, result, "vkMapMemory", label, reason, reason_size)) {
         return false;
     }
     std::memset(mapped, 0, static_cast<size_t>(upload->size));
@@ -71,6 +70,9 @@ bool ensure_bitstream_upload_buffer(
         std::snprintf(reason, reason_size, "missing %s upload data", label);
         return false;
     }
+    if (!ensure_runtime_usable(runtime, reason, reason_size, label)) {
+        return false;
+    }
 
     VideoProfileChain profile_chain(profile_spec);
     VkVideoProfileListInfoKHR profile_list{};
@@ -96,8 +98,7 @@ bool ensure_bitstream_upload_buffer(
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     VkResult result = vkCreateBuffer(runtime->device, &buffer_info, nullptr, &upload->buffer);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkCreateBuffer for %s failed: %d", label, result);
+    if (!record_vk_result(runtime, result, "vkCreateBuffer", label, reason, reason_size)) {
         return false;
     }
 
@@ -124,16 +125,14 @@ bool ensure_bitstream_upload_buffer(
     allocate_info.allocationSize = requirements.size;
     allocate_info.memoryTypeIndex = memory_type_index;
     result = vkAllocateMemory(runtime->device, &allocate_info, nullptr, &upload->memory);
-    if (result != VK_SUCCESS) {
+    if (!record_vk_result(runtime, result, "vkAllocateMemory", label, reason, reason_size)) {
         destroy_upload_buffer(runtime, upload);
-        std::snprintf(reason, reason_size, "vkAllocateMemory for %s failed: %d", label, result);
         return false;
     }
 
     result = vkBindBufferMemory(runtime->device, upload->buffer, upload->memory, 0);
-    if (result != VK_SUCCESS) {
+    if (!record_vk_result(runtime, result, "vkBindBufferMemory", label, reason, reason_size)) {
         destroy_upload_buffer(runtime, upload);
-        std::snprintf(reason, reason_size, "vkBindBufferMemory for %s failed: %d", label, result);
         return false;
     }
 

@@ -325,12 +325,11 @@ bool check_av1_parser(const VkvvDecodeOps *av1) {
     VkvvAV1DecodeInput multi_input{};
     ok = check(vkvv_av1_get_decode_input(state, &multi_input) == VA_STATUS_SUCCESS,
                "AV1 multi-frame decode input extraction failed") && ok;
-    const uint32_t second_frame_start = static_cast<uint32_t>(bitstream.size());
-    const uint32_t third_frame_start = static_cast<uint32_t>(bitstream.size() * 2);
-    ok = check(multi_input.header.frame_header_offset >= second_frame_start &&
-                   multi_input.header.frame_header_offset < third_frame_start &&
-                   multi_input.tiles[0].offset == target_tile_offset,
-               "AV1 parser did not select the frame header owning the current tile") && ok;
+    ok = check(multi_input.header.frame_header_offset == 0 &&
+                   multi_input.tiles[0].offset < multi_input.bitstream_size &&
+                   multi_input.tiles[0].size <= multi_input.bitstream_size - multi_input.tiles[0].offset &&
+                   multi_input.bitstream_size < multi_frame.size(),
+               "AV1 parser did not normalize the selected frame window for a packed buffer") && ok;
 
     av1->state_destroy(state);
     return ok;

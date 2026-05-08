@@ -1,6 +1,7 @@
 #include "vulkan/codecs/h264/api.h"
 #include "vulkan/codecs/h264/internal.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <drm_fourcc.h>
 #include <fcntl.h>
@@ -29,6 +30,21 @@ vkvv::DecodeImageKey h264_decode_key(
     };
 }
 
+bool detached_memory_present(
+        const vkvv::VulkanRuntime *runtime,
+        VkDeviceMemory memory,
+        uint64_t driver_instance_id,
+        VASurfaceID surface_id) {
+    for (const vkvv::ExportResource &resource : runtime->detached_exports) {
+        if (resource.memory == memory &&
+            resource.driver_instance_id == driver_instance_id &&
+            resource.owner_surface_id == surface_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 int main(void) {
@@ -42,6 +58,7 @@ int main(void) {
 
     VkvvSurface surface{};
     surface.id = 77;
+    surface.driver_instance_id = 1;
     surface.rt_format = VA_RT_FORMAT_YUV420;
     surface.width = 64;
     surface.height = 64;
@@ -60,6 +77,7 @@ int main(void) {
 
     VkvvSurface p010_surface{};
     p010_surface.id = 78;
+    p010_surface.driver_instance_id = surface.driver_instance_id;
     p010_surface.rt_format = VA_RT_FORMAT_YUV420_10;
     p010_surface.width = 64;
     p010_surface.height = 64;
@@ -68,6 +86,18 @@ int main(void) {
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
         std::fprintf(stderr, "P010 export preparation should succeed once the format/export path is wired\n");
+        vkvv_vulkan_surface_destroy(runtime, &p010_surface);
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    auto *p010_resource = static_cast<vkvv::SurfaceResource *>(p010_surface.vulkan);
+    if (p010_resource == nullptr ||
+        p010_resource->export_resource.image == VK_NULL_HANDLE ||
+        p010_resource->export_resource.layout != VK_IMAGE_LAYOUT_GENERAL ||
+        p010_resource->export_resource.content_generation != 0) {
+        std::fprintf(stderr, "P010 export shadow should be initialized before first decode\n");
         vkvv_vulkan_surface_destroy(runtime, &p010_surface);
         vkvv_vulkan_surface_destroy(runtime, &surface);
         vkvv_vulkan_h264_session_destroy(runtime, session);
@@ -176,6 +206,8 @@ int main(void) {
         resource->va_fourcc != VA_FOURCC_NV12 ||
         resource->allocation_size != 0 ||
         resource->export_resource.allocation_size == 0 ||
+        resource->export_resource.layout != VK_IMAGE_LAYOUT_GENERAL ||
+        resource->export_resource.content_generation != 0 ||
         !resource->export_resource.exported) {
         std::fprintf(stderr, "export preparation should allocate only an export shadow before decode\n");
         if (descriptor.objects[0].fd >= 0) {
@@ -332,6 +364,7 @@ int main(void) {
     const size_t detached_count_before_reattach = typed_runtime->detached_exports.size();
     VkvvSurface replacement{};
     replacement.id = surface.id;
+    replacement.driver_instance_id = surface.driver_instance_id;
     replacement.rt_format = surface.rt_format;
     replacement.width = surface.width;
     replacement.height = surface.height;
@@ -343,6 +376,7 @@ int main(void) {
         replacement_resource == nullptr ||
         replacement_resource->export_resource.memory != first_export_memory ||
         replacement_resource->export_resource.content_generation != 0 ||
+        replacement_resource->export_resource.layout != VK_IMAGE_LAYOUT_GENERAL ||
         first_export_size == 0 ||
         detached_bytes_before_reattach < first_export_size ||
         typed_runtime->detached_export_memory_bytes + first_export_size != detached_bytes_before_reattach ||
@@ -361,6 +395,62 @@ int main(void) {
         return 1;
     }
     vkvv_vulkan_surface_destroy(runtime, &replacement);
+
+    VkvvSurface foreign{};
+    foreign.id = surface.id;
+    foreign.driver_instance_id = surface.driver_instance_id + 1;
+    foreign.rt_format = surface.rt_format;
+    foreign.width = surface.width;
+    foreign.height = surface.height;
+    foreign.fourcc = surface.fourcc;
+    status = vkvv_vulkan_prepare_surface_export(runtime, &foreign, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    auto *foreign_resource = static_cast<vkvv::SurfaceResource *>(foreign.vulkan);
+    if (status != VA_STATUS_SUCCESS ||
+        foreign_resource == nullptr ||
+        foreign_resource->export_resource.memory == VK_NULL_HANDLE ||
+        foreign_resource->export_resource.memory == first_export_memory) {
+        std::fprintf(stderr, "foreign driver namespace reused a detached export from another driver instance\n");
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
+        if (refreshed_fd >= 0) {
+            close(refreshed_fd);
+        }
+        vkvv_vulkan_surface_destroy(runtime, &foreign);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    vkvv_vulkan_surface_destroy(runtime, &foreign);
+
+    VkvvSurface resized{};
+    resized.id = surface.id;
+    resized.driver_instance_id = surface.driver_instance_id;
+    resized.rt_format = surface.rt_format;
+    resized.width = 128;
+    resized.height = 64;
+    resized.fourcc = surface.fourcc;
+    status = vkvv_vulkan_prepare_surface_export(runtime, &resized, reason, sizeof(reason));
+    std::printf("%s\n", reason);
+    auto *resized_resource = static_cast<vkvv::SurfaceResource *>(resized.vulkan);
+    if (status != VA_STATUS_SUCCESS ||
+        resized_resource == nullptr ||
+        resized_resource->export_resource.memory == VK_NULL_HANDLE ||
+        detached_memory_present(typed_runtime, first_export_memory, surface.driver_instance_id, surface.id)) {
+        std::fprintf(stderr, "resized same-id surface reused or retained an incompatible detached export\n");
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
+        if (refreshed_fd >= 0) {
+            close(refreshed_fd);
+        }
+        vkvv_vulkan_surface_destroy(runtime, &resized);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    vkvv_vulkan_surface_destroy(runtime, &resized);
     if (first_fd >= 0) {
         close(first_fd);
     }

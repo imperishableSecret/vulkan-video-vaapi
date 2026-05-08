@@ -43,13 +43,11 @@ bool reset_h264_session(
     }
 
     VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkResetFences for H.264 session reset failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkResetFences", "H.264 session reset", reason, reason_size)) {
         return false;
     }
     result = vkResetCommandBuffer(runtime->command_buffer, 0);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkResetCommandBuffer for H.264 session reset failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkResetCommandBuffer", "H.264 session reset", reason, reason_size)) {
         return false;
     }
 
@@ -57,8 +55,7 @@ bool reset_h264_session(
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     result = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkBeginCommandBuffer for H.264 session reset failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkBeginCommandBuffer", "H.264 session reset", reason, reason_size)) {
         return false;
     }
 
@@ -78,8 +75,7 @@ bool reset_h264_session(
     runtime->cmd_end_video_coding(runtime->command_buffer, &video_end);
 
     result = vkEndCommandBuffer(runtime->command_buffer);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkEndCommandBuffer for H.264 session reset failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "H.264 session reset", reason, reason_size)) {
         return false;
     }
 
@@ -202,8 +198,7 @@ VAStatus vkvv_vulkan_ensure_h264_session(
     }
 
     result = runtime->create_video_session(runtime->device, &session_info, nullptr, &session->video.session);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkCreateVideoSessionKHR(H.264) failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkCreateVideoSessionKHR", "H.264 session", reason, reason_size)) {
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
 

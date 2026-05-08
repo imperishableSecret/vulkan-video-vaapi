@@ -1,6 +1,7 @@
 #include "va_private.h"
 #include "vulkan_runtime.h"
 
+#include <atomic>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -23,6 +24,7 @@ namespace {
 
 std::mutex global_runtime_mutex;
 void *global_vulkan_runtime = NULL;
+std::atomic<uint64_t> next_driver_instance_id{1};
 
 } // namespace
 
@@ -79,6 +81,9 @@ static VAStatus vkvvTerminate(VADriverContextP ctx) {
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
     if (drv != NULL) {
         release_owned_payloads(drv);
+        if (drv->vulkan != NULL) {
+            vkvv_vulkan_prune_driver_exports(drv->vulkan, drv->driver_instance_id);
+        }
         vkvv_object_clear(drv);
         delete drv;
         ctx->pDriverData = NULL;
@@ -168,6 +173,10 @@ static VAStatus vkvvDriverInit(VADriverContextP ctx) {
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
     drv->next_id = 1;
+    drv->driver_instance_id = next_driver_instance_id.fetch_add(1, std::memory_order_relaxed);
+    if (drv->driver_instance_id == 0) {
+        drv->driver_instance_id = next_driver_instance_id.fetch_add(1, std::memory_order_relaxed);
+    }
     vkvv_probe_vulkan_video(&drv->caps);
     if (drv->caps.h264 || drv->caps.vp9 || drv->caps.vp9_10 || drv->caps.vp9_12 ||
         drv->caps.av1 || drv->caps.av1_10) {

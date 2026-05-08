@@ -123,6 +123,7 @@ VAStatus vkvvCreateSurfaces2(
         if (surface == NULL) {
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
+        surface->driver_instance_id = drv->driver_instance_id;
         surface->rt_format = selected_format;
         surface->width = width;
         surface->height = height;
@@ -137,6 +138,9 @@ VAStatus vkvvCreateSurfaces2(
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
         surface->id = surfaces[i];
+        if (drv->vulkan != NULL) {
+            vkvv_vulkan_note_surface_created(drv->vulkan, surface);
+        }
         vkvv_log("created surface %u: %ux%u fourcc=0x%x rt=0x%x",
                  surfaces[i], width, height, surface->fourcc, surface->rt_format);
     }

@@ -6,6 +6,7 @@
 #include <gst/codecparsers/gstav1parser.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -32,6 +33,8 @@ struct AV1State {
     std::vector<VASliceParameterBufferAV1> pending_slices;
     std::vector<VkvvAV1Tile> tiles;
     std::vector<uint8_t> bitstream;
+    std::vector<VkvvAV1Tile> decode_tiles;
+    std::vector<uint8_t> decode_bitstream;
     VkvvAV1FrameHeader header{};
 };
 
@@ -123,6 +126,64 @@ bool min_tile_offset(const AV1State *av1, uint32_t *offset) {
         min_offset = std::min(min_offset, tile.offset);
     }
     *offset = min_offset;
+    return true;
+}
+
+bool av1_decode_window(AV1State *av1, uint32_t *window_offset, char *reason, size_t reason_size) {
+    if (av1 == nullptr || av1->bitstream.empty() || av1->tiles.empty() || !av1->header.valid) {
+        std::snprintf(reason, reason_size, "missing AV1 decode window input");
+        return false;
+    }
+
+    uint32_t first_tile_offset = 0;
+    if (!min_tile_offset(av1, &first_tile_offset)) {
+        std::snprintf(reason, reason_size, "missing AV1 tile offsets");
+        return false;
+    }
+
+    const uint32_t start =
+        av1->header.frame_header_offset <= first_tile_offset ? av1->header.frame_header_offset : 0;
+    uint64_t end = start;
+    for (const VkvvAV1Tile &tile : av1->tiles) {
+        if (tile.offset < start) {
+            std::snprintf(reason, reason_size,
+                          "AV1 tile offset precedes frame window: tile=%u window=%u",
+                          tile.offset,
+                          start);
+            return false;
+        }
+        const uint64_t tile_end = static_cast<uint64_t>(tile.offset) + tile.size;
+        if (tile.size == 0 || tile_end > av1->bitstream.size() ||
+            tile_end > std::numeric_limits<uint32_t>::max()) {
+            std::snprintf(reason, reason_size,
+                          "AV1 tile exceeds bitstream: offset=%u size=%u bytes=%zu",
+                          tile.offset,
+                          tile.size,
+                          av1->bitstream.size());
+            return false;
+        }
+        end = std::max(end, tile_end);
+    }
+    if (end <= start || end > av1->bitstream.size()) {
+        std::snprintf(reason, reason_size,
+                      "invalid AV1 decode window: start=%u end=%llu bytes=%zu",
+                      start,
+                      static_cast<unsigned long long>(end),
+                      av1->bitstream.size());
+        return false;
+    }
+
+    av1->decode_bitstream.assign(
+        av1->bitstream.begin() + start,
+        av1->bitstream.begin() + static_cast<std::ptrdiff_t>(end));
+    av1->decode_tiles = av1->tiles;
+    for (VkvvAV1Tile &tile : av1->decode_tiles) {
+        tile.offset -= start;
+    }
+    av1->header.frame_header_offset -= start;
+    if (window_offset != nullptr) {
+        *window_offset = start;
+    }
     return true;
 }
 
@@ -423,6 +484,8 @@ void vkvv_av1_begin_picture(void *state) {
     av1->pending_slices.clear();
     av1->tiles.clear();
     av1->bitstream.clear();
+    av1->decode_tiles.clear();
+    av1->decode_bitstream.clear();
     av1->header = {};
 }
 
@@ -528,15 +591,22 @@ VAStatus vkvv_av1_prepare_decode(void *state, unsigned int *width, unsigned int 
         std::snprintf(reason, reason_size, "AV1 show-existing-frame is not implemented yet");
         return VA_STATUS_ERROR_UNIMPLEMENTED;
     }
+    uint32_t window_offset = 0;
+    if (!av1_decode_window(av1, &window_offset, reason, reason_size)) {
+        return VA_STATUS_ERROR_INVALID_BUFFER;
+    }
 
     *width = static_cast<unsigned int>(av1->pic.frame_width_minus1) + 1;
     *height = static_cast<unsigned int>(av1->pic.frame_height_minus1) + 1;
     uint32_t first_tile_offset = 0;
-    (void) min_tile_offset(av1, &first_tile_offset);
+    if (!av1->decode_tiles.empty()) {
+        first_tile_offset = av1->decode_tiles[0].offset;
+    }
     std::snprintf(reason, reason_size,
-                  "captured AV1 picture: %ux%u profile=%u depth=%u tiles=%zu bitstream=%zu frame=%u show=%u refresh=0x%02x header=%u tile0=%u q=%u",
+                  "captured AV1 picture: %ux%u profile=%u depth=%u tiles=%zu bitstream=%zu decode=%zu window=%u frame=%u show=%u refresh=0x%02x header=%u tile0=%u q=%u",
                   *width, *height, av1->pic.profile, av1_bit_depth(av1->pic),
-                  av1->tiles.size(), av1->bitstream.size(),
+                  av1->decode_tiles.size(), av1->bitstream.size(), av1->decode_bitstream.size(),
+                  window_offset,
                   av1->pic.pic_info_fields.bits.frame_type,
                   av1->pic.pic_info_fields.bits.show_frame,
                   av1->header.refresh_frame_flags,
@@ -551,16 +621,17 @@ VAStatus vkvv_av1_get_decode_input(void *state, VkvvAV1DecodeInput *input) {
         return VA_STATUS_ERROR_INVALID_PARAMETER;
     }
     auto *av1 = static_cast<AV1State *>(state);
-    if (av1 == nullptr || !av1->has_pic || !av1->has_slice_data || !av1->has_header || av1->tiles.empty()) {
+    if (av1 == nullptr || !av1->has_pic || !av1->has_slice_data || !av1->has_header ||
+        av1->decode_tiles.empty() || av1->decode_bitstream.empty()) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
 
     *input = {};
     input->pic = &av1->pic;
-    input->tiles = av1->tiles.data();
-    input->tile_count = av1->tiles.size();
-    input->bitstream = av1->bitstream.data();
-    input->bitstream_size = av1->bitstream.size();
+    input->tiles = av1->decode_tiles.data();
+    input->tile_count = av1->decode_tiles.size();
+    input->bitstream = av1->decode_bitstream.data();
+    input->bitstream_size = av1->decode_bitstream.size();
     input->header = av1->header;
     input->bit_depth = av1_bit_depth(av1->pic);
     input->rt_format = VA_RT_FORMAT_YUV420;

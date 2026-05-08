@@ -1,5 +1,6 @@
 #include "../vulkan_runtime_internal.h"
 
+#include <cstddef>
 #include <cstdio>
 #include <mutex>
 #include <new>
@@ -89,6 +90,7 @@ void destroy_export_resource(VulkanRuntime *runtime, ExportResource *resource) {
         vkFreeMemory(runtime->device, resource->memory, nullptr);
         resource->memory = VK_NULL_HANDLE;
     }
+    resource->driver_instance_id = 0;
     resource->owner_surface_id = VA_INVALID_ID;
     resource->extent = {};
     resource->format = VK_FORMAT_UNDEFINED;
@@ -154,6 +156,79 @@ void prune_detached_export_resources_locked(VulkanRuntime *runtime) {
     }
 }
 
+bool detached_export_same_owner(
+        const ExportResource &resource,
+        uint64_t driver_instance_id,
+        VASurfaceID surface_id) {
+    return driver_instance_id != 0 &&
+           resource.driver_instance_id == driver_instance_id &&
+           resource.owner_surface_id == surface_id;
+}
+
+bool detached_export_exact_match(
+        const ExportResource &resource,
+        uint64_t driver_instance_id,
+        VASurfaceID surface_id,
+        unsigned int va_fourcc,
+        VkFormat format,
+        VkExtent2D coded_extent) {
+    return format != VK_FORMAT_UNDEFINED &&
+           detached_export_same_owner(resource, driver_instance_id, surface_id) &&
+           resource.va_fourcc == va_fourcc &&
+           resource.format == format &&
+           resource.extent.width == coded_extent.width &&
+           resource.extent.height == coded_extent.height;
+}
+
+void remove_detached_export_locked(VulkanRuntime *runtime, size_t index) {
+    ExportResource &resource = runtime->detached_exports[index];
+    const VkDeviceSize bytes = resource.allocation_size;
+    destroy_export_resource(runtime, &resource);
+    runtime->detached_exports.erase(runtime->detached_exports.begin() + static_cast<std::ptrdiff_t>(index));
+    runtime->detached_export_memory_bytes =
+        runtime->detached_export_memory_bytes > bytes ?
+            runtime->detached_export_memory_bytes - bytes : 0;
+}
+
+void prune_detached_exports_for_surface(
+        VulkanRuntime *runtime,
+        uint64_t driver_instance_id,
+        VASurfaceID surface_id,
+        unsigned int va_fourcc,
+        VkFormat format,
+        VkExtent2D coded_extent) {
+    if (runtime == nullptr || driver_instance_id == 0 || surface_id == VA_INVALID_ID) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(runtime->export_mutex);
+    for (size_t i = 0; i < runtime->detached_exports.size();) {
+        const ExportResource &resource = runtime->detached_exports[i];
+        if (detached_export_same_owner(resource, driver_instance_id, surface_id) &&
+            !detached_export_exact_match(resource, driver_instance_id, surface_id,
+                                         va_fourcc, format, coded_extent)) {
+            remove_detached_export_locked(runtime, i);
+            continue;
+        }
+        i++;
+    }
+}
+
+void prune_detached_exports_for_driver(VulkanRuntime *runtime, uint64_t driver_instance_id) {
+    if (runtime == nullptr || driver_instance_id == 0) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(runtime->export_mutex);
+    for (size_t i = 0; i < runtime->detached_exports.size();) {
+        if (runtime->detached_exports[i].driver_instance_id == driver_instance_id) {
+            remove_detached_export_locked(runtime, i);
+            continue;
+        }
+        i++;
+    }
+}
+
 void detach_export_resource(VulkanRuntime *runtime, SurfaceResource *resource) {
     if (runtime == nullptr || resource == nullptr ||
         resource->export_resource.image == VK_NULL_HANDLE) {
@@ -162,14 +237,24 @@ void detach_export_resource(VulkanRuntime *runtime, SurfaceResource *resource) {
 
     ExportResource detached = resource->export_resource;
     resource->export_resource = {};
+    detached.driver_instance_id = resource->driver_instance_id;
     detached.owner_surface_id = resource->surface_id;
-    if (!detached.exported || detached.allocation_size == 0) {
+    if (!detached.exported || detached.allocation_size == 0 || runtime->device_lost) {
         destroy_export_resource(runtime, &detached);
         return;
     }
 
     std::lock_guard<std::mutex> lock(runtime->export_mutex);
     try {
+        for (size_t i = 0; i < runtime->detached_exports.size();) {
+            if (detached_export_same_owner(runtime->detached_exports[i],
+                                           detached.driver_instance_id,
+                                           detached.owner_surface_id)) {
+                remove_detached_export_locked(runtime, i);
+                continue;
+            }
+            i++;
+        }
         runtime->detached_exports.push_back(detached);
         runtime->detached_export_memory_bytes += detached.allocation_size;
         prune_detached_export_resources_locked(runtime);
@@ -228,6 +313,9 @@ void destroy_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface) {
 }
 
 bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const DecodeImageKey &key, char *reason, size_t reason_size) {
+    if (!ensure_runtime_usable(runtime, reason, reason_size, "decode surface resource")) {
+        return false;
+    }
     if (surface == nullptr) {
         std::snprintf(reason, reason_size, "missing target surface");
         return false;
@@ -246,6 +334,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
     if (existing != nullptr &&
         existing->image != VK_NULL_HANDLE &&
         decode_image_key_matches(existing->decode_key, key)) {
+        existing->driver_instance_id = surface->driver_instance_id;
         existing->surface_id = surface->id;
         existing->visible_extent = {surface->width, surface->height};
         return true;
@@ -339,7 +428,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
         if (new_resource) {
             delete resource;
         }
-        std::snprintf(reason, reason_size, "vkCreateImage for decode surface failed: %d", result);
+        record_vk_result(runtime, result, "vkCreateImage", "decode surface", reason, reason_size);
         return false;
     }
 
@@ -383,7 +472,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
         } else {
             destroy_decode_resource_handles(runtime, resource);
         }
-        std::snprintf(reason, reason_size, "vkAllocateMemory for decode surface failed: %d", result);
+        record_vk_result(runtime, result, "vkAllocateMemory", "decode surface", reason, reason_size);
         return false;
     }
 
@@ -394,7 +483,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
         } else {
             destroy_decode_resource_handles(runtime, resource);
         }
-        std::snprintf(reason, reason_size, "vkBindImageMemory for decode surface failed: %d", result);
+        record_vk_result(runtime, result, "vkBindImageMemory", "decode surface", reason, reason_size);
         return false;
     }
 
@@ -416,13 +505,14 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
         } else {
             destroy_decode_resource_handles(runtime, resource);
         }
-        std::snprintf(reason, reason_size, "vkCreateImageView for decode surface failed: %d", result);
+        record_vk_result(runtime, result, "vkCreateImageView", "decode surface", reason, reason_size);
         return false;
     }
 
     resource->extent = extent;
     resource->coded_extent = extent;
     resource->visible_extent = {surface->width, surface->height};
+    resource->driver_instance_id = surface->driver_instance_id;
     resource->surface_id = surface->id;
     resource->format = key.picture_format;
     resource->va_rt_format = key.va_rt_format;

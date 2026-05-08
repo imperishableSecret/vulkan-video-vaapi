@@ -6,7 +6,67 @@
 
 namespace vkvv {
 
+namespace {
+
+void mark_device_lost(VulkanRuntime *runtime) {
+    if (runtime == nullptr || runtime->device_lost.exchange(true)) {
+        return;
+    }
+    runtime->destroy_detached_export_resources();
+}
+
+void clear_pending_work_locked(
+        VulkanRuntime *runtime,
+        VkvvSurface **surface,
+        VkVideoSessionParametersKHR *parameters,
+        VkDeviceSize *upload_allocation_size,
+        char *operation,
+        size_t operation_size) {
+    *surface = runtime->pending_surface;
+    *parameters = runtime->pending_parameters;
+    *upload_allocation_size = runtime->pending_upload_allocation_size;
+    std::snprintf(operation, operation_size, "%s", runtime->pending_operation);
+    runtime->pending_surface = nullptr;
+    runtime->pending_parameters = VK_NULL_HANDLE;
+    runtime->pending_upload_allocation_size = 0;
+    runtime->pending_operation[0] = '\0';
+}
+
+} // namespace
+
+bool ensure_runtime_usable(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation) {
+    if (runtime == nullptr) {
+        std::snprintf(reason, reason_size, "missing Vulkan runtime for %s", operation);
+        return false;
+    }
+    if (runtime->device_lost) {
+        std::snprintf(reason, reason_size, "Vulkan device lost before %s", operation);
+        return false;
+    }
+    return true;
+}
+
+bool record_vk_result(
+        VulkanRuntime *runtime,
+        VkResult result,
+        const char *call,
+        const char *operation,
+        char *reason,
+        size_t reason_size) {
+    if (result == VK_SUCCESS) {
+        return true;
+    }
+    if (result == VK_ERROR_DEVICE_LOST) {
+        mark_device_lost(runtime);
+    }
+    std::snprintf(reason, reason_size, "%s for %s failed: %d", call, operation, result);
+    return false;
+}
+
 bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reason_size) {
+    if (!ensure_runtime_usable(runtime, reason, reason_size, "video command resources")) {
+        return false;
+    }
     if (runtime->command_buffer != VK_NULL_HANDLE && runtime->fence != VK_NULL_HANDLE) {
         return true;
     }
@@ -17,8 +77,7 @@ bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reaso
     pool_info.queueFamilyIndex = runtime->decode_queue_family;
 
     VkResult result = vkCreateCommandPool(runtime->device, &pool_info, nullptr, &runtime->command_pool);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkCreateCommandPool for video command failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkCreateCommandPool", "video command", reason, reason_size)) {
         return false;
     }
 
@@ -28,18 +87,16 @@ bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reaso
     allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocate_info.commandBufferCount = 1;
     result = vkAllocateCommandBuffers(runtime->device, &allocate_info, &runtime->command_buffer);
-    if (result != VK_SUCCESS) {
+    if (!record_vk_result(runtime, result, "vkAllocateCommandBuffers", "video command", reason, reason_size)) {
         runtime->destroy_command_resources();
-        std::snprintf(reason, reason_size, "vkAllocateCommandBuffers for video command failed: %d", result);
         return false;
     }
 
     VkFenceCreateInfo fence_info{};
     fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     result = vkCreateFence(runtime->device, &fence_info, nullptr, &runtime->fence);
-    if (result != VK_SUCCESS) {
+    if (!record_vk_result(runtime, result, "vkCreateFence", "video command", reason, reason_size)) {
         runtime->destroy_command_resources();
-        std::snprintf(reason, reason_size, "vkCreateFence for video command failed: %d", result);
         return false;
     }
 
@@ -47,14 +104,16 @@ bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reaso
 }
 
 bool submit_command_buffer(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation) {
+    if (!ensure_runtime_usable(runtime, reason, reason_size, operation)) {
+        return false;
+    }
     VkSubmitInfo submit{};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &runtime->command_buffer;
 
     VkResult result = vkQueueSubmit(runtime->decode_queue, 1, &submit, runtime->fence);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkQueueSubmit for %s failed: %d", operation, result);
+    if (!record_vk_result(runtime, result, "vkQueueSubmit", operation, reason, reason_size)) {
         return false;
     }
 
@@ -62,6 +121,9 @@ bool submit_command_buffer(VulkanRuntime *runtime, char *reason, size_t reason_s
 }
 
 bool wait_for_command_fence(VulkanRuntime *runtime, uint64_t timeout_ns, char *reason, size_t reason_size, const char *operation) {
+    if (!ensure_runtime_usable(runtime, reason, reason_size, operation)) {
+        return false;
+    }
     VkResult result = VK_SUCCESS;
     if (timeout_ns == 0) {
         result = vkGetFenceStatus(runtime->device, runtime->fence);
@@ -76,8 +138,7 @@ bool wait_for_command_fence(VulkanRuntime *runtime, uint64_t timeout_ns, char *r
             return false;
         }
     }
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkWaitForFences for %s failed: %d", operation, result);
+    if (!record_vk_result(runtime, result, "vkWaitForFences", operation, reason, reason_size)) {
         return false;
     }
 
@@ -128,6 +189,21 @@ VAStatus complete_pending_work(
     VkVideoSessionParametersKHR completed_parameters = VK_NULL_HANDLE;
     VkDeviceSize upload_allocation_size = 0;
     char operation[64] = {};
+    if (runtime->device_lost) {
+        {
+            std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+            if (runtime->pending_surface != nullptr) {
+                clear_pending_work_locked(runtime, &completed_surface, &completed_parameters,
+                                          &upload_allocation_size, operation, sizeof(operation));
+            }
+        }
+        if (completed_parameters != VK_NULL_HANDLE && runtime->destroy_video_session_parameters != nullptr) {
+            runtime->destroy_video_session_parameters(runtime->device, completed_parameters, nullptr);
+        }
+        complete_surface_status(completed_surface, VA_STATUS_ERROR_OPERATION_FAILED);
+        std::snprintf(reason, reason_size, "Vulkan device lost before pending work completion");
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
     {
         std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
         if (runtime->pending_surface == nullptr ||
@@ -143,21 +219,24 @@ VAStatus complete_pending_work(
         if (!wait_for_command_fence(
                 runtime, timeout_ns, reason, reason_size,
                 runtime->pending_operation[0] != '\0' ? runtime->pending_operation : "Vulkan decode")) {
-            return VA_STATUS_ERROR_TIMEDOUT;
+            if (runtime->device_lost) {
+                clear_pending_work_locked(runtime, &completed_surface, &completed_parameters,
+                                          &upload_allocation_size, operation, sizeof(operation));
+            } else {
+                return VA_STATUS_ERROR_TIMEDOUT;
+            }
+        } else {
+            clear_pending_work_locked(runtime, &completed_surface, &completed_parameters,
+                                      &upload_allocation_size, operation, sizeof(operation));
         }
-
-        completed_surface = runtime->pending_surface;
-        completed_parameters = runtime->pending_parameters;
-        upload_allocation_size = runtime->pending_upload_allocation_size;
-        std::snprintf(operation, sizeof(operation), "%s", runtime->pending_operation);
-        runtime->pending_surface = nullptr;
-        runtime->pending_parameters = VK_NULL_HANDLE;
-        runtime->pending_upload_allocation_size = 0;
-        runtime->pending_operation[0] = '\0';
     }
 
     if (completed_parameters != VK_NULL_HANDLE && runtime->destroy_video_session_parameters != nullptr) {
         runtime->destroy_video_session_parameters(runtime->device, completed_parameters, nullptr);
+    }
+    if (runtime->device_lost) {
+        complete_surface_status(completed_surface, VA_STATUS_ERROR_OPERATION_FAILED);
+        return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
     completed_surface->decoded = true;

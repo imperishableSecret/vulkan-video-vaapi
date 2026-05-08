@@ -25,10 +25,12 @@ void destroy_video_session(VulkanRuntime *runtime, VideoSession *session) {
 }
 
 bool bind_video_session_memory(VulkanRuntime *runtime, VideoSession *session, char *reason, size_t reason_size) {
+    if (!ensure_runtime_usable(runtime, reason, reason_size, "video session memory bind")) {
+        return false;
+    }
     uint32_t count = 0;
     VkResult result = runtime->get_video_session_memory_requirements(runtime->device, session->session, &count, nullptr);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkGetVideoSessionMemoryRequirementsKHR failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkGetVideoSessionMemoryRequirementsKHR", "video session memory bind", reason, reason_size)) {
         return false;
     }
     if (count == 0) {
@@ -40,8 +42,7 @@ bool bind_video_session_memory(VulkanRuntime *runtime, VideoSession *session, ch
         requirement.sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_MEMORY_REQUIREMENTS_KHR;
     }
     result = runtime->get_video_session_memory_requirements(runtime->device, session->session, &count, requirements.data());
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkGetVideoSessionMemoryRequirementsKHR failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkGetVideoSessionMemoryRequirementsKHR", "video session memory bind", reason, reason_size)) {
         return false;
     }
     requirements.resize(count);
@@ -66,8 +67,7 @@ bool bind_video_session_memory(VulkanRuntime *runtime, VideoSession *session, ch
 
         VkDeviceMemory memory = VK_NULL_HANDLE;
         result = vkAllocateMemory(runtime->device, &allocate_info, nullptr, &memory);
-        if (result != VK_SUCCESS) {
-            std::snprintf(reason, reason_size, "vkAllocateMemory for video session failed: %d", result);
+        if (!record_vk_result(runtime, result, "vkAllocateMemory", "video session memory bind", reason, reason_size)) {
             return false;
         }
         session->memory.push_back(memory);
@@ -84,8 +84,7 @@ bool bind_video_session_memory(VulkanRuntime *runtime, VideoSession *session, ch
 
     result = runtime->bind_video_session_memory(runtime->device, session->session,
                                                static_cast<uint32_t>(binds.size()), binds.data());
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkBindVideoSessionMemoryKHR failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkBindVideoSessionMemoryKHR", "video session memory bind", reason, reason_size)) {
         return false;
     }
 

@@ -82,13 +82,11 @@ bool reset_av1_session(
     }
 
     VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkResetFences for AV1 session reset failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkResetFences", "AV1 session reset", reason, reason_size)) {
         return false;
     }
     result = vkResetCommandBuffer(runtime->command_buffer, 0);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkResetCommandBuffer for AV1 session reset failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkResetCommandBuffer", "AV1 session reset", reason, reason_size)) {
         return false;
     }
 
@@ -96,8 +94,7 @@ bool reset_av1_session(
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     result = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkBeginCommandBuffer for AV1 session reset failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkBeginCommandBuffer", "AV1 session reset", reason, reason_size)) {
         return false;
     }
 
@@ -117,8 +114,7 @@ bool reset_av1_session(
     runtime->cmd_end_video_coding(runtime->command_buffer, &video_end);
 
     result = vkEndCommandBuffer(runtime->command_buffer);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkEndCommandBuffer for AV1 session reset failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "AV1 session reset", reason, reason_size)) {
         return false;
     }
 
@@ -191,8 +187,7 @@ bool create_av1_session_parameters(
     create_info.videoSession = session->video.session;
 
     VkResult result = runtime->create_video_session_parameters(runtime->device, &create_info, nullptr, parameters);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkCreateVideoSessionParametersKHR(AV1) failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkCreateVideoSessionParametersKHR", "AV1 parameters", reason, reason_size)) {
         return false;
     }
     return true;
@@ -296,8 +291,7 @@ VAStatus vkvv_vulkan_ensure_av1_session(
     session_info.pStdHeaderVersion = &capabilities.video.stdHeaderVersion;
 
     result = runtime->create_video_session(runtime->device, &session_info, nullptr, &session->video.session);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkCreateVideoSessionKHR(AV1) failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkCreateVideoSessionKHR", "AV1 session", reason, reason_size)) {
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
 

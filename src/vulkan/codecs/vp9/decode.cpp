@@ -238,12 +238,12 @@ VAStatus vkvv_vulkan_decode_vp9(
 
     VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
     if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkResetFences for VP9 decode failed: %d", result);
+        record_vk_result(runtime, result, "vkResetFences", "VP9 decode", reason, reason_size);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
     result = vkResetCommandBuffer(runtime->command_buffer, 0);
     if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkResetCommandBuffer for VP9 decode failed: %d", result);
+        record_vk_result(runtime, result, "vkResetCommandBuffer", "VP9 decode", reason, reason_size);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
@@ -252,7 +252,7 @@ VAStatus vkvv_vulkan_decode_vp9(
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     result = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
     if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkBeginCommandBuffer for VP9 decode failed: %d", result);
+        record_vk_result(runtime, result, "vkBeginCommandBuffer", "VP9 decode", reason, reason_size);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
@@ -395,6 +395,10 @@ VAStatus vkvv_vulkan_decode_vp9(
 
     result = vkEndCommandBuffer(runtime->command_buffer);
     if (result != VK_SUCCESS) {
+        if (result == VK_ERROR_DEVICE_LOST) {
+            record_vk_result(runtime, result, "vkEndCommandBuffer", "VP9 decode", reason, reason_size);
+            return VA_STATUS_ERROR_OPERATION_FAILED;
+        }
         std::snprintf(reason, reason_size,
                       "vkEndCommandBuffer for VP9 decode failed: %d frame=%u refs=%u setup=%u slot=%d refresh=0x%02x q=%u offsets=%u/%u/%u bytes=%zu",
                       result,

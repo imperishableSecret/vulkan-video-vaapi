@@ -206,13 +206,13 @@ VAStatus vkvv_vulkan_decode_h264(
     VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
     if (result != VK_SUCCESS) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
-        std::snprintf(reason, reason_size, "vkResetFences for H.264 decode failed: %d", result);
+        record_vk_result(runtime, result, "vkResetFences", "H.264 decode", reason, reason_size);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
     result = vkResetCommandBuffer(runtime->command_buffer, 0);
     if (result != VK_SUCCESS) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
-        std::snprintf(reason, reason_size, "vkResetCommandBuffer for H.264 decode failed: %d", result);
+        record_vk_result(runtime, result, "vkResetCommandBuffer", "H.264 decode", reason, reason_size);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
@@ -222,7 +222,7 @@ VAStatus vkvv_vulkan_decode_h264(
     result = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
     if (result != VK_SUCCESS) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
-        std::snprintf(reason, reason_size, "vkBeginCommandBuffer for H.264 decode failed: %d", result);
+        record_vk_result(runtime, result, "vkBeginCommandBuffer", "H.264 decode", reason, reason_size);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
@@ -336,6 +336,10 @@ VAStatus vkvv_vulkan_decode_h264(
     result = vkEndCommandBuffer(runtime->command_buffer);
     if (result != VK_SUCCESS) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
+        if (result == VK_ERROR_DEVICE_LOST) {
+            record_vk_result(runtime, result, "vkEndCommandBuffer", "H.264 decode", reason, reason_size);
+            return VA_STATUS_ERROR_OPERATION_FAILED;
+        }
         const VASliceParameterBufferH264 *first_slice =
                 (input->last_slices != nullptr && input->last_slice_count > 0) ? &input->last_slices[0] : nullptr;
         std::snprintf(reason, reason_size,

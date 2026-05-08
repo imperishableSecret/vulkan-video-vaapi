@@ -4,6 +4,7 @@
 #include "vulkan_runtime.h"
 #include "vulkan/video_profile.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -17,6 +18,7 @@ inline constexpr uint32_t invalid_queue_family = UINT32_MAX;
 struct ExportResource {
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    uint64_t driver_instance_id = 0;
     VASurfaceID owner_surface_id = VA_INVALID_ID;
     VkExtent2D extent{};
     VkFormat format = VK_FORMAT_UNDEFINED;
@@ -51,6 +53,7 @@ struct SurfaceResource {
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    uint64_t driver_instance_id = 0;
     VASurfaceID surface_id = VA_INVALID_ID;
     VkExtent2D extent{};
     VkExtent2D coded_extent{};
@@ -136,6 +139,7 @@ class VulkanRuntime {
     bool external_memory_dma_buf = false;
     bool image_drm_format_modifier = false;
     bool surface_export = false;
+    std::atomic_bool device_lost = false;
 
     bool video_decode_vp9 = false;
     bool video_maintenance2 = false;
@@ -151,8 +155,8 @@ class VulkanRuntime {
     std::mutex export_mutex;
     std::vector<ExportResource> detached_exports;
     VkDeviceSize detached_export_memory_bytes = 0;
-    VkDeviceSize detached_export_memory_budget = 512ull * 1024ull * 1024ull;
-    size_t detached_export_count_limit = 64;
+    VkDeviceSize detached_export_memory_budget = 128ull * 1024ull * 1024ull;
+    size_t detached_export_count_limit = 32;
 
     void destroy_command_resources() {
         if (fence != VK_NULL_HANDLE) {
@@ -176,10 +180,26 @@ bool enumerate_drm_format_modifiers(VulkanRuntime *runtime, VkFormat format, VkF
 
 void destroy_video_session(VulkanRuntime *runtime, VideoSession *session);
 bool bind_video_session_memory(VulkanRuntime *runtime, VideoSession *session, char *reason, size_t reason_size);
+bool ensure_runtime_usable(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation);
+bool record_vk_result(
+        VulkanRuntime *runtime,
+        VkResult result,
+        const char *call,
+        const char *operation,
+        char *reason,
+        size_t reason_size);
 void destroy_export_resource(VulkanRuntime *runtime, ExportResource *resource);
 VkDeviceSize export_memory_bytes(const SurfaceResource *resource);
 size_t runtime_detached_export_count(VulkanRuntime *runtime);
 VkDeviceSize runtime_detached_export_memory_bytes(VulkanRuntime *runtime);
+void prune_detached_exports_for_surface(
+        VulkanRuntime *runtime,
+        uint64_t driver_instance_id,
+        VASurfaceID surface_id,
+        unsigned int va_fourcc,
+        VkFormat format,
+        VkExtent2D coded_extent);
+void prune_detached_exports_for_driver(VulkanRuntime *runtime, uint64_t driver_instance_id);
 void detach_export_resource(VulkanRuntime *runtime, SurfaceResource *resource);
 void destroy_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface);
 bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const DecodeImageKey &key, char *reason, size_t reason_size);

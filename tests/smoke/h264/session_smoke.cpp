@@ -146,6 +146,39 @@ bool check_async_completion(vkvv::VulkanRuntime *runtime) {
                  "async surface completion did not mark the surface ready");
 }
 
+bool check_device_lost_fast_fail(vkvv::VulkanRuntime *runtime) {
+    VkvvSurface surface{};
+    surface.work_state = VKVV_SURFACE_WORK_RENDERING;
+    surface.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+
+    char reason[512] = {};
+    {
+        std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+        runtime->pending_surface = &surface;
+        runtime->pending_parameters = VK_NULL_HANDLE;
+        runtime->pending_upload_allocation_size = 0;
+        std::snprintf(runtime->pending_operation, sizeof(runtime->pending_operation), "device-lost smoke");
+    }
+
+    runtime->device_lost = true;
+    if (!check(!vkvv::ensure_command_resources(runtime, reason, sizeof(reason)),
+               "device-lost runtime accepted new command resources")) {
+        return false;
+    }
+
+    VAStatus status = vkvv_vulkan_complete_surface_work(
+        runtime, &surface, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
+    if (!check(status == VA_STATUS_ERROR_OPERATION_FAILED,
+               "device-lost pending work did not fail fast")) {
+        std::fprintf(stderr, "%s\n", reason);
+        return false;
+    }
+    return check(runtime->pending_surface == nullptr &&
+                 surface.work_state == VKVV_SURFACE_WORK_READY &&
+                 surface.sync_status == VA_STATUS_ERROR_OPERATION_FAILED,
+                 "device-lost pending work was not cleared deterministically");
+}
+
 bool check_h264_dpb_slots() {
     vkvv::H264VideoSession session{};
     bool used_slots[vkvv::max_h264_dpb_slots] = {};
@@ -231,6 +264,8 @@ int main(void) {
 
     ok = ensure_session(runtime, session, 320, 180, 640, 368) && ok;
     ok = check(typed_session->video.session == grown_session, "H.264 session unexpectedly shrank or recreated") && ok;
+
+    ok = check_device_lost_fast_fail(typed_runtime) && ok;
 
     vkvv_vulkan_h264_session_destroy(runtime, session);
     vkvv_vulkan_runtime_destroy(runtime);

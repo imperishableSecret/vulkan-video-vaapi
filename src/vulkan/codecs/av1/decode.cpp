@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <vector>
 
@@ -335,6 +336,42 @@ StdVideoDecodeAV1ReferenceInfo build_current_reference_info(const VkvvAV1DecodeI
     return info;
 }
 
+bool validate_av1_decode_input_bounds(const VkvvAV1DecodeInput *input, char *reason, size_t reason_size) {
+    if (input == nullptr || input->bitstream == nullptr || input->bitstream_size == 0 ||
+        input->tiles == nullptr || input->tile_count == 0) {
+        std::snprintf(reason, reason_size, "missing AV1 decode bitstream bounds");
+        return false;
+    }
+    if (input->bitstream_size > std::numeric_limits<uint32_t>::max()) {
+        std::snprintf(reason, reason_size,
+                      "AV1 decode bitstream is too large: bytes=%zu",
+                      input->bitstream_size);
+        return false;
+    }
+    if (input->header.frame_header_offset >= input->bitstream_size) {
+        std::snprintf(reason, reason_size,
+                      "AV1 frame header offset exceeds bitstream: header=%u bytes=%zu",
+                      input->header.frame_header_offset,
+                      input->bitstream_size);
+        return false;
+    }
+    for (size_t i = 0; i < input->tile_count; i++) {
+        const uint64_t tile_end = static_cast<uint64_t>(input->tiles[i].offset) + input->tiles[i].size;
+        if (input->tiles[i].size == 0 || input->tiles[i].offset >= input->bitstream_size ||
+            tile_end > input->bitstream_size) {
+            std::snprintf(reason, reason_size,
+                          "AV1 tile exceeds decode bitstream: tile=%zu offset=%u size=%u bytes=%zu header=%u",
+                          i,
+                          input->tiles[i].offset,
+                          input->tiles[i].size,
+                          input->bitstream_size,
+                          input->header.frame_header_offset);
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 VAStatus vkvv_vulkan_decode_av1(
@@ -375,6 +412,9 @@ VAStatus vkvv_vulkan_decode_av1(
     }
     if (input->bitstream == nullptr || input->bitstream_size == 0 || !input->header.valid || input->tile_count == 0) {
         std::snprintf(reason, reason_size, "missing AV1 bitstream/header/tile data");
+        return VA_STATUS_ERROR_INVALID_BUFFER;
+    }
+    if (!validate_av1_decode_input_bounds(input, reason, reason_size)) {
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if ((session->decode_flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR) == 0) {
@@ -494,7 +534,8 @@ VAStatus vkvv_vulkan_decode_av1(
     av1_mark_retained_reference_slots(session, input, used_slots);
 
     const bool current_is_reference = input->header.refresh_frame_flags != 0;
-    int target_dpb_slot = av1_select_target_dpb_slot(session, target_surface_id, used_slots);
+    int target_dpb_slot = av1_select_current_setup_slot(
+        session, target_surface_id, used_slots, current_is_reference);
     if (target_dpb_slot < 0) {
         std::snprintf(reason, reason_size, "no free AV1 DPB slot for current picture");
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
@@ -539,13 +580,13 @@ VAStatus vkvv_vulkan_decode_av1(
     VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
     if (result != VK_SUCCESS) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
-        std::snprintf(reason, reason_size, "vkResetFences for AV1 decode failed: %d", result);
+        record_vk_result(runtime, result, "vkResetFences", "AV1 decode", reason, reason_size);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
     result = vkResetCommandBuffer(runtime->command_buffer, 0);
     if (result != VK_SUCCESS) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
-        std::snprintf(reason, reason_size, "vkResetCommandBuffer for AV1 decode failed: %d", result);
+        record_vk_result(runtime, result, "vkResetCommandBuffer", "AV1 decode", reason, reason_size);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
@@ -555,7 +596,7 @@ VAStatus vkvv_vulkan_decode_av1(
     result = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
     if (result != VK_SUCCESS) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
-        std::snprintf(reason, reason_size, "vkBeginCommandBuffer for AV1 decode failed: %d", result);
+        record_vk_result(runtime, result, "vkBeginCommandBuffer", "AV1 decode", reason, reason_size);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
@@ -566,8 +607,9 @@ VAStatus vkvv_vulkan_decode_av1(
         add_image_layout_barrier(&barriers, references[i].resource, VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR,
                                  VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR);
     }
-    add_image_layout_barrier(&barriers, target_resource, VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR,
-                             VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR | VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR);
+    const bool has_setup_slot = target_dpb_slot >= 0;
+    add_image_layout_barrier(&barriers, target_resource, av1_target_layout(has_setup_slot),
+                             av1_target_access(has_setup_slot));
     if (!barriers.empty()) {
         VkDependencyInfo dependency{};
         dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
@@ -657,6 +699,10 @@ VAStatus vkvv_vulkan_decode_av1(
     result = vkEndCommandBuffer(runtime->command_buffer);
     if (result != VK_SUCCESS) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
+        if (result == VK_ERROR_DEVICE_LOST) {
+            record_vk_result(runtime, result, "vkEndCommandBuffer", "AV1 decode", reason, reason_size);
+            return VA_STATUS_ERROR_OPERATION_FAILED;
+        }
         std::snprintf(reason, reason_size,
                       "vkEndCommandBuffer for AV1 decode failed: %d frame=%u refs=%u setup=%u slot=%d refresh=0x%02x tiles=%u header=%u tile0=%u/%u bytes=%zu",
                       result,
@@ -686,9 +732,12 @@ VAStatus vkvv_vulkan_decode_av1(
 
     track_pending_decode(runtime, target, parameters, upload_allocation_size, "AV1 decode");
     std::snprintf(reason, reason_size,
-                  "submitted async AV1 Vulkan decode: %ux%u tiles=%zu bytes=%zu refs=%u setup=%u slot=%d refresh=0x%02x decode_mem=%llu upload_mem=%llu session_mem=%llu",
+                  "submitted async AV1 Vulkan decode: %ux%u tiles=%zu bytes=%zu refs=%u setup=%u slot=%d refresh=0x%02x header=%u tile0=%u/%u decode_mem=%llu upload_mem=%llu session_mem=%llu",
                   coded_extent.width, coded_extent.height, input->tile_count, input->bitstream_size,
                   reference_count, setup_slot_ptr != nullptr ? 1U : 0U, target_dpb_slot, input->header.refresh_frame_flags,
+                  av1_picture.frameHeaderOffset,
+                  tile_offsets.empty() ? 0 : tile_offsets[0],
+                  tile_sizes.empty() ? 0 : tile_sizes[0],
                   static_cast<unsigned long long>(target_resource->allocation_size),
                   static_cast<unsigned long long>(upload_allocation_size),
                   static_cast<unsigned long long>(session->video.memory_bytes));

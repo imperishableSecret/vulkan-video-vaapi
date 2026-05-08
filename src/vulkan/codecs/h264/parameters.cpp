@@ -221,8 +221,7 @@ bool create_h264_session_parameters(
     create_info.videoSession = session->video.session;
 
     VkResult result = runtime->create_video_session_parameters(runtime->device, &create_info, nullptr, parameters);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkCreateVideoSessionParametersKHR(H.264) failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkCreateVideoSessionParametersKHR", "H.264 parameters", reason, reason_size)) {
         return false;
     }
     return true;
@@ -243,8 +242,7 @@ bool create_empty_h264_session_parameters(
     create_info.videoSession = session->video.session;
 
     VkResult result = runtime->create_video_session_parameters(runtime->device, &create_info, nullptr, parameters);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkCreateVideoSessionParametersKHR(empty H.264) failed: %d", result);
+    if (!record_vk_result(runtime, result, "vkCreateVideoSessionParametersKHR", "empty H.264 parameters", reason, reason_size)) {
         return false;
     }
     return true;

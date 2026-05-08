@@ -23,6 +23,8 @@ VAStatus vkvv_vulkan_export_surface(
         VADRMPRIMESurfaceDescriptor *descriptor,
         char *reason,
         size_t reason_size);
+void vkvv_vulkan_note_surface_created(void *runtime, const VkvvSurface *surface);
+void vkvv_vulkan_prune_driver_exports(void *runtime, uint64_t driver_instance_id);
 void vkvv_vulkan_surface_destroy(void *runtime, VkvvSurface *surface);
 
 #ifdef __cplusplus

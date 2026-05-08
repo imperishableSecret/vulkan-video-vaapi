@@ -156,6 +156,7 @@ typedef enum {
 typedef struct VkvvSurface {
     std::mutex mutex;
     VASurfaceID id = VA_INVALID_ID;
+    uint64_t driver_instance_id = 0;
     unsigned int rt_format;
     unsigned int width;
     unsigned int height;
@@ -236,6 +237,7 @@ typedef struct VkvvDriver {
     unsigned int profile_cap_count;
     VkvvObject *objects;
     unsigned int next_id;
+    uint64_t driver_instance_id = 0;
     void *vulkan;
 } VkvvDriver;
 

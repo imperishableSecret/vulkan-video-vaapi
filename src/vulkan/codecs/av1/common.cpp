@@ -182,6 +182,28 @@ int av1_select_target_dpb_slot(
     return target_slot;
 }
 
+int av1_select_current_setup_slot(
+        AV1VideoSession *session,
+        VASurfaceID target_surface_id,
+        const bool used_slots[max_av1_dpb_slots],
+        bool current_is_reference) {
+    if (current_is_reference) {
+        return av1_select_target_dpb_slot(session, target_surface_id, used_slots);
+    }
+    return allocate_av1_dpb_slot(session, used_slots);
+}
+
+VkImageLayout av1_target_layout(bool has_setup_slot) {
+    return has_setup_slot ? VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR :
+                            VK_IMAGE_LAYOUT_VIDEO_DECODE_DST_KHR;
+}
+
+VkAccessFlags2 av1_target_access(bool has_setup_slot) {
+    return has_setup_slot ?
+        (VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR | VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR) :
+        VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR;
+}
+
 void av1_update_reference_slots_from_refresh(
         AV1VideoSession *session,
         const VkvvAV1DecodeInput *input,

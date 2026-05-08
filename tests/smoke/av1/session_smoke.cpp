@@ -266,27 +266,54 @@ bool check_av1_target_slot_selection() {
         used = true;
     }
 
-    const int full_slot = vkvv::av1_select_target_dpb_slot(&session, 77, used_slots);
+    const int display_only_full_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false);
+    if (!check(display_only_full_slot == -1,
+               "display-only AV1 frame claimed a DPB setup slot")) {
+        return false;
+    }
+
+    const int full_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
     if (!check(full_slot == -1,
                "AV1 target selection claimed a DPB setup slot under full slot pressure")) {
         return false;
     }
 
     used_slots[4] = false;
-    const int display_only_slot = vkvv::av1_select_target_dpb_slot(&session, 77, used_slots);
+    const int display_only_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false);
     if (!check(display_only_slot == 4,
-               "display-only AV1 frame did not select the available DPB setup slot")) {
+               "display-only AV1 frame did not select an available scratch setup slot")) {
         return false;
     }
 
-    vkvv::av1_set_surface_slot(&session, 77, display_only_slot, {});
+    used_slots[display_only_slot] = true;
+    used_slots[5] = false;
+    const int reference_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
+    if (!check(reference_slot == 5,
+               "reference AV1 frame did not select the available DPB setup slot")) {
+        return false;
+    }
+
+    vkvv::av1_set_surface_slot(&session, 77, reference_slot, {});
     for (bool &used : used_slots) {
         used = false;
     }
-    used_slots[display_only_slot] = true;
-    const int conflicting_slot = vkvv::av1_select_target_dpb_slot(&session, 77, used_slots);
-    return check(conflicting_slot != display_only_slot,
+    used_slots[reference_slot] = true;
+    const int conflicting_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
+    return check(conflicting_slot != reference_slot,
                  "AV1 target slot selection reused an already-used target slot");
+}
+
+bool check_av1_target_layout_selection() {
+    bool ok = check(vkvv::av1_target_layout(false) == VK_IMAGE_LAYOUT_VIDEO_DECODE_DST_KHR,
+                    "AV1 frame without a setup slot did not use decode destination layout");
+    ok = check(vkvv::av1_target_access(false) == VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR,
+               "AV1 frame without a setup slot did not use write-only decode access") && ok;
+    ok = check(vkvv::av1_target_layout(true) == VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR,
+               "AV1 frame with a setup slot did not use DPB layout") && ok;
+    ok = check(vkvv::av1_target_access(true) ==
+                   (VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR | VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR),
+               "AV1 frame with a setup slot did not use DPB read/write access") && ok;
+    return ok;
 }
 
 } // namespace
@@ -296,6 +323,7 @@ int main(void) {
     ok = check_av1_refresh_retention() && ok;
     ok = check_av1_surface_reconciliation() && ok;
     ok = check_av1_target_slot_selection() && ok;
+    ok = check_av1_target_layout_selection() && ok;
 
     char reason[512] = {};
     void *runtime = vkvv_vulkan_runtime_create(reason, sizeof(reason));
