@@ -20,6 +20,11 @@ struct H264VideoSession {
     uint32_t max_active_reference_pictures = 0;
 };
 
+inline constexpr VideoProfileSpec h264_profile_spec{
+    .operation = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+    .bit_depth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+};
+
 struct H264StdParameters {
     StdVideoH264SequenceParameterSet sps{};
     StdVideoH264SequenceParameterSetVui vui{};

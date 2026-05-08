@@ -133,8 +133,8 @@ VAStatus vkvv_vulkan_ensure_h264_session(
 
     destroy_h264_video_session(runtime, session);
 
-    VideoProfileChain profile_chain;
-    VideoCapabilitiesChain capabilities;
+    VideoProfileChain profile_chain(h264_profile_spec);
+    VideoCapabilitiesChain capabilities(h264_profile_spec);
     VkResult result = runtime->get_video_capabilities(runtime->physical_device, &profile_chain.profile, &capabilities.video);
     if (result != VK_SUCCESS) {
         std::snprintf(reason, reason_size, "vkGetPhysicalDeviceVideoCapabilitiesKHR(H.264) failed: %d", result);

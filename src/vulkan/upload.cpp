@@ -61,7 +61,7 @@ bool ensure_upload_buffer(
         UploadBuffer *upload,
         char *reason,
         size_t reason_size) {
-    VideoProfileChain profile_chain;
+    VideoProfileChain profile_chain(h264_profile_spec);
     VkVideoProfileListInfoKHR profile_list{};
     profile_list.sType = VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR;
     profile_list.profileCount = 1;

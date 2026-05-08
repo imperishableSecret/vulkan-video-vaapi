@@ -210,9 +210,11 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
     }
 
     const VkExtent2D extent = key.coded_extent;
-    VideoProfileChain profile_chain(
-        static_cast<VkVideoCodecOperationFlagBitsKHR>(key.codec_operation),
-        key.luma_bit_depth);
+    const VideoProfileSpec profile_spec{
+        .operation = static_cast<VkVideoCodecOperationFlagBitsKHR>(key.codec_operation),
+        .bit_depth = key.luma_bit_depth,
+    };
+    VideoProfileChain profile_chain(profile_spec);
     VkVideoProfileListInfoKHR profile_list{};
     profile_list.sType = VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR;
     profile_list.profileCount = 1;
