@@ -2,11 +2,25 @@
 
 #include <new>
 
+namespace {
+
+bool profile_seen(const VAProfile *profile_list, unsigned int count, VAProfile profile) {
+    for (unsigned int i = 0; i < count; i++) {
+        if (profile_list[i] == profile) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 VAStatus vkvvQueryConfigProfiles(VADriverContextP ctx, VAProfile *profile_list, int *num_profiles) {
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
     unsigned int count = 0;
     for (unsigned int i = 0; i < drv->profile_cap_count; i++) {
-        if (!drv->profile_caps[i].advertise) {
+        if (!drv->profile_caps[i].advertise ||
+            profile_seen(profile_list, count, drv->profile_caps[i].profile)) {
             continue;
         }
         profile_list[count++] = drv->profile_caps[i].profile;
@@ -22,13 +36,19 @@ VAStatus vkvvQueryConfigEntrypoints(
         VAEntrypoint *entrypoint_list,
         int *num_entrypoints) {
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
-    const VkvvProfileCapability *cap = vkvv_profile_capability(drv, profile);
-    if (cap == NULL) {
+    if (!vkvv_profile_supported(drv, profile)) {
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
 
-    entrypoint_list[0] = cap->entrypoint;
-    *num_entrypoints = 1;
+    unsigned int count = 0;
+    for (unsigned int i = 0; i < drv->profile_cap_count; i++) {
+        const VkvvProfileCapability *cap = &drv->profile_caps[i];
+        if (!cap->advertise || cap->profile != profile) {
+            continue;
+        }
+        entrypoint_list[count++] = cap->entrypoint;
+    }
+    *num_entrypoints = static_cast<int>(count);
     return VA_STATUS_SUCCESS;
 }
 
@@ -39,11 +59,11 @@ VAStatus vkvvGetConfigAttributes(
         VAConfigAttrib *attrib_list,
         int num_attribs) {
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
-    const VkvvProfileCapability *cap = vkvv_profile_capability(drv, profile);
-    if (cap == NULL) {
+    if (!vkvv_profile_supported(drv, profile)) {
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
-    if (entrypoint != cap->entrypoint) {
+    const VkvvProfileCapability *cap = vkvv_profile_capability_for_entrypoint(drv, profile, entrypoint);
+    if (cap == NULL) {
         return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
     }
 
@@ -62,11 +82,11 @@ VAStatus vkvvCreateConfig(
         int num_attribs,
         VAConfigID *config_id) {
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
-    const VkvvProfileCapability *cap = vkvv_profile_capability(drv, profile);
-    if (cap == NULL) {
+    if (!vkvv_profile_supported(drv, profile)) {
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
-    if (entrypoint != cap->entrypoint) {
+    const VkvvProfileCapability *cap = vkvv_profile_capability_for_entrypoint(drv, profile, entrypoint);
+    if (cap == NULL) {
         return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
     }
 
@@ -87,6 +107,10 @@ VAStatus vkvvCreateConfig(
     }
     config->profile = profile;
     config->entrypoint = entrypoint;
+    config->direction = cap->direction;
+    config->mode = cap->direction == VKVV_CODEC_DIRECTION_ENCODE ?
+                   VKVV_CONTEXT_MODE_ENCODE :
+                   VKVV_CONTEXT_MODE_DECODE;
     config->rt_format = rt_format;
     config->fourcc = vkvv_surface_fourcc_for_format(rt_format);
     config->bit_depth = vkvv_rt_format_bit_depth(rt_format);
@@ -125,7 +149,8 @@ VAStatus vkvvQueryConfigAttributes(
 
     *profile = config->profile;
     *entrypoint = config->entrypoint;
-    const VkvvProfileCapability *cap = vkvv_profile_capability(drv, config->profile);
+    const VkvvProfileCapability *cap = vkvv_profile_capability_for_entrypoint(
+        drv, config->profile, config->entrypoint);
     if (attrib_list != NULL) {
         for (unsigned int i = 0; i < vkvv_config_attribute_count(); i++) {
             vkvv_fill_config_attribute_by_index(cap, i, &attrib_list[i]);

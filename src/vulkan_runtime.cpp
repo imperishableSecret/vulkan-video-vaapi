@@ -228,7 +228,10 @@ bool pick_physical_device(VulkanRuntime *runtime, char *reason, size_t reason_si
 
     runtime->physical_device = best.device;
     runtime->decode_queue_family = best.queue.family;
+    runtime->probed_decode_operations = best.queue.operations;
     runtime->enabled_decode_operations = best.queue.operations;
+    runtime->probed_encode_operations = 0;
+    runtime->enabled_encode_operations = 0;
     runtime->video_maintenance2 = best.video_maintenance2;
     runtime->external_memory_fd = best.external_memory_fd;
     runtime->external_memory_dma_buf = best.external_memory_dma_buf;

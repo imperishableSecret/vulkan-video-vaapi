@@ -48,6 +48,13 @@ bool check_va(VAStatus status, const char *operation) {
     return expect_status(status, VA_STATUS_SUCCESS, operation);
 }
 
+bool check(bool condition, const char *message) {
+    if (!condition) {
+        std::fprintf(stderr, "%s\n", message);
+    }
+    return condition;
+}
+
 bool profile_present(const std::vector<VAProfile> &profiles, int profile_count, VAProfile profile) {
     for (int i = 0; i < profile_count; i++) {
         if (profiles[i] == profile) {
@@ -177,6 +184,84 @@ bool check_profile_not_advertised(VADisplay display, VAProfile profile, const ch
     return ok;
 }
 
+bool check_encode_entrypoint_not_advertised(
+        VADisplay display,
+        VAProfile profile,
+        VAEntrypoint entrypoint,
+        const char *name) {
+    bool ok = true;
+
+    VAConfigAttrib attrib{};
+    attrib.type = VAConfigAttribRTFormat;
+    ok = expect_status(
+             vaGetConfigAttributes(display, profile, entrypoint, &attrib, 1),
+             VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT,
+             name) && ok;
+
+    VAConfigID config = VA_INVALID_ID;
+    ok = expect_status(
+             vaCreateConfig(display, profile, entrypoint, nullptr, 0, &config),
+             VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT,
+             name) && ok;
+
+    return ok;
+}
+
+bool check_buffer_mapping(VADisplay display) {
+    VAConfigAttrib create_attrib{};
+    create_attrib.type = VAConfigAttribRTFormat;
+    create_attrib.value = VA_RT_FORMAT_YUV420;
+
+    VAConfigID config = VA_INVALID_ID;
+    bool ok = check_va(
+        vaCreateConfig(display, VAProfileH264High, VAEntrypointVLD, &create_attrib, 1, &config),
+        "vaCreateConfig(buffer)");
+    if (!ok) {
+        return false;
+    }
+
+    VAContextID context = VA_INVALID_ID;
+    ok = check_va(
+             vaCreateContext(display, config, 64, 64, 0, nullptr, 0, &context),
+             "vaCreateContext(buffer)") && ok;
+
+    VABufferID param_buffer = VA_INVALID_ID;
+    VABufferID coded_buffer = VA_INVALID_ID;
+    if (ok) {
+        ok = check_va(
+                 vaCreateBuffer(display, context, VAPictureParameterBufferType, 16, 1, nullptr, &param_buffer),
+                 "vaCreateBuffer(parameter)") && ok;
+        ok = check_va(
+                 vaCreateBuffer(display, context, VAEncCodedBufferType, 16, 1, nullptr, &coded_buffer),
+                 "vaCreateBuffer(coded)") && ok;
+    }
+
+    void *mapped = nullptr;
+    if (ok) {
+        ok = check_va(vaMapBuffer(display, param_buffer, &mapped), "vaMapBuffer(parameter)") && ok;
+        ok = check(mapped != nullptr, "parameter buffer mapped to null") && ok;
+        ok = check_va(vaUnmapBuffer(display, param_buffer), "vaUnmapBuffer(parameter)") && ok;
+    }
+    mapped = nullptr;
+    if (ok) {
+        ok = check_va(vaMapBuffer(display, coded_buffer, &mapped), "vaMapBuffer(coded)") && ok;
+        ok = check(mapped != nullptr, "coded buffer mapped to null") && ok;
+        ok = check_va(vaUnmapBuffer(display, coded_buffer), "vaUnmapBuffer(coded)") && ok;
+    }
+
+    if (coded_buffer != VA_INVALID_ID) {
+        ok = check_va(vaDestroyBuffer(display, coded_buffer), "vaDestroyBuffer(coded)") && ok;
+    }
+    if (param_buffer != VA_INVALID_ID) {
+        ok = check_va(vaDestroyBuffer(display, param_buffer), "vaDestroyBuffer(parameter)") && ok;
+    }
+    if (context != VA_INVALID_ID) {
+        ok = check_va(vaDestroyContext(display, context), "vaDestroyContext(buffer)") && ok;
+    }
+    ok = check_va(vaDestroyConfig(display, config), "vaDestroyConfig(buffer)") && ok;
+    return ok;
+}
+
 } // namespace
 
 int main(void) {
@@ -221,6 +306,15 @@ int main(void) {
     ok = check_h264_profile(display, VAProfileH264ConstrainedBaseline) && ok;
     ok = check_h264_profile(display, VAProfileH264Main) && ok;
     ok = check_h264_profile(display, VAProfileH264High) && ok;
+    ok = check_encode_entrypoint_not_advertised(
+             display, VAProfileH264High, VAEntrypointEncSlice,
+             "H.264 EncSlice advertising") && ok;
+    ok = check_encode_entrypoint_not_advertised(
+             display, VAProfileH264High, VAEntrypointEncSliceLP,
+             "H.264 EncSliceLP advertising") && ok;
+    ok = check_encode_entrypoint_not_advertised(
+             display, VAProfileH264High, VAEntrypointEncPicture,
+             "H.264 EncPicture advertising") && ok;
 
     ok = check_profile_not_advertised(display, VAProfileHEVCMain, "HEVC Main advertising") && ok;
     ok = check_profile_not_advertised(display, VAProfileHEVCMain10, "HEVC Main10 advertising") && ok;
@@ -242,6 +336,7 @@ int main(void) {
              vaCreateSurfaces(display, VA_RT_FORMAT_YUV420_10, 64, 64, &p010_surface, 1, nullptr, 0),
              VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT,
              "vaCreateSurfaces(P010)") && ok;
+    ok = check_buffer_mapping(display) && ok;
 
     ok = check_va(vaTerminate(display), "vaTerminate") && ok;
     close(fd);

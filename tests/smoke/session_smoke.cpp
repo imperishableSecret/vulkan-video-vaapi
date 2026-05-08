@@ -188,6 +188,13 @@ int main(void) {
     ok = check(
         (typed_runtime->enabled_decode_operations & VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) != 0,
         "runtime did not enable H.264 through codec-driven selection") && ok;
+    ok = check(
+        (typed_runtime->probed_decode_operations & VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) != 0,
+        "runtime did not record probed H.264 decode support") && ok;
+    ok = check(
+        typed_runtime->enabled_encode_operations == 0 &&
+            typed_runtime->probed_encode_operations == 0,
+        "runtime should keep encode operation sets empty before encode probing is wired") && ok;
 
     void *session = vkvv_vulkan_h264_session_create();
     if (session == nullptr) {

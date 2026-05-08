@@ -12,8 +12,8 @@
 extern "C" {
 #endif
 
-#define VKVV_MAX_PROFILES 8
-#define VKVV_MAX_ENTRYPOINTS 1
+#define VKVV_MAX_PROFILES 16
+#define VKVV_MAX_ENTRYPOINTS 4
 #define VKVV_MAX_ATTRIBUTES 4
 #define VKVV_MAX_IMAGE_FORMATS 2
 #define VKVV_MAX_SUBPIC_FORMATS 1
@@ -30,7 +30,33 @@ typedef struct VkvvDriver VkvvDriver;
 typedef struct VkvvContext VkvvContext;
 typedef struct VkvvSurface VkvvSurface;
 typedef struct VkvvBuffer VkvvBuffer;
-typedef struct VkvvCodecOps VkvvCodecOps;
+typedef struct VkvvDecodeOps VkvvDecodeOps;
+typedef struct VkvvEncodeOps VkvvEncodeOps;
+
+typedef enum {
+    VKVV_CODEC_DIRECTION_DECODE = 0,
+    VKVV_CODEC_DIRECTION_ENCODE = 1,
+} VkvvCodecDirection;
+
+typedef enum {
+    VKVV_CONTEXT_MODE_DECODE = 0,
+    VKVV_CONTEXT_MODE_ENCODE = 1,
+} VkvvContextMode;
+
+typedef enum {
+    VKVV_BUFFER_CLASS_PARAMETER = 0,
+    VKVV_BUFFER_CLASS_ENCODE_CODED_OUTPUT = 1,
+} VkvvBufferClass;
+
+typedef enum {
+    VKVV_SURFACE_ROLE_DECODE_OUTPUT = 1u << 0,
+    VKVV_SURFACE_ROLE_EXPORTABLE = 1u << 1,
+    VKVV_SURFACE_ROLE_ENCODE_INPUT = 1u << 2,
+    VKVV_SURFACE_ROLE_ENCODE_RECONSTRUCTED = 1u << 3,
+    VKVV_SURFACE_ROLE_ENCODE_REFERENCE = 1u << 4,
+} VkvvSurfaceRoleFlags;
+
+typedef struct VkvvCodedBufferPayload VkvvCodedBufferPayload;
 
 typedef struct {
     unsigned int min_width;
@@ -59,6 +85,8 @@ typedef struct {
 typedef struct VkvvConfig {
     VAProfile profile;
     VAEntrypoint entrypoint;
+    VkvvCodecDirection direction;
+    VkvvContextMode mode;
     unsigned int rt_format;
     unsigned int fourcc;
     unsigned int bit_depth;
@@ -72,6 +100,9 @@ typedef struct VkvvConfig {
 typedef struct {
     VAProfile profile;
     VAEntrypoint entrypoint;
+    VkvvCodecDirection direction;
+    unsigned int vulkan_codec_operation;
+    const char *required_extension;
     unsigned int rt_format;
     unsigned int fourcc;
     unsigned int bit_depth;
@@ -81,6 +112,9 @@ typedef struct {
     unsigned int max_height;
     bool exportable;
     bool hardware_supported;
+    bool parser_wired;
+    bool runtime_wired;
+    bool surface_wired;
     bool decode_wired;
     bool export_wired;
     bool advertise;
@@ -97,6 +131,7 @@ typedef struct VkvvSurface {
     unsigned int width;
     unsigned int height;
     unsigned int fourcc;
+    unsigned int role_flags;
     void *vulkan;
     VkvvSurfaceWorkState work_state;
     VAStatus sync_status;
@@ -106,13 +141,15 @@ typedef struct VkvvSurface {
 
 typedef struct VkvvBuffer {
     VABufferType type;
+    VkvvBufferClass buffer_class;
     unsigned int size;
     unsigned int num_elements;
     void *data;
+    VkvvCodedBufferPayload *coded_payload;
     bool mapped;
 } VkvvBuffer;
 
-typedef struct VkvvCodecOps {
+typedef struct VkvvDecodeOps {
     const char *name;
     void *(*state_create)(void);
     void (*state_destroy)(void *state);
@@ -132,19 +169,27 @@ typedef struct VkvvCodecOps {
         void *state,
         char *reason,
         size_t reason_size);
-} VkvvCodecOps;
+} VkvvDecodeOps;
+
+typedef struct VkvvEncodeOps {
+    const char *name;
+} VkvvEncodeOps;
 
 typedef struct VkvvContext {
     std::mutex mutex;
     VAConfigID config_id;
     VAProfile profile;
     VAEntrypoint entrypoint;
+    VkvvContextMode mode;
     unsigned int width;
     unsigned int height;
     VASurfaceID render_target;
-    const VkvvCodecOps *codec_ops;
-    void *codec_state;
-    void *codec_session;
+    const VkvvDecodeOps *decode_ops;
+    void *decode_state;
+    void *decode_session;
+    const VkvvEncodeOps *encode_ops;
+    void *encode_state;
+    void *encode_session;
 } VkvvContext;
 
 typedef struct VkvvObject {

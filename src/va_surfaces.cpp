@@ -127,6 +127,8 @@ VAStatus vkvvCreateSurfaces2(
         surface->width = width;
         surface->height = height;
         surface->fourcc = vkvv_surface_fourcc_for_format(selected_format);
+        surface->role_flags = VKVV_SURFACE_ROLE_DECODE_OUTPUT |
+                              (drv->caps.surface_export ? VKVV_SURFACE_ROLE_EXPORTABLE : 0);
         surface->work_state = VKVV_SURFACE_WORK_READY;
         surface->sync_status = VA_STATUS_SUCCESS;
         surfaces[i] = vkvv_object_add(drv, VKVV_OBJECT_SURFACE, surface);

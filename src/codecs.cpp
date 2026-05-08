@@ -22,7 +22,7 @@ VAStatus h264_decode(
     return vkvv_vulkan_decode_h264(runtime, session, drv, vctx, target, profile, &input, reason, reason_size);
 }
 
-const VkvvCodecOps h264_ops = {
+const VkvvDecodeOps h264_decode_ops = {
     "h264",
     vkvv_h264_state_create,
     vkvv_h264_state_destroy,
@@ -37,9 +37,15 @@ const VkvvCodecOps h264_ops = {
 
 } // namespace
 
-const VkvvCodecOps *vkvv_codec_ops_for_profile(VAProfile profile) {
-    if (vkvv_profile_is_h264(profile)) {
-        return &h264_ops;
+const VkvvDecodeOps *vkvv_decode_ops_for_profile_entrypoint(VAProfile profile, VAEntrypoint entrypoint) {
+    if (entrypoint == VAEntrypointVLD && vkvv_profile_is_h264(profile)) {
+        return &h264_decode_ops;
     }
+    return nullptr;
+}
+
+const VkvvEncodeOps *vkvv_encode_ops_for_profile_entrypoint(VAProfile profile, VAEntrypoint entrypoint) {
+    (void) profile;
+    (void) entrypoint;
     return nullptr;
 }

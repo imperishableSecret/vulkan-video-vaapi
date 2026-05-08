@@ -213,7 +213,10 @@ class VulkanRuntime {
     VkDevice device = VK_NULL_HANDLE;
     VkQueue decode_queue = VK_NULL_HANDLE;
     uint32_t decode_queue_family = invalid_queue_family;
+    VkVideoCodecOperationFlagsKHR probed_decode_operations = 0;
     VkVideoCodecOperationFlagsKHR enabled_decode_operations = 0;
+    VkVideoCodecOperationFlagsKHR probed_encode_operations = 0;
+    VkVideoCodecOperationFlagsKHR enabled_encode_operations = 0;
     VkPhysicalDeviceMemoryProperties memory_properties{};
 
     PFN_vkGetPhysicalDeviceQueueFamilyProperties2 get_queue_family_properties2 = nullptr;

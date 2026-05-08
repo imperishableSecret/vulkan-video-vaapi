@@ -48,9 +48,12 @@ inline bool vkvv_profile_is_h264(VAProfile profile) {
 void vkvv_log(const char *fmt, ...);
 void *vkvv_get_or_create_vulkan_runtime(char *reason, size_t reason_size);
 void vkvv_release_context_payload(VkvvDriver *drv, VkvvContext *vctx);
-const VkvvCodecOps *vkvv_codec_ops_for_profile(VAProfile profile);
+const VkvvDecodeOps *vkvv_decode_ops_for_profile_entrypoint(VAProfile profile, VAEntrypoint entrypoint);
+const VkvvEncodeOps *vkvv_encode_ops_for_profile_entrypoint(VAProfile profile, VAEntrypoint entrypoint);
 void vkvv_init_profile_capabilities(VkvvDriver *drv);
 const VkvvProfileCapability *vkvv_profile_capability(const VkvvDriver *drv, VAProfile profile);
+const VkvvProfileCapability *vkvv_profile_capability_for_entrypoint(const VkvvDriver *drv, VAProfile profile, VAEntrypoint entrypoint);
+const VkvvProfileCapability *vkvv_profile_capability_record(const VkvvDriver *drv, VAProfile profile, VAEntrypoint entrypoint, VkvvCodecDirection direction);
 bool vkvv_profile_supported(const VkvvDriver *drv, VAProfile profile);
 unsigned int vkvv_surface_fourcc_for_format(unsigned int rt_format);
 unsigned int vkvv_rt_format_bit_depth(unsigned int rt_format);

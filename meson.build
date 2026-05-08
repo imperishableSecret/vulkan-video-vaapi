@@ -80,6 +80,7 @@ codec_smoke = executable(
   'vkvv-codec-smoke',
   files(
     'tests/smoke/codec_smoke.cpp',
+    'src/caps.cpp',
     'src/codecs.cpp',
     'src/h264.cpp',
     'src/object.cpp',
