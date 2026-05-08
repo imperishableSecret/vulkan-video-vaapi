@@ -1,5 +1,6 @@
 #include "../vulkan_runtime_internal.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <mutex>
@@ -91,6 +92,8 @@ void destroy_export_resource(VulkanRuntime *runtime, ExportResource *resource) {
         resource->memory = VK_NULL_HANDLE;
     }
     resource->driver_instance_id = 0;
+    resource->stream_id = 0;
+    resource->codec_operation = 0;
     resource->owner_surface_id = VA_INVALID_ID;
     resource->extent = {};
     resource->format = VK_FORMAT_UNDEFINED;
@@ -102,6 +105,11 @@ void destroy_export_resource(VulkanRuntime *runtime, ExportResource *resource) {
     resource->drm_format_modifier = 0;
     resource->has_drm_format_modifier = false;
     resource->exported = false;
+    resource->predecode_exported = false;
+    resource->predecode_seeded = false;
+    resource->black_placeholder = false;
+    resource->seed_source_surface_id = VA_INVALID_ID;
+    resource->seed_source_generation = 0;
     resource->content_generation = 0;
     resource->layout = VK_IMAGE_LAYOUT_UNDEFINED;
 }
@@ -131,11 +139,40 @@ VkDeviceSize runtime_detached_export_memory_bytes(VulkanRuntime *runtime) {
 
 void VulkanRuntime::destroy_detached_export_resources() {
     std::lock_guard<std::mutex> lock(export_mutex);
+    predecode_exports.clear();
+    export_seed_records.clear();
     for (ExportResource &resource : detached_exports) {
         destroy_export_resource(this, &resource);
     }
     detached_exports.clear();
     detached_export_memory_bytes = 0;
+}
+
+void unregister_predecode_export_resource_locked(VulkanRuntime *runtime, ExportResource *resource) {
+    if (runtime == nullptr || resource == nullptr) {
+        return;
+    }
+    auto &exports = runtime->predecode_exports;
+    exports.erase(std::remove(exports.begin(), exports.end(), resource), exports.end());
+}
+
+void unregister_predecode_export_resource(VulkanRuntime *runtime, ExportResource *resource) {
+    if (runtime == nullptr || resource == nullptr) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(runtime->export_mutex);
+    unregister_predecode_export_resource_locked(runtime, resource);
+}
+
+void register_predecode_export_resource(VulkanRuntime *runtime, ExportResource *resource) {
+    if (runtime == nullptr || resource == nullptr || resource->image == VK_NULL_HANDLE) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(runtime->export_mutex);
+    if (std::find(runtime->predecode_exports.begin(), runtime->predecode_exports.end(), resource) ==
+        runtime->predecode_exports.end()) {
+        runtime->predecode_exports.push_back(resource);
+    }
 }
 
 void prune_detached_export_resources_locked(VulkanRuntime *runtime) {
@@ -169,11 +206,15 @@ bool detached_export_exact_match(
         const ExportResource &resource,
         uint64_t driver_instance_id,
         VASurfaceID surface_id,
+        uint64_t stream_id,
+        VkVideoCodecOperationFlagsKHR codec_operation,
         unsigned int va_fourcc,
         VkFormat format,
         VkExtent2D coded_extent) {
     return format != VK_FORMAT_UNDEFINED &&
            detached_export_same_owner(resource, driver_instance_id, surface_id) &&
+           resource.stream_id == stream_id &&
+           resource.codec_operation == codec_operation &&
            resource.va_fourcc == va_fourcc &&
            resource.format == format &&
            resource.extent.width == coded_extent.width &&
@@ -194,6 +235,8 @@ void prune_detached_exports_for_surface(
         VulkanRuntime *runtime,
         uint64_t driver_instance_id,
         VASurfaceID surface_id,
+        uint64_t stream_id,
+        VkVideoCodecOperationFlagsKHR codec_operation,
         unsigned int va_fourcc,
         VkFormat format,
         VkExtent2D coded_extent) {
@@ -206,7 +249,7 @@ void prune_detached_exports_for_surface(
         const ExportResource &resource = runtime->detached_exports[i];
         if (detached_export_same_owner(resource, driver_instance_id, surface_id) &&
             !detached_export_exact_match(resource, driver_instance_id, surface_id,
-                                         va_fourcc, format, coded_extent)) {
+                                         stream_id, codec_operation, va_fourcc, format, coded_extent)) {
             remove_detached_export_locked(runtime, i);
             continue;
         }
@@ -235,9 +278,12 @@ void detach_export_resource(VulkanRuntime *runtime, SurfaceResource *resource) {
         return;
     }
 
+    unregister_predecode_export_resource(runtime, &resource->export_resource);
     ExportResource detached = resource->export_resource;
     resource->export_resource = {};
     detached.driver_instance_id = resource->driver_instance_id;
+    detached.stream_id = resource->stream_id;
+    detached.codec_operation = resource->codec_operation;
     detached.owner_surface_id = resource->surface_id;
     if (!detached.exported || detached.allocation_size == 0 || runtime->device_lost) {
         destroy_export_resource(runtime, &detached);
@@ -280,6 +326,8 @@ void destroy_decode_resource_handles(VulkanRuntime *runtime, SurfaceResource *re
         resource->memory = VK_NULL_HANDLE;
     }
     resource->allocation_size = 0;
+    resource->stream_id = 0;
+    resource->codec_operation = 0;
     resource->plane_layouts[0] = {};
     resource->plane_layouts[1] = {};
     resource->plane_count = 0;
@@ -295,6 +343,7 @@ void destroy_surface_resource_raw(VulkanRuntime *runtime, SurfaceResource *resou
         return;
     }
 
+    unregister_export_seed_resource(runtime, resource);
     detach_export_resource(runtime, resource);
     destroy_decode_resource_handles(runtime, resource);
     delete resource;
@@ -334,7 +383,19 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
     if (existing != nullptr &&
         existing->image != VK_NULL_HANDLE &&
         decode_image_key_matches(existing->decode_key, key)) {
+        const uint64_t stream_id = surface->stream_id;
+        const auto codec_operation =
+            static_cast<VkVideoCodecOperationFlagsKHR>(
+                surface->codec_operation != 0 ? surface->codec_operation : key.codec_operation);
+        if (existing->stream_id != stream_id ||
+            existing->codec_operation != codec_operation) {
+            unregister_export_seed_resource(runtime, existing);
+            detach_export_resource(runtime, existing);
+            existing->content_generation = 0;
+        }
         existing->driver_instance_id = surface->driver_instance_id;
+        existing->stream_id = stream_id;
+        existing->codec_operation = codec_operation;
         existing->surface_id = surface->id;
         existing->visible_extent = {surface->width, surface->height};
         return true;
@@ -513,6 +574,10 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
     resource->coded_extent = extent;
     resource->visible_extent = {surface->width, surface->height};
     resource->driver_instance_id = surface->driver_instance_id;
+    resource->stream_id = surface->stream_id;
+    resource->codec_operation =
+        static_cast<VkVideoCodecOperationFlagsKHR>(
+            surface->codec_operation != 0 ? surface->codec_operation : key.codec_operation);
     resource->surface_id = surface->id;
     resource->format = key.picture_format;
     resource->va_rt_format = key.va_rt_format;

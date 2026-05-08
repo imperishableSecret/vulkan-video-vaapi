@@ -281,6 +281,11 @@ bool initialize_export_resource_black(
 
     destroy_upload_buffer(runtime, &staging);
     resource->content_generation = 0;
+    resource->predecode_exported = false;
+    resource->predecode_seeded = false;
+    resource->black_placeholder = true;
+    resource->seed_source_surface_id = VA_INVALID_ID;
+    resource->seed_source_generation = 0;
     return true;
 }
 
@@ -420,11 +425,15 @@ bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, cha
     ExportResource *resource = &source->export_resource;
     if (resource->image != VK_NULL_HANDLE &&
         resource->driver_instance_id == source->driver_instance_id &&
+        resource->stream_id == source->stream_id &&
+        resource->codec_operation == source->codec_operation &&
         resource->format == source->format &&
         resource->va_fourcc == source->va_fourcc &&
         resource->extent.width >= source->coded_extent.width &&
         resource->extent.height >= source->coded_extent.height) {
         resource->driver_instance_id = source->driver_instance_id;
+        resource->stream_id = source->stream_id;
+        resource->codec_operation = source->codec_operation;
         resource->owner_surface_id = source->surface_id;
         return true;
     }
@@ -434,6 +443,8 @@ bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, cha
         prune_detached_exports_for_surface(runtime,
                                            source->driver_instance_id,
                                            source->surface_id,
+                                           source->stream_id,
+                                           source->codec_operation,
                                            source->va_fourcc,
                                            source->format,
                                            source->coded_extent);
@@ -442,12 +453,16 @@ bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, cha
             for (auto it = runtime->detached_exports.begin(); it != runtime->detached_exports.end(); ++it) {
                 if (it->driver_instance_id == source->driver_instance_id &&
                     it->owner_surface_id == source->surface_id &&
+                    it->stream_id == source->stream_id &&
+                    it->codec_operation == source->codec_operation &&
                     it->format == source->format &&
                     it->va_fourcc == source->va_fourcc &&
                     it->extent.width == source->coded_extent.width &&
                     it->extent.height == source->coded_extent.height) {
                     *resource = *it;
                     resource->driver_instance_id = source->driver_instance_id;
+                    resource->stream_id = source->stream_id;
+                    resource->codec_operation = source->codec_operation;
                     resource->owner_surface_id = source->surface_id;
                     resource->content_generation = 0;
                     runtime->detached_export_memory_bytes =
@@ -474,6 +489,8 @@ bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, cha
                                            VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
                                            reason, reason_size)) {
         resource->driver_instance_id = source->driver_instance_id;
+        resource->stream_id = source->stream_id;
+        resource->codec_operation = source->codec_operation;
         resource->owner_surface_id = source->surface_id;
         if (initialize_export_resource_black(runtime, resource, format, reason, reason_size)) {
             return true;
@@ -486,6 +503,8 @@ bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, cha
         return false;
     }
     resource->driver_instance_id = source->driver_instance_id;
+    resource->stream_id = source->stream_id;
+    resource->codec_operation = source->codec_operation;
     resource->owner_surface_id = source->surface_id;
     if (!initialize_export_resource_black(runtime, resource, format, reason, reason_size)) {
         destroy_export_resource(runtime, resource);
@@ -517,6 +536,8 @@ bool ensure_export_only_surface_resource(
 
     if (resource->image != VK_NULL_HANDLE) {
         resource->driver_instance_id = surface->driver_instance_id;
+        resource->stream_id = surface->stream_id;
+        resource->codec_operation = static_cast<VkVideoCodecOperationFlagsKHR>(surface->codec_operation);
         resource->visible_extent = {surface->width, surface->height};
         return true;
     }
@@ -525,6 +546,8 @@ bool ensure_export_only_surface_resource(
     resource->coded_extent = extent;
     resource->visible_extent = {surface->width, surface->height};
     resource->driver_instance_id = surface->driver_instance_id;
+    resource->stream_id = surface->stream_id;
+    resource->codec_operation = static_cast<VkVideoCodecOperationFlagsKHR>(surface->codec_operation);
     resource->surface_id = surface->id;
     resource->format = format->vk_format;
     resource->va_rt_format = surface->rt_format;
@@ -549,10 +572,343 @@ bool export_resource_matches_surface(const SurfaceResource *source) {
     const ExportResource &resource = source->export_resource;
     return resource.image != VK_NULL_HANDLE &&
            resource.driver_instance_id == source->driver_instance_id &&
+           resource.stream_id == source->stream_id &&
+           resource.codec_operation == source->codec_operation &&
            resource.format == source->format &&
            resource.va_fourcc == source->va_fourcc &&
            resource.extent.width >= source->coded_extent.width &&
            resource.extent.height >= source->coded_extent.height;
+}
+
+bool predecode_seed_target_matches(const ExportResource *target, const SurfaceResource *source) {
+    return target != nullptr &&
+           source != nullptr &&
+           target != &source->export_resource &&
+           target->image != VK_NULL_HANDLE &&
+           target->memory != VK_NULL_HANDLE &&
+           target->predecode_exported &&
+           target->content_generation == 0 &&
+           target->driver_instance_id == source->driver_instance_id &&
+           target->stream_id != 0 &&
+           target->stream_id == source->stream_id &&
+           target->codec_operation != 0 &&
+           target->codec_operation == source->codec_operation &&
+           target->format == source->format &&
+           target->va_fourcc == source->va_fourcc &&
+           target->extent.width == source->coded_extent.width &&
+           target->extent.height == source->coded_extent.height;
+}
+
+bool export_seed_source_valid(const SurfaceResource *source) {
+    return source != nullptr &&
+           source->image != VK_NULL_HANDLE &&
+           source->content_generation != 0 &&
+           source->driver_instance_id != 0 &&
+           source->stream_id != 0 &&
+           source->codec_operation != 0 &&
+           source->format != VK_FORMAT_UNDEFINED &&
+           source->va_fourcc != 0 &&
+           source->coded_extent.width != 0 &&
+           source->coded_extent.height != 0;
+}
+
+bool export_seed_target_valid(const SurfaceResource *target) {
+    return target != nullptr &&
+           target->export_resource.image != VK_NULL_HANDLE &&
+           target->export_resource.memory != VK_NULL_HANDLE &&
+           target->driver_instance_id != 0 &&
+           target->stream_id != 0 &&
+           target->codec_operation != 0 &&
+           target->format != VK_FORMAT_UNDEFINED &&
+           target->va_fourcc != 0 &&
+           target->coded_extent.width != 0 &&
+           target->coded_extent.height != 0;
+}
+
+bool export_seed_record_matches(const ExportSeedRecord &record, const SurfaceResource *target) {
+    return target != nullptr &&
+           record.resource != nullptr &&
+           record.driver_instance_id == target->driver_instance_id &&
+           record.stream_id == target->stream_id &&
+           record.codec_operation == target->codec_operation &&
+           record.format == target->format &&
+           record.va_fourcc == target->va_fourcc &&
+           record.coded_extent.width == target->coded_extent.width &&
+           record.coded_extent.height == target->coded_extent.height &&
+           export_seed_source_valid(record.resource);
+}
+
+void remember_export_seed_resource_locked(VulkanRuntime *runtime, SurfaceResource *resource) {
+    if (runtime == nullptr || !export_seed_source_valid(resource)) {
+        return;
+    }
+
+    for (size_t i = 0; i < runtime->export_seed_records.size();) {
+        const ExportSeedRecord &record = runtime->export_seed_records[i];
+        if (record.resource == resource ||
+            (record.driver_instance_id == resource->driver_instance_id &&
+             record.stream_id == resource->stream_id &&
+             record.codec_operation == resource->codec_operation &&
+             record.format == resource->format &&
+             record.va_fourcc == resource->va_fourcc &&
+             record.coded_extent.width == resource->coded_extent.width &&
+             record.coded_extent.height == resource->coded_extent.height)) {
+            runtime->export_seed_records.erase(runtime->export_seed_records.begin() + static_cast<std::ptrdiff_t>(i));
+            continue;
+        }
+        i++;
+    }
+
+    runtime->export_seed_records.push_back({
+        .driver_instance_id = resource->driver_instance_id,
+        .stream_id = resource->stream_id,
+        .codec_operation = resource->codec_operation,
+        .format = resource->format,
+        .va_fourcc = resource->va_fourcc,
+        .coded_extent = resource->coded_extent,
+        .resource = resource,
+        .surface_id = resource->surface_id,
+        .content_generation = resource->content_generation,
+    });
+}
+
+void unregister_export_seed_resource_locked(VulkanRuntime *runtime, SurfaceResource *resource) {
+    if (runtime == nullptr || resource == nullptr) {
+        return;
+    }
+    for (size_t i = 0; i < runtime->export_seed_records.size();) {
+        if (runtime->export_seed_records[i].resource == resource) {
+            runtime->export_seed_records.erase(runtime->export_seed_records.begin() + static_cast<std::ptrdiff_t>(i));
+            continue;
+        }
+        i++;
+    }
+}
+
+SurfaceResource *find_export_seed_source_locked(VulkanRuntime *runtime, const SurfaceResource *target) {
+    if (runtime == nullptr || !export_seed_target_valid(target)) {
+        return nullptr;
+    }
+
+    for (size_t i = 0; i < runtime->export_seed_records.size();) {
+        ExportSeedRecord &record = runtime->export_seed_records[i];
+        if (!export_seed_source_valid(record.resource)) {
+            runtime->export_seed_records.erase(runtime->export_seed_records.begin() + static_cast<std::ptrdiff_t>(i));
+            continue;
+        }
+        if (export_seed_record_matches(record, target)) {
+            record.surface_id = record.resource->surface_id;
+            record.content_generation = record.resource->content_generation;
+            return record.resource;
+        }
+        i++;
+    }
+    return nullptr;
+}
+
+std::vector<ExportResource *> collect_predecode_seed_targets_locked(
+        VulkanRuntime *runtime,
+        SurfaceResource *source) {
+    std::vector<ExportResource *> targets;
+    if (runtime == nullptr || source == nullptr || source->content_generation == 0) {
+        return targets;
+    }
+
+    for (ExportResource *resource : runtime->predecode_exports) {
+        if (predecode_seed_target_matches(resource, source)) {
+            targets.push_back(resource);
+        }
+    }
+    for (ExportResource &resource : runtime->detached_exports) {
+        if (predecode_seed_target_matches(&resource, source)) {
+            targets.push_back(&resource);
+        }
+    }
+    return targets;
+}
+
+bool copy_surface_to_export_targets_locked(
+        VulkanRuntime *runtime,
+        SurfaceResource *source,
+        ExportResource *owner_export,
+        bool copy_owner_export,
+        const std::vector<ExportResource *> &predecode_seed_targets,
+        char *reason,
+        size_t reason_size) {
+    if (runtime == nullptr || source == nullptr || source->image == VK_NULL_HANDLE) {
+        std::snprintf(reason, reason_size, "missing surface export copy source");
+        return false;
+    }
+    if (owner_export == nullptr && predecode_seed_targets.empty()) {
+        return true;
+    }
+
+    const ExportFormatInfo *format = export_format_for_surface(nullptr, source, reason, reason_size);
+    if (format == nullptr) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+    if (!ensure_command_resources(runtime, reason, reason_size)) {
+        return false;
+    }
+
+    VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
+    if (!record_vk_result(runtime, result, "vkResetFences", "surface export copy", reason, reason_size)) {
+        return false;
+    }
+    result = vkResetCommandBuffer(runtime->command_buffer, 0);
+    if (!record_vk_result(runtime, result, "vkResetCommandBuffer", "surface export copy", reason, reason_size)) {
+        return false;
+    }
+
+    VkCommandBufferBeginInfo begin_info{};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    result = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
+    if (!record_vk_result(runtime, result, "vkBeginCommandBuffer", "surface export copy", reason, reason_size)) {
+        return false;
+    }
+
+    std::vector<VkImageMemoryBarrier2> barriers;
+    add_raw_image_barrier(&barriers,
+                          source->image,
+                          source->layout,
+                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                          VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                          VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                          VK_ACCESS_2_TRANSFER_READ_BIT);
+    if (owner_export != nullptr) {
+        add_raw_image_barrier(&barriers,
+                              owner_export->image,
+                              owner_export->layout,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                              VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                              VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                              VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    }
+    for (ExportResource *target : predecode_seed_targets) {
+        add_raw_image_barrier(&barriers,
+                              target->image,
+                              target->layout,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                              VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                              VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                              VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    }
+    if (!barriers.empty()) {
+        VkDependencyInfo dependency{};
+        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+        dependency.pImageMemoryBarriers = barriers.data();
+        vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
+    }
+    source->layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    if (owner_export != nullptr) {
+        owner_export->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    }
+    for (ExportResource *target : predecode_seed_targets) {
+        target->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    }
+
+    VkImageCopy regions[2]{};
+    for (uint32_t i = 0; i < format->layer_count; i++) {
+        regions[i].srcSubresource.aspectMask = format->layers[i].aspect;
+        regions[i].srcSubresource.layerCount = 1;
+        regions[i].dstSubresource.aspectMask = format->layers[i].aspect;
+        regions[i].dstSubresource.layerCount = 1;
+        regions[i].extent = export_layer_extent(source->coded_extent, format->layers[i]);
+    }
+
+    if (owner_export != nullptr && copy_owner_export) {
+        vkCmdCopyImage(runtime->command_buffer,
+                       source->image,
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       owner_export->image,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       format->layer_count,
+                       regions);
+    }
+    for (ExportResource *target : predecode_seed_targets) {
+        vkCmdCopyImage(runtime->command_buffer,
+                       source->image,
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       target->image,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       format->layer_count,
+                       regions);
+    }
+
+    barriers.clear();
+    add_raw_image_barrier(&barriers,
+                          source->image,
+                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                          VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR,
+                          VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                          VK_ACCESS_2_TRANSFER_READ_BIT,
+                          VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
+                          VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR | VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR);
+    if (owner_export != nullptr) {
+        add_raw_image_barrier(&barriers,
+                              owner_export->image,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              VK_IMAGE_LAYOUT_GENERAL,
+                              VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                              VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                              VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                              VK_ACCESS_2_MEMORY_READ_BIT);
+    }
+    for (ExportResource *target : predecode_seed_targets) {
+        add_raw_image_barrier(&barriers,
+                              target->image,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              VK_IMAGE_LAYOUT_GENERAL,
+                              VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                              VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                              VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                              VK_ACCESS_2_MEMORY_READ_BIT);
+    }
+    if (!barriers.empty()) {
+        VkDependencyInfo dependency{};
+        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+        dependency.pImageMemoryBarriers = barriers.data();
+        vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
+    }
+    source->layout = VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR;
+    if (owner_export != nullptr) {
+        owner_export->layout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    for (ExportResource *target : predecode_seed_targets) {
+        target->layout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+
+    result = vkEndCommandBuffer(runtime->command_buffer);
+    if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "surface export copy", reason, reason_size)) {
+        return false;
+    }
+    if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "surface export copy")) {
+        return false;
+    }
+
+    if (owner_export != nullptr && copy_owner_export) {
+        owner_export->content_generation = source->content_generation;
+        owner_export->predecode_exported = false;
+        owner_export->predecode_seeded = false;
+        owner_export->black_placeholder = false;
+        owner_export->seed_source_surface_id = VA_INVALID_ID;
+        owner_export->seed_source_generation = 0;
+    }
+    for (ExportResource *target : predecode_seed_targets) {
+        target->predecode_seeded = true;
+        target->black_placeholder = false;
+        target->seed_source_surface_id = source->surface_id;
+        target->seed_source_generation = source->content_generation;
+    }
+    return true;
 }
 
 void add_raw_image_barrier(
@@ -586,7 +942,15 @@ void add_raw_image_barrier(
     barriers->push_back(barrier);
 }
 
-bool copy_surface_to_export_resource(VulkanRuntime *runtime, SurfaceResource *source, char *reason, size_t reason_size) {
+bool copy_surface_to_export_resource(
+        VulkanRuntime *runtime,
+        SurfaceResource *source,
+        uint32_t *seeded_predecode_exports,
+        char *reason,
+        size_t reason_size) {
+    if (seeded_predecode_exports != nullptr) {
+        *seeded_predecode_exports = 0;
+    }
     const ExportFormatInfo *format = export_format_for_surface(nullptr, source, reason, reason_size);
     if (format == nullptr) {
         return false;
@@ -597,114 +961,73 @@ bool copy_surface_to_export_resource(VulkanRuntime *runtime, SurfaceResource *so
     if (!ensure_export_resource(runtime, source, reason, reason_size)) {
         return false;
     }
-    if (source->content_generation != 0 &&
-        source->export_resource.content_generation == source->content_generation) {
+
+    std::unique_lock<std::mutex> export_lock(runtime->export_mutex);
+    std::vector<ExportResource *> predecode_seed_targets =
+        collect_predecode_seed_targets_locked(runtime, source);
+    const bool owner_export_current =
+        source->content_generation != 0 &&
+        source->export_resource.content_generation == source->content_generation;
+    if (owner_export_current && predecode_seed_targets.empty()) {
+        remember_export_seed_resource_locked(runtime, source);
         return true;
     }
 
-    std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
-    if (!ensure_command_resources(runtime, reason, reason_size)) {
-        return false;
-    }
-
-    VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
-    if (!record_vk_result(runtime, result, "vkResetFences", "surface export copy", reason, reason_size)) {
-        return false;
-    }
-    result = vkResetCommandBuffer(runtime->command_buffer, 0);
-    if (!record_vk_result(runtime, result, "vkResetCommandBuffer", "surface export copy", reason, reason_size)) {
-        return false;
-    }
-
-    VkCommandBufferBeginInfo begin_info{};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    result = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
-    if (!record_vk_result(runtime, result, "vkBeginCommandBuffer", "surface export copy", reason, reason_size)) {
-        return false;
-    }
-
     ExportResource *export_resource = &source->export_resource;
-    std::vector<VkImageMemoryBarrier2> barriers;
-    add_raw_image_barrier(&barriers,
-                          source->image,
-                          source->layout,
-                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                          VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                          VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                          VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                          VK_ACCESS_2_TRANSFER_READ_BIT);
-    add_raw_image_barrier(&barriers,
-                          export_resource->image,
-                          export_resource->layout,
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                          VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                          VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                          VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    if (!barriers.empty()) {
-        VkDependencyInfo dependency{};
-        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
-        dependency.pImageMemoryBarriers = barriers.data();
-        vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
-    }
-    source->layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    export_resource->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-
-    VkImageCopy regions[2]{};
-    for (uint32_t i = 0; i < format->layer_count; i++) {
-        regions[i].srcSubresource.aspectMask = format->layers[i].aspect;
-        regions[i].srcSubresource.layerCount = 1;
-        regions[i].dstSubresource.aspectMask = format->layers[i].aspect;
-        regions[i].dstSubresource.layerCount = 1;
-        regions[i].extent = export_layer_extent(source->coded_extent, format->layers[i]);
-    }
-
-    vkCmdCopyImage(runtime->command_buffer,
-                   source->image,
-                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                   export_resource->image,
-                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                   format->layer_count,
-                   regions);
-
-    barriers.clear();
-    add_raw_image_barrier(&barriers,
-                          source->image,
-                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                          VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR,
-                          VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                          VK_ACCESS_2_TRANSFER_READ_BIT,
-                          VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
-                          VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR | VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR);
-    add_raw_image_barrier(&barriers,
-                          export_resource->image,
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          VK_IMAGE_LAYOUT_GENERAL,
-                          VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                          VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                          VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                          VK_ACCESS_2_MEMORY_READ_BIT);
-    if (!barriers.empty()) {
-        VkDependencyInfo dependency{};
-        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
-        dependency.pImageMemoryBarriers = barriers.data();
-        vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
-    }
-    source->layout = VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR;
-    export_resource->layout = VK_IMAGE_LAYOUT_GENERAL;
-
-    result = vkEndCommandBuffer(runtime->command_buffer);
-    if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "surface export copy", reason, reason_size)) {
+    if (!copy_surface_to_export_targets_locked(runtime,
+                                               source,
+                                               export_resource,
+                                               !owner_export_current,
+                                               predecode_seed_targets,
+                                               reason,
+                                               reason_size)) {
         return false;
     }
-    if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "surface export copy")) {
-        return false;
+    unregister_predecode_export_resource_locked(runtime, export_resource);
+    remember_export_seed_resource_locked(runtime, source);
+    if (seeded_predecode_exports != nullptr) {
+        *seeded_predecode_exports = static_cast<uint32_t>(predecode_seed_targets.size());
     }
-    export_resource->content_generation = source->content_generation;
     return true;
+}
+
+bool seed_predecode_export_from_last_good(
+        VulkanRuntime *runtime,
+        SurfaceResource *target,
+        char *reason,
+        size_t reason_size) {
+    if (runtime == nullptr || target == nullptr ||
+        target->export_resource.image == VK_NULL_HANDLE ||
+        target->export_resource.memory == VK_NULL_HANDLE ||
+        target->export_resource.predecode_seeded) {
+        return true;
+    }
+
+    std::unique_lock<std::mutex> export_lock(runtime->export_mutex);
+    SurfaceResource *source = find_export_seed_source_locked(runtime, target);
+    if (source == nullptr || source == target) {
+        return true;
+    }
+
+    std::vector<ExportResource *> targets{&target->export_resource};
+    return copy_surface_to_export_targets_locked(
+        runtime, source, nullptr, false, targets, reason, reason_size);
+}
+
+void remember_export_seed_resource(VulkanRuntime *runtime, SurfaceResource *resource) {
+    if (runtime == nullptr || resource == nullptr) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(runtime->export_mutex);
+    remember_export_seed_resource_locked(runtime, resource);
+}
+
+void unregister_export_seed_resource(VulkanRuntime *runtime, SurfaceResource *resource) {
+    if (runtime == nullptr || resource == nullptr) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(runtime->export_mutex);
+    unregister_export_seed_resource_locked(runtime, resource);
 }
 
 } // namespace vkvv

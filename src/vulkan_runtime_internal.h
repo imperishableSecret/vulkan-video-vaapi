@@ -19,6 +19,8 @@ struct ExportResource {
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     uint64_t driver_instance_id = 0;
+    uint64_t stream_id = 0;
+    VkVideoCodecOperationFlagsKHR codec_operation = 0;
     VASurfaceID owner_surface_id = VA_INVALID_ID;
     VkExtent2D extent{};
     VkFormat format = VK_FORMAT_UNDEFINED;
@@ -29,6 +31,11 @@ struct ExportResource {
     uint64_t drm_format_modifier = 0;
     bool has_drm_format_modifier = false;
     bool exported = false;
+    bool predecode_exported = false;
+    bool predecode_seeded = false;
+    bool black_placeholder = false;
+    VASurfaceID seed_source_surface_id = VA_INVALID_ID;
+    uint64_t seed_source_generation = 0;
     uint64_t content_generation = 0;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 };
@@ -54,6 +61,8 @@ struct SurfaceResource {
     VkImageView view = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     uint64_t driver_instance_id = 0;
+    uint64_t stream_id = 0;
+    VkVideoCodecOperationFlagsKHR codec_operation = 0;
     VASurfaceID surface_id = VA_INVALID_ID;
     VkExtent2D extent{};
     VkExtent2D coded_extent{};
@@ -102,6 +111,18 @@ struct VideoSession {
     VkDeviceSize memory_bytes = 0;
     VideoSessionKey key{};
     bool initialized = false;
+};
+
+struct ExportSeedRecord {
+    uint64_t driver_instance_id = 0;
+    uint64_t stream_id = 0;
+    VkVideoCodecOperationFlagsKHR codec_operation = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    unsigned int va_fourcc = 0;
+    VkExtent2D coded_extent{};
+    SurfaceResource *resource = nullptr;
+    VASurfaceID surface_id = VA_INVALID_ID;
+    uint64_t content_generation = 0;
 };
 
 class VulkanRuntime {
@@ -153,7 +174,9 @@ class VulkanRuntime {
     char pending_operation[64]{};
     std::mutex command_mutex;
     std::mutex export_mutex;
+    std::vector<ExportResource *> predecode_exports;
     std::vector<ExportResource> detached_exports;
+    std::vector<ExportSeedRecord> export_seed_records;
     VkDeviceSize detached_export_memory_bytes = 0;
     VkDeviceSize detached_export_memory_budget = 128ull * 1024ull * 1024ull;
     size_t detached_export_count_limit = 32;
@@ -196,11 +219,18 @@ void prune_detached_exports_for_surface(
         VulkanRuntime *runtime,
         uint64_t driver_instance_id,
         VASurfaceID surface_id,
+        uint64_t stream_id,
+        VkVideoCodecOperationFlagsKHR codec_operation,
         unsigned int va_fourcc,
         VkFormat format,
         VkExtent2D coded_extent);
 void prune_detached_exports_for_driver(VulkanRuntime *runtime, uint64_t driver_instance_id);
 void detach_export_resource(VulkanRuntime *runtime, SurfaceResource *resource);
+void register_predecode_export_resource(VulkanRuntime *runtime, ExportResource *resource);
+void unregister_predecode_export_resource(VulkanRuntime *runtime, ExportResource *resource);
+void unregister_predecode_export_resource_locked(VulkanRuntime *runtime, ExportResource *resource);
+void remember_export_seed_resource(VulkanRuntime *runtime, SurfaceResource *resource);
+void unregister_export_seed_resource(VulkanRuntime *runtime, SurfaceResource *resource);
 void destroy_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface);
 bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const DecodeImageKey &key, char *reason, size_t reason_size);
 void destroy_upload_buffer(VulkanRuntime *runtime, UploadBuffer *upload);

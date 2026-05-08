@@ -157,6 +157,8 @@ typedef struct VkvvSurface {
     std::mutex mutex;
     VASurfaceID id = VA_INVALID_ID;
     uint64_t driver_instance_id = 0;
+    uint64_t stream_id = 0;
+    unsigned int codec_operation = 0;
     unsigned int rt_format;
     unsigned int width;
     unsigned int height;
@@ -211,6 +213,8 @@ typedef struct VkvvContext {
     VAProfile profile;
     VAEntrypoint entrypoint;
     VkvvContextMode mode;
+    uint64_t stream_id;
+    unsigned int codec_operation;
     unsigned int width;
     unsigned int height;
     VASurfaceID render_target;
@@ -238,6 +242,7 @@ typedef struct VkvvDriver {
     VkvvObject *objects;
     unsigned int next_id;
     uint64_t driver_instance_id = 0;
+    uint64_t next_stream_id = 1;
     void *vulkan;
 } VkvvDriver;
 

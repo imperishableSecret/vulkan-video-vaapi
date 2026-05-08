@@ -53,7 +53,17 @@ bool ensure_export_only_surface_resource(
         VkExtent2D extent,
         char *reason,
         size_t reason_size);
-bool copy_surface_to_export_resource(VulkanRuntime *runtime, SurfaceResource *source, char *reason, size_t reason_size);
+bool copy_surface_to_export_resource(
+        VulkanRuntime *runtime,
+        SurfaceResource *source,
+        uint32_t *seeded_predecode_exports,
+        char *reason,
+        size_t reason_size);
+bool seed_predecode_export_from_last_good(
+        VulkanRuntime *runtime,
+        SurfaceResource *target,
+        char *reason,
+        size_t reason_size);
 
 } // namespace vkvv
 

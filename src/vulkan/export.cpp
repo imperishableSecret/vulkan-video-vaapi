@@ -27,8 +27,10 @@ VAStatus vkvv_vulkan_prepare_surface_export(
     if (format == nullptr) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
-    VAStatus drain_status = drain_pending_work_before_sync_command(runtime, reason, reason_size);
+    char drain_reason[512] = {};
+    VAStatus drain_status = drain_pending_work_before_sync_command(runtime, drain_reason, sizeof(drain_reason));
     if (drain_status != VA_STATUS_SUCCESS) {
+        std::snprintf(reason, reason_size, "%s", drain_reason);
         return drain_status;
     }
 
@@ -45,17 +47,38 @@ VAStatus vkvv_vulkan_prepare_surface_export(
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
-    std::snprintf(reason, reason_size,
-                  "surface export resource ready: format=%s visible=%ux%u coded=%ux%u vk_format=%d va_fourcc=0x%x exportable=%u shadow=%u decode_mem=%llu export_mem=%llu detached=%zu detached_mem=%llu",
-                  format->name,
-                  surface->width, surface->height,
-                  resource->coded_extent.width, resource->coded_extent.height,
-                  resource->format, resource->va_fourcc, resource->exportable,
-                  resource->export_resource.image != VK_NULL_HANDLE,
-                  static_cast<unsigned long long>(resource->allocation_size),
-                  static_cast<unsigned long long>(export_memory_bytes(resource)),
-                  runtime_detached_export_count(runtime),
-                  static_cast<unsigned long long>(runtime_detached_export_memory_bytes(runtime)));
+    if (drain_reason[0] != '\0') {
+        std::snprintf(reason, reason_size,
+                      "surface export resource ready: surface=%u stream=%llu codec=0x%x format=%s visible=%ux%u coded=%ux%u vk_format=%d va_fourcc=0x%x exportable=%u shadow=%u decode_mem=%llu export_mem=%llu detached=%zu detached_mem=%llu drained=\"%s\"",
+                      surface->id,
+                      static_cast<unsigned long long>(resource->stream_id),
+                      resource->codec_operation,
+                      format->name,
+                      surface->width, surface->height,
+                      resource->coded_extent.width, resource->coded_extent.height,
+                      resource->format, resource->va_fourcc, resource->exportable,
+                      resource->export_resource.image != VK_NULL_HANDLE,
+                      static_cast<unsigned long long>(resource->allocation_size),
+                      static_cast<unsigned long long>(export_memory_bytes(resource)),
+                      runtime_detached_export_count(runtime),
+                      static_cast<unsigned long long>(runtime_detached_export_memory_bytes(runtime)),
+                      drain_reason);
+    } else {
+        std::snprintf(reason, reason_size,
+                      "surface export resource ready: surface=%u stream=%llu codec=0x%x format=%s visible=%ux%u coded=%ux%u vk_format=%d va_fourcc=0x%x exportable=%u shadow=%u decode_mem=%llu export_mem=%llu detached=%zu detached_mem=%llu",
+                      surface->id,
+                      static_cast<unsigned long long>(resource->stream_id),
+                      resource->codec_operation,
+                      format->name,
+                      surface->width, surface->height,
+                      resource->coded_extent.width, resource->coded_extent.height,
+                      resource->format, resource->va_fourcc, resource->exportable,
+                      resource->export_resource.image != VK_NULL_HANDLE,
+                      static_cast<unsigned long long>(resource->allocation_size),
+                      static_cast<unsigned long long>(export_memory_bytes(resource)),
+                      runtime_detached_export_count(runtime),
+                      static_cast<unsigned long long>(runtime_detached_export_memory_bytes(runtime)));
+    }
     return VA_STATUS_SUCCESS;
 }
 
@@ -82,6 +105,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(
     }
 
     auto *resource = static_cast<SurfaceResource *>(surface->vulkan);
+    remember_export_seed_resource(runtime, resource);
     if (resource->export_resource.image == VK_NULL_HANDLE) {
         if (reason_size > 0) {
             reason[0] = '\0';
@@ -97,16 +121,22 @@ VAStatus vkvv_vulkan_refresh_surface_export(
     if (drain_status != VA_STATUS_SUCCESS) {
         return drain_status;
     }
-    if (!copy_surface_to_export_resource(runtime, resource, reason, reason_size)) {
+    uint32_t seeded_predecode_exports = 0;
+    if (!copy_surface_to_export_resource(runtime, resource, &seeded_predecode_exports, reason, reason_size)) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
     std::snprintf(reason, reason_size,
-                  "refreshed exported %s shadow image after decode: export_mem=%llu detached=%zu detached_mem=%llu generation=%llu",
+                  "refreshed exported %s shadow image after decode: surface=%u stream=%llu codec=0x%x export_mem=%llu detached=%zu detached_mem=%llu source_generation=%llu shadow_generation=%llu seeded_predecode=%u",
                   format->name,
+                  surface->id,
+                  static_cast<unsigned long long>(resource->stream_id),
+                  resource->codec_operation,
                   static_cast<unsigned long long>(export_memory_bytes(resource)),
                   runtime_detached_export_count(runtime),
                   static_cast<unsigned long long>(runtime_detached_export_memory_bytes(runtime)),
-                  static_cast<unsigned long long>(resource->content_generation));
+                  static_cast<unsigned long long>(resource->content_generation),
+                  static_cast<unsigned long long>(resource->export_resource.content_generation),
+                  seeded_predecode_exports);
     return VA_STATUS_SUCCESS;
 }
 
@@ -165,11 +195,14 @@ VAStatus vkvv_vulkan_export_surface(
             const bool shadow_current =
                 resource->content_generation != 0 &&
                 resource->export_resource.content_generation == resource->content_generation;
-            if (!copy_surface_to_export_resource(runtime, resource, reason, reason_size)) {
+            uint32_t seeded_predecode_exports = 0;
+            if (!copy_surface_to_export_resource(runtime, resource, &seeded_predecode_exports, reason, reason_size)) {
                 return VA_STATUS_ERROR_OPERATION_FAILED;
             }
             copied_to_shadow = !shadow_current;
         } else if (!ensure_export_resource(runtime, resource, reason, reason_size)) {
+            return VA_STATUS_ERROR_OPERATION_FAILED;
+        } else if (!seed_predecode_export_from_last_good(runtime, resource, reason, reason_size)) {
             return VA_STATUS_ERROR_OPERATION_FAILED;
         }
         ExportResource *shadow = &resource->export_resource;
@@ -215,11 +248,17 @@ VAStatus vkvv_vulkan_export_surface(
     }
     if (exported_shadow != nullptr) {
         exported_shadow->exported = true;
+        if (!surface->decoded) {
+            exported_shadow->predecode_exported = true;
+            register_predecode_export_resource(runtime, exported_shadow);
+        }
     }
 
     std::snprintf(reason, reason_size,
-                  "exported %s dma-buf%s: %ux%u fd=%d size=%u modifier=0x%llx y_pitch=%u uv_pitch=%u decode_mem=%llu export_mem=%llu detached=%zu detached_mem=%llu generation=%llu",
-                  format->name, copied_to_shadow ? " via shadow copy" : "",
+                  "exported %s dma-buf%s: surface=%u stream=%llu codec=0x%x %ux%u fd=%d size=%u modifier=0x%llx y_pitch=%u uv_pitch=%u decode_mem=%llu export_mem=%llu detached=%zu detached_mem=%llu source_generation=%llu shadow_generation=%llu predecode=%u seeded=%u placeholder=%s seed_source=%u seed_generation=%llu",
+                  format->name, copied_to_shadow ? " via shadow copy" : "", surface->id,
+                  static_cast<unsigned long long>(resource->stream_id),
+                  resource->codec_operation,
                   surface->width, surface->height, fd, descriptor->objects[0].size,
                   static_cast<unsigned long long>(descriptor->objects[0].drm_format_modifier),
                   descriptor->layers[0].pitch[0], descriptor->layers[1].pitch[0],
@@ -227,7 +266,15 @@ VAStatus vkvv_vulkan_export_surface(
                   static_cast<unsigned long long>(export_memory_bytes(resource)),
                   runtime_detached_export_count(runtime),
                   static_cast<unsigned long long>(runtime_detached_export_memory_bytes(runtime)),
-                  static_cast<unsigned long long>(resource->content_generation));
+                  static_cast<unsigned long long>(resource->content_generation),
+                  static_cast<unsigned long long>(
+                      exported_shadow != nullptr ? exported_shadow->content_generation : resource->content_generation),
+                  exported_shadow != nullptr && exported_shadow->predecode_exported ? 1U : 0U,
+                  exported_shadow != nullptr && exported_shadow->predecode_seeded ? 1U : 0U,
+                  exported_shadow != nullptr && exported_shadow->black_placeholder ? "black" : "none",
+                  exported_shadow != nullptr ? exported_shadow->seed_source_surface_id : VA_INVALID_ID,
+                  static_cast<unsigned long long>(
+                      exported_shadow != nullptr ? exported_shadow->seed_source_generation : 0));
     return VA_STATUS_SUCCESS;
 }
 
@@ -247,6 +294,8 @@ void vkvv_vulkan_note_surface_created(void *runtime_ptr, const VkvvSurface *surf
         runtime,
         surface->driver_instance_id,
         surface->id,
+        surface->stream_id,
+        static_cast<VkVideoCodecOperationFlagsKHR>(surface->codec_operation),
         surface->fourcc,
         format != nullptr ? format->vk_format : VK_FORMAT_UNDEFINED,
         coded_extent);

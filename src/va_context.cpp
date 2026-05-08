@@ -2,6 +2,37 @@
 #include "vulkan_runtime.h"
 
 #include <new>
+#include <vulkan/vulkan.h>
+
+namespace {
+
+unsigned int codec_operation_for_decode_profile(VAProfile profile) {
+    if (vkvv_profile_is_h264(profile)) {
+        return VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR;
+    }
+    if (vkvv_profile_is_vp9(profile)) {
+        return VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR;
+    }
+    if (profile == VAProfileAV1Profile0) {
+        return VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR;
+    }
+    return 0;
+}
+
+void tag_surface_for_context(VkvvDriver *drv, VkvvContext *vctx, VASurfaceID surface_id) {
+    if (drv == NULL || vctx == NULL || surface_id == VA_INVALID_ID) {
+        return;
+    }
+    auto *surface = vkvv_surface_get_locked(drv, surface_id);
+    if (surface == NULL) {
+        return;
+    }
+    surface->stream_id = vctx->stream_id;
+    surface->codec_operation = vctx->codec_operation;
+    vkvv_surface_unlock(surface);
+}
+
+} // namespace
 
 void vkvv_release_context_payload(VkvvDriver *drv, VkvvContext *vctx) {
     if (vctx == NULL) {
@@ -39,8 +70,6 @@ VAStatus vkvvCreateContext(
         int num_render_targets,
         VAContextID *context) {
     (void) flag;
-    (void) render_targets;
-    (void) num_render_targets;
 
     VkvvDriver *drv = vkvv_driver_from_ctx(ctx);
     auto *config = static_cast<VkvvConfig *>(vkvv_object_get(drv, config_id, VKVV_OBJECT_CONFIG));
@@ -56,6 +85,8 @@ VAStatus vkvvCreateContext(
     vctx->profile = config->profile;
     vctx->entrypoint = config->entrypoint;
     vctx->mode = config->mode;
+    vctx->stream_id = 0;
+    vctx->codec_operation = 0;
     vctx->width = (unsigned int) picture_width;
     vctx->height = (unsigned int) picture_height;
     vctx->render_target = VA_INVALID_ID;
@@ -65,6 +96,14 @@ VAStatus vkvvCreateContext(
             delete vctx;
             return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
         }
+        {
+            VkvvLockGuard state_lock(&drv->state_mutex);
+            vctx->stream_id = drv->next_stream_id++;
+            if (vctx->stream_id == 0) {
+                vctx->stream_id = drv->next_stream_id++;
+            }
+        }
+        vctx->codec_operation = codec_operation_for_decode_profile(vctx->profile);
         vctx->decode_state = vctx->decode_ops->state_create();
         vctx->decode_session = vctx->decode_ops->session_create();
         if (vctx->decode_state == NULL || vctx->decode_session == NULL) {
@@ -85,6 +124,11 @@ VAStatus vkvvCreateContext(
         vkvv_release_context_payload(drv, vctx);
         delete vctx;
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
+    }
+    if (vctx->mode == VKVV_CONTEXT_MODE_DECODE) {
+        for (int i = 0; i < num_render_targets; i++) {
+            tag_surface_for_context(drv, vctx, render_targets != NULL ? render_targets[i] : VA_INVALID_ID);
+        }
     }
     return VA_STATUS_SUCCESS;
 }
@@ -142,6 +186,8 @@ VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID
     if (vkvv_surface_has_pending_work(surface)) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
+    surface->stream_id = vctx->stream_id;
+    surface->codec_operation = vctx->codec_operation;
     vctx->render_target = render_target;
     vkvv_surface_begin_work(surface);
     if (vctx->decode_ops != NULL) {

@@ -252,8 +252,9 @@ VAStatus complete_pending_work(
     complete_surface_status(completed_surface, VA_STATUS_SUCCESS);
     if (reason[0] == '\0') {
         std::snprintf(reason, reason_size,
-                      "%s completed asynchronously: upload_mem=%llu",
+                      "%s completed asynchronously: surface=%u upload_mem=%llu",
                       operation[0] != '\0' ? operation : "Vulkan decode",
+                      completed_surface != nullptr ? completed_surface->id : VA_INVALID_ID,
                       static_cast<unsigned long long>(upload_allocation_size));
     }
     return VA_STATUS_SUCCESS;
