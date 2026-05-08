@@ -1,4 +1,4 @@
-#include "h264/internal.h"
+#include "../vulkan_runtime_internal.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -31,17 +31,19 @@ void destroy_upload_buffer(VulkanRuntime *runtime, UploadBuffer *upload) {
 bool copy_upload_buffer(
         VulkanRuntime *runtime,
         UploadBuffer *upload,
-        const VkvvH264DecodeInput *input,
+        const void *data,
+        size_t data_size,
+        const char *label,
         char *reason,
         size_t reason_size) {
     void *mapped = nullptr;
     VkResult result = vkMapMemory(runtime->device, upload->memory, 0, upload->size, 0, &mapped);
     if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkMapMemory for H.264 bitstream failed: %d", result);
+        std::snprintf(reason, reason_size, "vkMapMemory for %s failed: %d", label, result);
         return false;
     }
     std::memset(mapped, 0, static_cast<size_t>(upload->size));
-    std::memcpy(mapped, input->bitstream, input->bitstream_size);
+    std::memcpy(mapped, data, data_size);
     if (!upload->coherent) {
         VkMappedMemoryRange range{};
         range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
@@ -54,24 +56,33 @@ bool copy_upload_buffer(
     return true;
 }
 
-bool ensure_upload_buffer(
+bool ensure_bitstream_upload_buffer(
         VulkanRuntime *runtime,
-        const H264VideoSession *session,
-        const VkvvH264DecodeInput *input,
+        const VideoProfileSpec &profile_spec,
+        const void *data,
+        size_t data_size,
+        VkDeviceSize size_alignment,
+        VkBufferUsageFlags usage,
         UploadBuffer *upload,
+        const char *label,
         char *reason,
         size_t reason_size) {
-    VideoProfileChain profile_chain(h264_profile_spec);
+    if (runtime == nullptr || data == nullptr || data_size == 0 || upload == nullptr) {
+        std::snprintf(reason, reason_size, "missing %s upload data", label);
+        return false;
+    }
+
+    VideoProfileChain profile_chain(profile_spec);
     VkVideoProfileListInfoKHR profile_list{};
     profile_list.sType = VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR;
     profile_list.profileCount = 1;
     profile_list.pProfiles = &profile_chain.profile;
 
-    const VkDeviceSize requested_size = std::max<VkDeviceSize>(1, input->bitstream_size);
-    const VkDeviceSize upload_size = align_up(requested_size, session->bitstream_size_alignment);
+    const VkDeviceSize requested_size = std::max<VkDeviceSize>(1, data_size);
+    const VkDeviceSize upload_size = align_up(requested_size, std::max<VkDeviceSize>(1, size_alignment));
     upload->size = upload_size;
     if (upload->buffer != VK_NULL_HANDLE && upload->capacity >= upload_size) {
-        return copy_upload_buffer(runtime, upload, input, reason, reason_size);
+        return copy_upload_buffer(runtime, upload, data, data_size, label, reason, reason_size);
     }
 
     destroy_upload_buffer(runtime, upload);
@@ -81,12 +92,12 @@ bool ensure_upload_buffer(
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_info.pNext = &profile_list;
     buffer_info.size = upload->size;
-    buffer_info.usage = VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR;
+    buffer_info.usage = usage;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     VkResult result = vkCreateBuffer(runtime->device, &buffer_info, nullptr, &upload->buffer);
     if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkCreateBuffer for H.264 bitstream failed: %d", result);
+        std::snprintf(reason, reason_size, "vkCreateBuffer for %s failed: %d", label, result);
         return false;
     }
 
@@ -103,7 +114,7 @@ bool ensure_upload_buffer(
         if (!find_memory_type(runtime->memory_properties, requirements.memoryTypeBits,
                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &memory_type_index)) {
             destroy_upload_buffer(runtime, upload);
-            std::snprintf(reason, reason_size, "no host-visible memory type for H.264 bitstream");
+            std::snprintf(reason, reason_size, "no host-visible memory type for %s", label);
             return false;
         }
     }
@@ -115,18 +126,18 @@ bool ensure_upload_buffer(
     result = vkAllocateMemory(runtime->device, &allocate_info, nullptr, &upload->memory);
     if (result != VK_SUCCESS) {
         destroy_upload_buffer(runtime, upload);
-        std::snprintf(reason, reason_size, "vkAllocateMemory for H.264 bitstream failed: %d", result);
+        std::snprintf(reason, reason_size, "vkAllocateMemory for %s failed: %d", label, result);
         return false;
     }
 
     result = vkBindBufferMemory(runtime->device, upload->buffer, upload->memory, 0);
     if (result != VK_SUCCESS) {
         destroy_upload_buffer(runtime, upload);
-        std::snprintf(reason, reason_size, "vkBindBufferMemory for H.264 bitstream failed: %d", result);
+        std::snprintf(reason, reason_size, "vkBindBufferMemory for %s failed: %d", label, result);
         return false;
     }
 
-    if (!copy_upload_buffer(runtime, upload, input, reason, reason_size)) {
+    if (!copy_upload_buffer(runtime, upload, data, data_size, label, reason, reason_size)) {
         destroy_upload_buffer(runtime, upload);
         return false;
     }

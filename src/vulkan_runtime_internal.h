@@ -275,6 +275,17 @@ void retire_export_resource(SurfaceResource *resource);
 void destroy_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface);
 bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const DecodeImageKey &key, char *reason, size_t reason_size);
 void destroy_upload_buffer(VulkanRuntime *runtime, UploadBuffer *upload);
+bool ensure_bitstream_upload_buffer(
+        VulkanRuntime *runtime,
+        const VideoProfileSpec &profile_spec,
+        const void *data,
+        size_t data_size,
+        VkDeviceSize size_alignment,
+        VkBufferUsageFlags usage,
+        UploadBuffer *upload,
+        const char *label,
+        char *reason,
+        size_t reason_size);
 bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reason_size);
 bool submit_command_buffer(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation);
 bool submit_command_buffer_and_wait(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation);

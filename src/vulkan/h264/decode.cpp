@@ -172,7 +172,17 @@ VAStatus vkvv_vulkan_decode_h264(
     }
 
     UploadBuffer *upload = &session->upload;
-    if (!ensure_upload_buffer(runtime, session, input, upload, reason, reason_size)) {
+    if (!ensure_bitstream_upload_buffer(
+            runtime,
+            h264_profile_spec,
+            input->bitstream,
+            input->bitstream_size,
+            session->bitstream_size_alignment,
+            VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR,
+            upload,
+            "H.264 bitstream",
+            reason,
+            reason_size)) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }

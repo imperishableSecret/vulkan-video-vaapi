@@ -36,13 +36,6 @@ struct H264StdParameters {
 
 void destroy_h264_video_session(VulkanRuntime *runtime, H264VideoSession *session);
 VkImageUsageFlags h264_surface_image_usage();
-bool ensure_upload_buffer(
-        VulkanRuntime *runtime,
-        const H264VideoSession *session,
-        const VkvvH264DecodeInput *input,
-        UploadBuffer *upload,
-        char *reason,
-        size_t reason_size);
 bool reset_h264_session(
         VulkanRuntime *runtime,
         H264VideoSession *session,

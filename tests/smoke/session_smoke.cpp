@@ -66,13 +66,19 @@ bool ensure_upload(
         vkvv::VulkanRuntime *runtime,
         vkvv::H264VideoSession *session,
         const std::vector<uint8_t> &bytes) {
-    VkvvH264DecodeInput input{};
-    input.bitstream = bytes.data();
-    input.bitstream_size = bytes.size();
-
     char reason[512] = {};
-    if (!check(vkvv::ensure_upload_buffer(runtime, session, &input, &session->upload, reason, sizeof(reason)),
-               "ensure_upload_buffer failed")) {
+    if (!check(vkvv::ensure_bitstream_upload_buffer(
+                   runtime,
+                   vkvv::h264_profile_spec,
+                   bytes.data(),
+                   bytes.size(),
+                   session->bitstream_size_alignment,
+                   VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR,
+                   &session->upload,
+                   "H.264 smoke bitstream",
+                   reason,
+                   sizeof(reason)),
+               "ensure_bitstream_upload_buffer failed")) {
         std::fprintf(stderr, "%s\n", reason);
         return false;
     }
