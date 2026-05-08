@@ -8,7 +8,18 @@
 
 namespace vkvv {
 
-bool choose_h264_format(VulkanRuntime *runtime, const VkVideoProfileInfoKHR *profile, VkFormat *format, char *reason, size_t reason_size) {
+struct H264FormatSelection {
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    VkImageCreateFlags create_flags = 0;
+    VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL;
+};
+
+bool choose_h264_format(
+        VulkanRuntime *runtime,
+        const VkVideoProfileInfoKHR *profile,
+        H264FormatSelection *selection,
+        char *reason,
+        size_t reason_size) {
     VkVideoProfileListInfoKHR profile_list{};
     profile_list.sType = VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR;
     profile_list.profileCount = 1;
@@ -55,9 +66,9 @@ bool choose_h264_format(VulkanRuntime *runtime, const VkVideoProfileInfoKHR *pro
         });
     }
     const VkVideoFormatPropertiesKHR &selected = preferred != properties.end() ? *preferred : properties.front();
-    *format = selected.format;
-    runtime->h264_image_create_flags = selected.imageCreateFlags;
-    runtime->h264_image_tiling = selected.imageTiling;
+    selection->format = selected.format;
+    selection->create_flags = selected.imageCreateFlags;
+    selection->tiling = selected.imageTiling;
     return true;
 }
 
@@ -114,7 +125,7 @@ VAStatus vkvv_vulkan_ensure_h264_session(
                       "H.264 video session ready: codec=h264 actual=%ux%u format=%d mem=%llu inline_params=%u",
                       session->video.key.max_coded_extent.width,
                       session->video.key.max_coded_extent.height,
-                      runtime->h264_picture_format,
+                      session->video.key.picture_format,
                       static_cast<unsigned long long>(session->video.memory_bytes),
                       runtime->video_maintenance2);
         return VA_STATUS_SUCCESS;
@@ -142,8 +153,8 @@ VAStatus vkvv_vulkan_ensure_h264_session(
         return VA_STATUS_ERROR_RESOLUTION_NOT_SUPPORTED;
     }
 
-    VkFormat picture_format = VK_FORMAT_UNDEFINED;
-    if (!choose_h264_format(runtime, &profile_chain.profile, &picture_format, reason, reason_size)) {
+    H264FormatSelection format_selection{};
+    if (!choose_h264_format(runtime, &profile_chain.profile, &format_selection, reason, reason_size)) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
 
@@ -153,9 +164,9 @@ VAStatus vkvv_vulkan_ensure_h264_session(
     session_info.sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_CREATE_INFO_KHR;
     session_info.queueFamilyIndex = runtime->decode_queue_family;
     session_info.pVideoProfile = &profile_chain.profile;
-    session_info.pictureFormat = picture_format;
+    session_info.pictureFormat = format_selection.format;
     session_info.maxCodedExtent = session_extent;
-    session_info.referencePictureFormat = picture_format;
+    session_info.referencePictureFormat = format_selection.format;
     session_info.maxDpbSlots = std::min<uint32_t>(capabilities.video.maxDpbSlots, max_h264_dpb_slots);
     session_info.maxActiveReferencePictures = std::min<uint32_t>(capabilities.video.maxActiveReferencePictures, max_va_h264_reference_frames);
     session_info.pStdHeaderVersion = &capabilities.video.stdHeaderVersion;
@@ -172,9 +183,12 @@ VAStatus vkvv_vulkan_ensure_h264_session(
     session->video.key = {
         .codec_operation = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
         .codec_profile = static_cast<uint32_t>(profile_chain.h264.stdProfileIdc),
-        .picture_format = picture_format,
-        .reference_picture_format = picture_format,
+        .picture_format = format_selection.format,
+        .reference_picture_format = format_selection.format,
         .max_coded_extent = session_extent,
+        .image_usage = h264_surface_image_usage(),
+        .image_create_flags = format_selection.create_flags,
+        .image_tiling = format_selection.tiling,
         .chroma_subsampling = profile_chain.profile.chromaSubsampling,
         .luma_bit_depth = profile_chain.profile.lumaBitDepth,
         .chroma_bit_depth = profile_chain.profile.chromaBitDepth,
@@ -185,12 +199,11 @@ VAStatus vkvv_vulkan_ensure_h264_session(
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
 
-    runtime->h264_picture_format = picture_format;
     session->max_dpb_slots = session_info.maxDpbSlots;
     session->max_active_reference_pictures = session_info.maxActiveReferencePictures;
     std::snprintf(reason, reason_size,
                   "H.264 video session ready: codec=h264 requested=%ux%u actual=%ux%u format=%d dpb=%u refs=%u mem=%llu inline_params=%u",
-                  extent.width, extent.height, session_extent.width, session_extent.height, picture_format,
+                  extent.width, extent.height, session_extent.width, session_extent.height, format_selection.format,
                   session_info.maxDpbSlots, session_info.maxActiveReferencePictures,
                   static_cast<unsigned long long>(session->video.memory_bytes),
                   runtime->video_maintenance2);

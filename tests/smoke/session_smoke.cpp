@@ -44,6 +44,10 @@ bool ensure_session(
                "H.264 session key did not record picture/reference formats")) {
         return false;
     }
+    if (!check(video.key.image_usage != 0,
+               "H.264 session key did not record decode image usage")) {
+        return false;
+    }
     if (!check(video.memory_bytes > 0, "H.264 session memory accounting stayed at zero")) {
         return false;
     }

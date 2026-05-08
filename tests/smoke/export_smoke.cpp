@@ -9,7 +9,6 @@
 namespace {
 
 vkvv::DecodeImageKey h264_decode_key(
-        const vkvv::VulkanRuntime *runtime,
         const vkvv::H264VideoSession *session,
         const VkvvSurface *surface,
         VkExtent2D coded_extent) {
@@ -21,9 +20,9 @@ vkvv::DecodeImageKey h264_decode_key(
         .va_rt_format = surface->rt_format,
         .va_fourcc = surface->fourcc,
         .coded_extent = coded_extent,
-        .usage = vkvv::h264_surface_image_usage(),
-        .create_flags = runtime->h264_image_create_flags,
-        .tiling = runtime->h264_image_tiling,
+        .usage = session->video.key.image_usage,
+        .create_flags = session->video.key.image_create_flags,
+        .tiling = session->video.key.image_tiling,
         .chroma_subsampling = session->video.key.chroma_subsampling,
         .luma_bit_depth = session->video.key.luma_bit_depth,
         .chroma_bit_depth = session->video.key.chroma_bit_depth,
@@ -49,10 +48,7 @@ int main(void) {
     surface.dpb_slot = -1;
 
     auto *typed_runtime = static_cast<vkvv::VulkanRuntime *>(runtime);
-    std::printf("surface_export=%d picture_format=%d image_tiling=%d\n",
-                typed_runtime->surface_export,
-                typed_runtime->h264_picture_format,
-                typed_runtime->h264_image_tiling);
+    std::printf("surface_export=%d\n", typed_runtime->surface_export);
     VAStatus status = vkvv_vulkan_prepare_surface_export(runtime, &surface, reason, sizeof(reason));
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
@@ -190,7 +186,7 @@ int main(void) {
     }
 
     auto *typed_session = static_cast<vkvv::H264VideoSession *>(session);
-    const vkvv::DecodeImageKey decode_key = h264_decode_key(typed_runtime, typed_session, &surface, {64, 64});
+    const vkvv::DecodeImageKey decode_key = h264_decode_key(typed_session, &surface, {64, 64});
     if (!vkvv::ensure_surface_resource(typed_runtime, &surface, decode_key, reason, sizeof(reason))) {
         std::fprintf(stderr, "%s\n", reason);
         if (first_fd >= 0) {

@@ -178,6 +178,9 @@ struct VideoSessionKey {
     VkFormat picture_format = VK_FORMAT_UNDEFINED;
     VkFormat reference_picture_format = VK_FORMAT_UNDEFINED;
     VkExtent2D max_coded_extent{};
+    VkImageUsageFlags image_usage = 0;
+    VkImageCreateFlags image_create_flags = 0;
+    VkImageTiling image_tiling = VK_IMAGE_TILING_OPTIMAL;
     VkVideoChromaSubsamplingFlagsKHR chroma_subsampling = 0;
     VkVideoComponentBitDepthFlagsKHR luma_bit_depth = 0;
     VkVideoComponentBitDepthFlagsKHR chroma_bit_depth = 0;
@@ -232,9 +235,6 @@ class VulkanRuntime {
     bool image_drm_format_modifier = false;
     bool surface_export = false;
 
-    VkFormat h264_picture_format = VK_FORMAT_UNDEFINED;
-    VkImageCreateFlags h264_image_create_flags = 0;
-    VkImageTiling h264_image_tiling = VK_IMAGE_TILING_OPTIMAL;
     bool video_maintenance2 = false;
 
     VkCommandPool command_pool = VK_NULL_HANDLE;
