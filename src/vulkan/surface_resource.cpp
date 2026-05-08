@@ -1,4 +1,4 @@
-#include "h264/internal.h"
+#include "../vulkan_runtime_internal.h"
 
 #include <cstdio>
 #include <new>
@@ -6,12 +6,6 @@
 #include <drm_fourcc.h>
 
 namespace vkvv {
-
-VkImageUsageFlags h264_surface_image_usage() {
-    return VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR |
-           VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR |
-           VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-}
 
 bool enumerate_drm_format_modifiers(
         VulkanRuntime *runtime,

@@ -1,4 +1,4 @@
-#include "h264/internal.h"
+#include "../vulkan_runtime_internal.h"
 
 #include <cstdio>
 #include <limits>
@@ -18,7 +18,7 @@ bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reaso
 
     VkResult result = vkCreateCommandPool(runtime->device, &pool_info, nullptr, &runtime->command_pool);
     if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkCreateCommandPool for H.264 decode failed: %d", result);
+        std::snprintf(reason, reason_size, "vkCreateCommandPool for video command failed: %d", result);
         return false;
     }
 
@@ -30,7 +30,7 @@ bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reaso
     result = vkAllocateCommandBuffers(runtime->device, &allocate_info, &runtime->command_buffer);
     if (result != VK_SUCCESS) {
         runtime->destroy_command_resources();
-        std::snprintf(reason, reason_size, "vkAllocateCommandBuffers for H.264 decode failed: %d", result);
+        std::snprintf(reason, reason_size, "vkAllocateCommandBuffers for video command failed: %d", result);
         return false;
     }
 
@@ -39,7 +39,7 @@ bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reaso
     result = vkCreateFence(runtime->device, &fence_info, nullptr, &runtime->fence);
     if (result != VK_SUCCESS) {
         runtime->destroy_command_resources();
-        std::snprintf(reason, reason_size, "vkCreateFence for H.264 decode failed: %d", result);
+        std::snprintf(reason, reason_size, "vkCreateFence for video command failed: %d", result);
         return false;
     }
 
@@ -194,67 +194,3 @@ VAStatus vkvv_vulkan_drain_pending_work(void *runtime_ptr, char *reason, size_t 
     auto *runtime = static_cast<VulkanRuntime *>(runtime_ptr);
     return complete_pending_work(runtime, nullptr, std::numeric_limits<uint64_t>::max(), reason, reason_size);
 }
-
-namespace vkvv {
-
-bool reset_h264_session(
-        VulkanRuntime *runtime,
-        H264VideoSession *session,
-        VkVideoSessionParametersKHR parameters,
-        char *reason,
-        size_t reason_size) {
-    std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
-    if (!ensure_command_resources(runtime, reason, reason_size)) {
-        return false;
-    }
-
-    VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkResetFences for H.264 session reset failed: %d", result);
-        return false;
-    }
-    result = vkResetCommandBuffer(runtime->command_buffer, 0);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkResetCommandBuffer for H.264 session reset failed: %d", result);
-        return false;
-    }
-
-    VkCommandBufferBeginInfo begin_info{};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    result = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkBeginCommandBuffer for H.264 session reset failed: %d", result);
-        return false;
-    }
-
-    VkVideoBeginCodingInfoKHR video_begin{};
-    video_begin.sType = VK_STRUCTURE_TYPE_VIDEO_BEGIN_CODING_INFO_KHR;
-    video_begin.videoSession = session->video.session;
-    video_begin.videoSessionParameters = parameters;
-    runtime->cmd_begin_video_coding(runtime->command_buffer, &video_begin);
-
-    VkVideoCodingControlInfoKHR control{};
-    control.sType = VK_STRUCTURE_TYPE_VIDEO_CODING_CONTROL_INFO_KHR;
-    control.flags = VK_VIDEO_CODING_CONTROL_RESET_BIT_KHR;
-    runtime->cmd_control_video_coding(runtime->command_buffer, &control);
-
-    VkVideoEndCodingInfoKHR video_end{};
-    video_end.sType = VK_STRUCTURE_TYPE_VIDEO_END_CODING_INFO_KHR;
-    runtime->cmd_end_video_coding(runtime->command_buffer, &video_end);
-
-    result = vkEndCommandBuffer(runtime->command_buffer);
-    if (result != VK_SUCCESS) {
-        std::snprintf(reason, reason_size, "vkEndCommandBuffer for H.264 session reset failed: %d", result);
-        return false;
-    }
-
-    if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "H.264 session reset")) {
-        return false;
-    }
-
-    session->video.initialized = true;
-    return true;
-}
-
-} // namespace vkvv

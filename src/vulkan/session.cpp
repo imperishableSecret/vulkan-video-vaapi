@@ -1,4 +1,4 @@
-#include "h264/internal.h"
+#include "../vulkan_runtime_internal.h"
 
 #include <cstdio>
 #include <vector>
@@ -22,20 +22,6 @@ void destroy_video_session(VulkanRuntime *runtime, VideoSession *session) {
     session->memory_bytes = 0;
     session->key = {};
     session->initialized = false;
-}
-
-void destroy_h264_video_session(VulkanRuntime *runtime, H264VideoSession *session) {
-    if (session == nullptr) {
-        return;
-    }
-    destroy_upload_buffer(runtime, &session->upload);
-    destroy_video_session(runtime, &session->video);
-    session->bitstream_offset_alignment = 1;
-    session->bitstream_size_alignment = 1;
-    session->max_level = STD_VIDEO_H264_LEVEL_IDC_5_2;
-    session->decode_flags = 0;
-    session->max_dpb_slots = 0;
-    session->max_active_reference_pictures = 0;
 }
 
 bool bind_video_session_memory(VulkanRuntime *runtime, VideoSession *session, char *reason, size_t reason_size) {
@@ -69,7 +55,7 @@ bool bind_video_session_memory(VulkanRuntime *runtime, VideoSession *session, ch
         if (!find_memory_type(runtime->memory_properties, requirement.memoryRequirements.memoryTypeBits,
                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &memory_type_index) &&
             !find_memory_type(runtime->memory_properties, requirement.memoryRequirements.memoryTypeBits, 0, &memory_type_index)) {
-            std::snprintf(reason, reason_size, "no memory type for H.264 session bind index %u", requirement.memoryBindIndex);
+            std::snprintf(reason, reason_size, "no memory type for video session bind index %u", requirement.memoryBindIndex);
             return false;
         }
 
@@ -81,7 +67,7 @@ bool bind_video_session_memory(VulkanRuntime *runtime, VideoSession *session, ch
         VkDeviceMemory memory = VK_NULL_HANDLE;
         result = vkAllocateMemory(runtime->device, &allocate_info, nullptr, &memory);
         if (result != VK_SUCCESS) {
-            std::snprintf(reason, reason_size, "vkAllocateMemory for H.264 session failed: %d", result);
+            std::snprintf(reason, reason_size, "vkAllocateMemory for video session failed: %d", result);
             return false;
         }
         session->memory.push_back(memory);
