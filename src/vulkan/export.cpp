@@ -143,29 +143,19 @@ VAStatus vkvv_vulkan_refresh_surface_export(
         (void) attach_imported_export_resource_by_fd(runtime, resource);
     }
     if (resource->export_resource.image == VK_NULL_HANDLE) {
-        uint32_t transition_exports = 0;
-        if (displayable &&
-            !copy_surface_to_detached_transition_exports(
-                runtime, resource, &transition_exports, reason, reason_size)) {
-            return VA_STATUS_ERROR_OPERATION_FAILED;
-        }
-        if (transition_exports != 0) {
-            std::snprintf(reason, reason_size,
-                          "published displayable decode to detached transition exports: driver=%llu surface=%u stream=%llu codec=0x%x detached_targets=%u detached=%zu detached_mem=%llu source_generation=%llu",
-                          static_cast<unsigned long long>(resource->driver_instance_id),
-                          surface->id,
-                          static_cast<unsigned long long>(resource->stream_id),
-                          resource->codec_operation,
-                          transition_exports,
-                          runtime_detached_export_count(runtime),
-                          static_cast<unsigned long long>(runtime_detached_export_memory_bytes(runtime)),
-                          static_cast<unsigned long long>(resource->content_generation));
-        }
         if (reason_size > 0) {
-            if (transition_exports == 0) {
-                reason[0] = '\0';
-            }
+            reason[0] = '\0';
         }
+        vkvv_trace("export-refresh-no-backing",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x displayable=%u content_gen=%llu retained=%zu retained_mem=%llu",
+                   surface->id,
+                   static_cast<unsigned long long>(resource->driver_instance_id),
+                   static_cast<unsigned long long>(resource->stream_id),
+                   resource->codec_operation,
+                   displayable ? 1U : 0U,
+                   static_cast<unsigned long long>(resource->content_generation),
+                   runtime_detached_export_count(runtime),
+                   static_cast<unsigned long long>(runtime_detached_export_memory_bytes(runtime)));
         return VA_STATUS_SUCCESS;
     }
 

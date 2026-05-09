@@ -60,12 +60,6 @@ bool copy_surface_to_export_resource(
         uint32_t *seeded_predecode_exports,
         char *reason,
         size_t reason_size);
-bool copy_surface_to_detached_transition_exports(
-        VulkanRuntime *runtime,
-        SurfaceResource *source,
-        uint32_t *transition_exports,
-        char *reason,
-        size_t reason_size);
 bool seed_predecode_export_from_last_good(
         VulkanRuntime *runtime,
         SurfaceResource *target,

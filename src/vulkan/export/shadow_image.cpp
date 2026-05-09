@@ -871,63 +871,6 @@ std::vector<ExportResource *> collect_predecode_seed_targets_locked(
     return targets;
 }
 
-bool detached_transition_target_matches(const ExportResource *target, const SurfaceResource *source) {
-    return target != nullptr &&
-           source != nullptr &&
-           target->image != VK_NULL_HANDLE &&
-           target->memory != VK_NULL_HANDLE &&
-           target->exported &&
-           !target->predecode_exported &&
-           target->driver_instance_id != source->driver_instance_id &&
-           target->format == source->format &&
-           target->va_fourcc == source->va_fourcc &&
-           target->extent.width == source->coded_extent.width &&
-           target->extent.height == source->coded_extent.height;
-}
-
-std::vector<ExportResource *> collect_detached_transition_targets_locked(
-        VulkanRuntime *runtime,
-        SurfaceResource *source) {
-    std::vector<ExportResource *> targets;
-    if (runtime == nullptr || source == nullptr || source->content_generation == 0) {
-        return targets;
-    }
-    for (RetainedExportBacking &backing : runtime->retained_exports) {
-        if (detached_transition_target_matches(&backing.resource, source)) {
-            targets.push_back(&backing.resource);
-        }
-    }
-    return targets;
-}
-
-std::string detached_transition_candidates_string(
-        const std::vector<ExportResource *> &targets,
-        size_t selected_index) {
-    if (targets.empty()) {
-        return "-";
-    }
-
-    std::string text;
-    char item[192] = {};
-    for (size_t i = 0; i < targets.size(); i++) {
-        const ExportResource *target = targets[i];
-        std::snprintf(item, sizeof(item),
-                      "%s%sowner%u/driver%llu/stream%llu/codec0x%x/gen%llu/mem0x%llx/%ux%u",
-                      text.empty() ? "" : ",",
-                      i == selected_index ? "*" : "",
-                      target->owner_surface_id,
-                      static_cast<unsigned long long>(target->driver_instance_id),
-                      static_cast<unsigned long long>(target->stream_id),
-                      target->codec_operation,
-                      static_cast<unsigned long long>(target->content_generation),
-                      vkvv_trace_handle(target->memory),
-                      target->extent.width,
-                      target->extent.height);
-        text += item;
-    }
-    return text.empty() ? "-" : text;
-}
-
 bool copy_surface_to_export_targets_locked(
         VulkanRuntime *runtime,
         SurfaceResource *source,
@@ -1282,59 +1225,6 @@ bool copy_surface_to_export_resource(
                predecode_seed_targets.size(),
                source->export_resource.predecode_exported ? 1U : 0U,
                source->export_resource.predecode_seeded ? 1U : 0U);
-    return true;
-}
-
-bool copy_surface_to_detached_transition_exports(
-        VulkanRuntime *runtime,
-        SurfaceResource *source,
-        uint32_t *transition_exports,
-        char *reason,
-        size_t reason_size) {
-    if (transition_exports != nullptr) {
-        *transition_exports = 0;
-    }
-    if (runtime == nullptr || source == nullptr || source->content_generation == 0) {
-        return true;
-    }
-    const ExportFormatInfo *format = export_format_for_surface(nullptr, source, reason, reason_size);
-    if (format == nullptr) {
-        return false;
-    }
-
-    std::unique_lock<std::mutex> export_lock(runtime->export_mutex);
-    std::vector<ExportResource *> targets =
-        collect_detached_transition_targets_locked(runtime, source);
-    const size_t selected_index =
-        targets.empty() ? 0 : runtime->transition_export_cursor % targets.size();
-    const std::string candidates =
-        detached_transition_candidates_string(targets, selected_index);
-    vkvv_trace("export-transition-targets",
-               "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu format=%s detached_targets=%zu selected=%zu detached=%zu detached_mem=%llu candidates=\"%s\"",
-               source->surface_id,
-               static_cast<unsigned long long>(source->driver_instance_id),
-               static_cast<unsigned long long>(source->stream_id),
-               source->codec_operation,
-               static_cast<unsigned long long>(source->content_generation),
-               format->name,
-               targets.size(),
-               selected_index,
-               runtime->retained_exports.size(),
-               static_cast<unsigned long long>(runtime->retained_export_memory_bytes),
-               candidates.c_str());
-    if (targets.empty()) {
-        return true;
-    }
-
-    std::vector<ExportResource *> selected_targets = targets;
-    runtime->transition_export_cursor++;
-    if (!copy_surface_to_export_targets_locked(
-            runtime, source, nullptr, false, selected_targets, reason, reason_size)) {
-        return false;
-    }
-    if (transition_exports != nullptr) {
-        *transition_exports = static_cast<uint32_t>(selected_targets.size());
-    }
     return true;
 }
 

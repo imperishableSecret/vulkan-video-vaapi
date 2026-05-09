@@ -253,7 +253,6 @@ class VulkanRuntime {
     size_t retained_export_count_limit = 4;
     uint64_t retained_export_sequence = 0;
     TransitionRetentionWindow transition_retention{};
-    size_t transition_export_cursor = 0;
 
     void destroy_command_resources() {
         if (fence != VK_NULL_HANDLE) {
