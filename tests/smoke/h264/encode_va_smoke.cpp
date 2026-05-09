@@ -307,6 +307,8 @@ int main(void) {
         ok                          = check_va(vaBeginPicture(display, context, surfaces[0]), "vaBeginPicture(H264 P encode)") && ok;
         ok                          = check_va(vaRenderPicture(display, context, render_buffers, 3), "vaRenderPicture(H264 P encode)") && ok;
         ok                          = check_va(vaEndPicture(display, context), "vaEndPicture(H264 P encode)") && ok;
+        ok                          = check_va(vaDestroyContext(display, context), "vaDestroyContext(before reused coded sync)") && ok;
+        context                     = VA_INVALID_ID;
         ok                          = check_va(vaSyncBuffer(display, coded_buffer, UINT64_MAX), "vaSyncBuffer(reused P coded)") && ok;
 
         void* mapped_coded = nullptr;
