@@ -104,14 +104,31 @@ namespace {
         ok &= check(high_res.target_bytes == 336ull * mib, "high-res retained budget target bytes mismatch");
 
         const vkvv::RetainedExportBudget capped = vkvv::retained_export_budget_from_expected(32, 512ull * mib, 256ull * mib);
-        ok &= check(capped.target_bytes == 256ull * mib, "retained budget should clamp to device-derived cap");
+        ok &= check(capped.target_bytes == 512ull * mib, "retained budget must not shrink below the observed transition window");
 
         constexpr VkDeviceSize           four_k_export_bytes = 12517376ull;
         const vkvv::RetainedExportBudget browser_switch      = vkvv::retained_export_budget_from_expected(20, 20 * four_k_export_bytes, 402456576ull);
         ok &= check(browser_switch.headroom_count == 4, "browser switch budget should keep four headroom backings");
         ok &= check(browser_switch.target_count == 24, "browser switch budget should retain the old decode pool");
         ok &= check(browser_switch.target_bytes == 24 * four_k_export_bytes, "browser switch budget should cover the retained 4K decode pool");
+
+        constexpr VkDeviceSize           p010_four_k_export_bytes = 24969216ull;
+        const vkvv::RetainedExportBudget p010_over_cap            = vkvv::retained_export_budget_from_expected(17, 17 * p010_four_k_export_bytes, 402456576ull);
+        ok &= check(p010_over_cap.headroom_count == 4, "P010 browser switch budget should keep four count slots");
+        ok &= check(p010_over_cap.target_count == 21, "P010 browser switch budget should track the observed pool count plus headroom");
+        ok &= check(p010_over_cap.target_bytes == 17 * p010_four_k_export_bytes, "P010 budget must not prune already-observed 4K P010 backings");
         return ok;
+    }
+
+    bool check_p010_over_cap_window_stays_retained() {
+        constexpr size_t                 retained_count     = 17;
+        constexpr VkDeviceSize           backing_bytes      = 24969216ull;
+        constexpr VkDeviceSize           retained_bytes     = retained_count * backing_bytes;
+        constexpr VkDeviceSize           browser_global_cap = 402456576ull;
+
+        const vkvv::RetainedExportBudget budget      = vkvv::retained_export_budget_from_expected(retained_count, retained_bytes, browser_global_cap);
+        const bool                       would_prune = retained_count > budget.target_count || retained_bytes > budget.target_bytes;
+        return check(!would_prune, "P010 transition window would still prune a matching retained backing");
     }
 
     bool check_window_policy() {
@@ -159,6 +176,7 @@ int main() {
 
     ok &= check(std::string_view(vkvv::retained_export_match_reason(vkvv::RetainedExportMatch::Match)) == "match", "match reason text should be stable");
     ok &= check_dynamic_budget();
+    ok &= check_p010_over_cap_window_stays_retained();
     ok &= check_window_policy();
     return ok ? 0 : 1;
 }

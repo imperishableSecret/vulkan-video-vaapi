@@ -312,6 +312,14 @@ namespace {
             return finish_surface(status);
         }
 
+        status = vctx->decode_ops->configure_session(drv->vulkan, vctx->decode_session, target, vctx->decode_state, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            vkvv_log("%s", reason);
+        }
+        if (status != VA_STATUS_SUCCESS) {
+            return finish_surface(status);
+        }
+
         status = vctx->decode_ops->ensure_session(drv->vulkan, vctx->decode_session, width, height, reason, sizeof(reason));
         vkvv_log("%s", reason);
         if (status != VA_STATUS_SUCCESS) {

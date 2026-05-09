@@ -238,10 +238,11 @@ namespace vkvv {
         window.budget                          = retained_export_budget_from_expected(retained_count, retained_bytes, global_cap);
         runtime->retained_export_count_limit   = std::max<size_t>(4, window.budget.target_count);
         runtime->retained_export_memory_budget = std::max<VkDeviceSize>(64ull * 1024ull * 1024ull, window.budget.target_bytes);
-        vkvv_trace("retained-export-budget", "driver=%llu stream=%llu codec=0x%x retained=%zu retained_mem=%llu headroom=%zu target=%zu budget=%llu global_cap=%llu reason=%s",
+        vkvv_trace("retained-export-budget",
+                   "driver=%llu stream=%llu codec=0x%x retained=%zu retained_mem=%llu average=%llu headroom=%zu target=%zu budget=%llu global_cap=%llu reason=%s",
                    static_cast<unsigned long long>(window.driver_instance_id), static_cast<unsigned long long>(window.stream_id), window.codec_operation, window.retained_count,
-                   static_cast<unsigned long long>(window.retained_bytes), window.budget.headroom_count, window.budget.target_count,
-                   static_cast<unsigned long long>(window.budget.target_bytes), static_cast<unsigned long long>(window.budget.global_cap_bytes),
+                   static_cast<unsigned long long>(window.retained_bytes), static_cast<unsigned long long>(window.budget.average_bytes), window.budget.headroom_count,
+                   window.budget.target_count, static_cast<unsigned long long>(window.budget.target_bytes), static_cast<unsigned long long>(window.budget.global_cap_bytes),
                    reason != nullptr ? reason : "unknown");
     }
 

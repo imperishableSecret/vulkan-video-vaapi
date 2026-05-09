@@ -220,6 +220,65 @@ void vkvv_vulkan_av1_session_destroy(void* runtime_ptr, void* session_ptr) {
     delete session;
 }
 
+VAStatus vkvv_vulkan_configure_av1_session(void* runtime_ptr, void* session_ptr, const VkvvSurface* target, const VkvvAV1DecodeInput* input, char* reason, size_t reason_size) {
+    auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
+    auto* session = static_cast<AV1VideoSession*>(session_ptr);
+    if (session == nullptr || target == nullptr || input == nullptr || input->pic == nullptr) {
+        std::snprintf(reason, reason_size, "missing AV1 session format selection state");
+        return VA_STATUS_ERROR_INVALID_CONTEXT;
+    }
+    if (input->pic->profile != 0) {
+        std::snprintf(reason, reason_size, "unsupported AV1 bitstream profile: %u", input->pic->profile);
+        return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
+    }
+    if (input->bit_depth != 8 && input->bit_depth != 10) {
+        std::snprintf(reason, reason_size, "unsupported AV1 bit depth: %u", input->bit_depth);
+        return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
+    }
+
+    const bool         wants_p010         = input->bit_depth > 8;
+    const unsigned int expected_rt_format = wants_p010 ? VA_RT_FORMAT_YUV420_10 : VA_RT_FORMAT_YUV420;
+    const unsigned int expected_fourcc    = wants_p010 ? VA_FOURCC_P010 : VA_FOURCC_NV12;
+    if (input->rt_format != expected_rt_format || input->fourcc != expected_fourcc) {
+        std::snprintf(reason, reason_size, "AV1 parser/output format mismatch: rt=0x%x fourcc=0x%x expected_rt=0x%x expected_fourcc=0x%x", input->rt_format, input->fourcc,
+                      expected_rt_format, expected_fourcc);
+        return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
+    }
+    if (target->rt_format != expected_rt_format || target->fourcc != expected_fourcc) {
+        std::snprintf(reason, reason_size, "AV1 target surface format mismatch before session creation: rt=0x%x fourcc=0x%x expected_rt=0x%x expected_fourcc=0x%x",
+                      target->rt_format, target->fourcc, expected_rt_format, expected_fourcc);
+        return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
+    }
+
+    const VideoProfileSpec expected_spec = wants_p010 ? av1_profile0_10bit_spec : av1_profile0_spec;
+    if (session->va_rt_format == expected_rt_format && session->va_fourcc == expected_fourcc && session->bitstream_profile == input->pic->profile &&
+        session->bit_depth == input->bit_depth && session->profile_spec.bit_depth == expected_spec.bit_depth) {
+        std::snprintf(reason, reason_size, "AV1 session format ready: depth=%u fourcc=0x%x", session->bit_depth, session->va_fourcc);
+        return VA_STATUS_SUCCESS;
+    }
+
+    if (runtime == nullptr && (session->video.session != VK_NULL_HANDLE || session->upload.buffer != VK_NULL_HANDLE || session->upload.memory != VK_NULL_HANDLE)) {
+        std::snprintf(reason, reason_size, "missing Vulkan runtime for AV1 session retarget");
+        return VA_STATUS_ERROR_INVALID_CONTEXT;
+    }
+
+    const bool had_session = session->video.session != VK_NULL_HANDLE || session->upload.buffer != VK_NULL_HANDLE || session->upload.memory != VK_NULL_HANDLE ||
+        !session->surface_slots.empty() || session->max_dpb_slots != 0;
+    if (had_session) {
+        destroy_av1_video_session(runtime, session);
+    }
+
+    session->va_profile        = VAProfileAV1Profile0;
+    session->va_rt_format      = expected_rt_format;
+    session->va_fourcc         = expected_fourcc;
+    session->bitstream_profile = input->pic->profile;
+    session->bit_depth         = input->bit_depth;
+    session->profile_spec      = expected_spec;
+    std::snprintf(reason, reason_size, "AV1 session format selected from bitstream: depth=%u fourcc=0x%x recreated=%u", session->bit_depth, session->va_fourcc,
+                  had_session ? 1U : 0U);
+    return VA_STATUS_SUCCESS;
+}
+
 VAStatus vkvv_vulkan_ensure_av1_session(void* runtime_ptr, void* session_ptr, unsigned int width, unsigned int height, char* reason, size_t reason_size) {
     auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
     auto* session = static_cast<AV1VideoSession*>(session_ptr);

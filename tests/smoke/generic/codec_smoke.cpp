@@ -20,7 +20,7 @@ namespace {
     bool ops_complete(const VkvvDecodeOps* ops) {
         return ops != nullptr && ops->name != nullptr && ops->state_create != nullptr && ops->state_destroy != nullptr && ops->session_create != nullptr &&
             ops->session_destroy != nullptr && ops->begin_picture != nullptr && ops->render_buffer != nullptr && ops->prepare_decode != nullptr && ops->ensure_session != nullptr &&
-            ops->decode != nullptr;
+            ops->configure_session != nullptr && ops->decode != nullptr;
     }
 
     std::vector<uint8_t> make_vp9_keyframe() {

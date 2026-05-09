@@ -206,6 +206,7 @@ typedef struct VkvvDecodeOps {
     void (*begin_picture)(void* state);
     VAStatus (*render_buffer)(void* state, const VkvvBuffer* buffer);
     VAStatus (*prepare_decode)(void* state, unsigned int* width, unsigned int* height, char* reason, size_t reason_size);
+    VAStatus (*configure_session)(void* runtime, void* session, const VkvvSurface* target, void* state, char* reason, size_t reason_size);
     VAStatus (*ensure_session)(void* runtime, void* session, unsigned int width, unsigned int height, char* reason, size_t reason_size);
     VAStatus (*decode)(void* runtime, void* session, VkvvDriver* drv, VkvvContext* vctx, VkvvSurface* target, VAProfile profile, void* state, char* reason, size_t reason_size);
 } VkvvDecodeOps;

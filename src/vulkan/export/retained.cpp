@@ -95,13 +95,14 @@ namespace vkvv {
             return budget;
         }
 
-        budget.average_bytes  = std::max<VkDeviceSize>(1, expected_bytes / expected_count);
+        budget.average_bytes  = std::max<VkDeviceSize>(1, (expected_bytes / expected_count) + ((expected_bytes % expected_count) != 0 ? 1 : 0));
         budget.headroom_count = std::min<size_t>(4, std::max<size_t>(2, expected_count / 4));
         budget.target_count   = expected_count + budget.headroom_count;
 
         const VkDeviceSize headroom_bytes = budget.average_bytes * budget.headroom_count;
         const VkDeviceSize unclamped      = expected_bytes + headroom_bytes;
-        budget.target_bytes               = std::min(unclamped, budget.global_cap_bytes);
+        const VkDeviceSize effective_cap  = std::max(budget.global_cap_bytes, expected_bytes);
+        budget.target_bytes               = std::min(unclamped, effective_cap);
         return budget;
     }
 

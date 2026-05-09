@@ -28,6 +28,17 @@ namespace {
         return vkvv_vulkan_av1_session_create_for_config(config);
     }
 
+    VAStatus noop_configure_session(void* runtime, void* session, const VkvvSurface* target, void* state, char* reason, size_t reason_size) {
+        (void)runtime;
+        (void)session;
+        (void)target;
+        (void)state;
+        if (reason != nullptr && reason_size > 0) {
+            reason[0] = '\0';
+        }
+        return VA_STATUS_SUCCESS;
+    }
+
     VAStatus h264_decode(void* runtime, void* session, VkvvDriver* drv, VkvvContext* vctx, VkvvSurface* target, VAProfile profile, void* state, char* reason, size_t reason_size) {
         VkvvH264DecodeInput input  = {};
         VAStatus            status = vkvv_h264_get_decode_input(state, &input);
@@ -46,6 +57,7 @@ namespace {
         vkvv_h264_begin_picture,
         vkvv_h264_render_buffer,
         vkvv_h264_prepare_decode,
+        noop_configure_session,
         vkvv_vulkan_ensure_h264_session,
         h264_decode,
     };
@@ -68,14 +80,33 @@ namespace {
         vkvv_vp9_begin_picture,
         vkvv_vp9_render_buffer,
         vkvv_vp9_prepare_decode,
+        noop_configure_session,
         vkvv_vulkan_ensure_vp9_session,
         vp9_decode,
     };
 
     const VkvvDecodeOps vp9_profile2_decode_ops = {
-        "vp9-profile2",         vkvv_vp9_state_create,  vkvv_vp9_state_destroy,  vp9_profile2_session_create,    vkvv_vulkan_vp9_session_destroy,
-        vkvv_vp9_begin_picture, vkvv_vp9_render_buffer, vkvv_vp9_prepare_decode, vkvv_vulkan_ensure_vp9_session, vp9_decode,
+        "vp9-profile2",
+        vkvv_vp9_state_create,
+        vkvv_vp9_state_destroy,
+        vp9_profile2_session_create,
+        vkvv_vulkan_vp9_session_destroy,
+        vkvv_vp9_begin_picture,
+        vkvv_vp9_render_buffer,
+        vkvv_vp9_prepare_decode,
+        noop_configure_session,
+        vkvv_vulkan_ensure_vp9_session,
+        vp9_decode,
     };
+
+    VAStatus av1_configure_session(void* runtime, void* session, const VkvvSurface* target, void* state, char* reason, size_t reason_size) {
+        VkvvAV1DecodeInput input  = {};
+        VAStatus           status = vkvv_av1_get_decode_input(state, &input);
+        if (status != VA_STATUS_SUCCESS) {
+            return status;
+        }
+        return vkvv_vulkan_configure_av1_session(runtime, session, target, &input, reason, reason_size);
+    }
 
     VAStatus av1_decode(void* runtime, void* session, VkvvDriver* drv, VkvvContext* vctx, VkvvSurface* target, VAProfile profile, void* state, char* reason, size_t reason_size) {
         VkvvAV1DecodeInput input  = {};
@@ -95,6 +126,7 @@ namespace {
         vkvv_av1_begin_picture,
         vkvv_av1_render_buffer,
         vkvv_av1_prepare_decode,
+        av1_configure_session,
         vkvv_vulkan_ensure_av1_session,
         av1_decode,
     };

@@ -64,6 +64,33 @@ namespace {
                      "AV1 upload buffer was not populated correctly");
     }
 
+    bool configure_session_for_p010(void* runtime, void* session) {
+        VADecPictureParameterBufferAV1 pic{};
+        pic.profile = 0;
+
+        VkvvAV1DecodeInput input{};
+        input.pic       = &pic;
+        input.bit_depth = 10;
+        input.rt_format = VA_RT_FORMAT_YUV420_10;
+        input.fourcc    = VA_FOURCC_P010;
+
+        VkvvSurface target{};
+        target.rt_format = VA_RT_FORMAT_YUV420_10;
+        target.fourcc    = VA_FOURCC_P010;
+
+        char     reason[512] = {};
+        VAStatus status      = vkvv_vulkan_configure_av1_session(runtime, session, &target, &input, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        if (!check(status == VA_STATUS_SUCCESS, "AV1 P010 session retarget failed")) {
+            return false;
+        }
+
+        const auto* typed_session = static_cast<const vkvv::AV1VideoSession*>(session);
+        return check(typed_session->va_rt_format == VA_RT_FORMAT_YUV420_10 && typed_session->va_fourcc == VA_FOURCC_P010 && typed_session->bit_depth == 10,
+                     "AV1 retarget did not switch the session metadata to P010") &&
+            check(typed_session->video.session == VK_NULL_HANDLE && typed_session->upload.buffer == VK_NULL_HANDLE, "AV1 retarget did not discard stale NV12 Vulkan resources");
+    }
+
     bool check_av1_dpb_slots() {
         vkvv::AV1VideoSession session{};
         bool                  used_slots[vkvv::max_av1_dpb_slots] = {};
@@ -306,6 +333,10 @@ int main(void) {
     const VkVideoSessionKHR grown_session = typed_session->video.session;
     ok = ensure_session(runtime, session, 320, 180, 640, 368, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, "AV1 Profile0") && ok;
     ok = check(typed_session->video.session == grown_session, "AV1 session unexpectedly shrank or recreated") && ok;
+    ok = configure_session_for_p010(runtime, session) && ok;
+    ok = ensure_session(runtime, session, 64, 64, 64, 64, VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16, VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
+                        "AV1 Profile0 P010 after retarget") &&
+        ok;
 
     vkvv_vulkan_av1_session_destroy(runtime, session);
 
