@@ -17,6 +17,20 @@ namespace {
         return vkvv_vulkan_h264_session_create();
     }
 
+    void* h264_encode_session_create(const VkvvConfig* config) {
+        (void)config;
+        return vkvv_vulkan_h264_encode_session_create();
+    }
+
+    VAStatus h264_encode_ensure_session(void* runtime, void* session, VkvvDriver* drv, VkvvContext* vctx, void* state, char* reason, size_t reason_size) {
+        VkvvH264EncodeInput input{};
+        VAStatus            status = vkvv_h264_encode_get_input(state, drv, vctx, &input, reason, reason_size);
+        if (status != VA_STATUS_SUCCESS) {
+            return status;
+        }
+        return vkvv_vulkan_ensure_h264_encode_session(runtime, session, &input, reason, reason_size);
+    }
+
     void* vp9_profile0_session_create(const VkvvConfig* config) {
         (void)config;
         return vkvv_vulkan_vp9_session_create();
@@ -215,7 +229,15 @@ namespace {
     };
 
     const VkvvEncodeOps h264_encode_ops = {
-        "h264-encode", vkvv_h264_encode_state_create, vkvv_h264_encode_state_destroy, vkvv_h264_encode_begin_picture, vkvv_h264_encode_render_buffer, vkvv_h264_encode_prepare,
+        "h264-encode",
+        vkvv_h264_encode_state_create,
+        vkvv_h264_encode_state_destroy,
+        h264_encode_session_create,
+        vkvv_vulkan_h264_encode_session_destroy,
+        vkvv_h264_encode_begin_picture,
+        vkvv_h264_encode_render_buffer,
+        vkvv_h264_encode_prepare,
+        h264_encode_ensure_session,
     };
 
 } // namespace

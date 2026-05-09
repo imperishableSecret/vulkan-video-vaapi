@@ -3,24 +3,32 @@
 namespace vkvv {
 
     VideoCapabilitiesChain::VideoCapabilitiesChain(const VideoProfileSpec& spec) {
-        h264.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_CAPABILITIES_KHR;
-        h265.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_CAPABILITIES_KHR;
-        vp9.sType  = VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_CAPABILITIES_KHR;
-        av1.sType  = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR;
+        h264.sType        = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_CAPABILITIES_KHR;
+        h265.sType        = VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_CAPABILITIES_KHR;
+        vp9.sType         = VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_CAPABILITIES_KHR;
+        av1.sType         = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR;
+        h264_encode.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_CAPABILITIES_KHR;
 
         void* codec_caps = nullptr;
+        bool  is_encode  = false;
         switch (spec.operation) {
             case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR: codec_caps = &h264; break;
             case VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR: codec_caps = &h265; break;
             case VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR: codec_caps = &vp9; break;
             case VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR: codec_caps = &av1; break;
+            case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR:
+                codec_caps = &h264_encode;
+                is_encode  = true;
+                break;
             default: break;
         }
 
         decode.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR;
         decode.pNext = codec_caps;
+        encode.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_CAPABILITIES_KHR;
+        encode.pNext = codec_caps;
         video.sType  = VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR;
-        video.pNext  = &decode;
+        video.pNext  = is_encode ? static_cast<void*>(&encode) : static_cast<void*>(&decode);
     }
 
     VideoProfileChain::VideoProfileChain(const VideoProfileSpec& spec) {

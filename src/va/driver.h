@@ -233,10 +233,13 @@ typedef struct VkvvEncodeOps {
     const char* name;
     void* (*state_create)(void);
     void (*state_destroy)(void* state);
+    void* (*session_create)(const VkvvConfig* config);
+    void (*session_destroy)(void* runtime, void* session);
     void (*begin_picture)(void* state);
     VAStatus (*render_buffer)(void* state, const VkvvBuffer* buffer);
     VAStatus (*prepare_encode)(void* state, VkvvDriver* drv, VkvvContext* vctx, unsigned int* width, unsigned int* height, VABufferID* coded_buffer, char* reason,
                                size_t reason_size);
+    VAStatus (*ensure_session)(void* runtime, void* session, VkvvDriver* drv, VkvvContext* vctx, void* state, char* reason, size_t reason_size);
 } VkvvEncodeOps;
 
 typedef struct VkvvContext {

@@ -127,8 +127,15 @@ int main(void) {
     vctx.render_target = 42;
 
     const VkvvEncodeOps ops = {
-        "h264-encode-smoke",      vkvv_h264_encode_state_create, vkvv_h264_encode_state_destroy, vkvv_h264_encode_begin_picture, vkvv_h264_encode_render_buffer,
-        vkvv_h264_encode_prepare,
+        .name            = "h264-encode-smoke",
+        .state_create    = vkvv_h264_encode_state_create,
+        .state_destroy   = vkvv_h264_encode_state_destroy,
+        .session_create  = nullptr,
+        .session_destroy = nullptr,
+        .begin_picture   = vkvv_h264_encode_begin_picture,
+        .render_buffer   = vkvv_h264_encode_render_buffer,
+        .prepare_encode  = vkvv_h264_encode_prepare,
+        .ensure_session  = nullptr,
     };
 
     void* state = ops.state_create();

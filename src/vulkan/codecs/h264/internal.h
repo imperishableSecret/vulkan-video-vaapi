@@ -27,8 +27,26 @@ namespace vkvv {
         uint32_t                        max_active_reference_pictures = 0;
     };
 
+    struct H264EncodeSession {
+        VideoSession                         video;
+        VkVideoSessionParametersKHR          parameters                    = VK_NULL_HANDLE;
+        StdVideoH264LevelIdc                 max_level                     = STD_VIDEO_H264_LEVEL_IDC_5_2;
+        VkVideoEncodeCapabilityFlagsKHR      encode_flags                  = 0;
+        VkVideoEncodeRateControlModeFlagsKHR rate_control_modes            = 0;
+        uint32_t                             max_quality_levels            = 0;
+        uint32_t                             quality_level                 = 0;
+        uint32_t                             max_dpb_slots                 = 0;
+        uint32_t                             max_active_reference_pictures = 0;
+    };
+
     inline constexpr VideoProfileSpec h264_profile_spec{
         .operation   = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+        .bit_depth   = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+        .std_profile = STD_VIDEO_H264_PROFILE_IDC_HIGH,
+    };
+
+    inline constexpr VideoProfileSpec h264_encode_profile_spec{
+        .operation   = VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
         .bit_depth   = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
         .std_profile = STD_VIDEO_H264_PROFILE_IDC_HIGH,
     };
@@ -42,16 +60,23 @@ namespace vkvv {
         StdVideoH264PictureParameterSet     pps{};
     };
 
-    void              destroy_h264_video_session(VulkanRuntime* runtime, H264VideoSession* session);
-    VkImageUsageFlags h264_surface_image_usage();
-    bool              reset_h264_session(VulkanRuntime* runtime, H264VideoSession* session, VkVideoSessionParametersKHR parameters, char* reason, size_t reason_size);
-    bool              h264_picture_is_invalid(const VAPictureH264& picture);
-    int               h264_dpb_slot_for_surface(const H264VideoSession* session, VASurfaceID surface_id);
-    void              h264_set_dpb_slot_for_surface(H264VideoSession* session, VASurfaceID surface_id, int slot);
-    int               allocate_dpb_slot(H264VideoSession* session, const bool used_slots[max_h264_dpb_slots]);
-    void              fill_reference_info(const VAPictureH264& picture, uint16_t frame_num, StdVideoDecodeH264ReferenceInfo* info);
-    bool              bitstream_has_idr(const VkvvH264DecodeInput* input);
-    void              build_h264_std_parameters(H264VideoSession* session, VAProfile profile, const VkvvH264DecodeInput* input, H264StdParameters* std_params);
+    StdVideoH264ProfileIdc      std_profile_from_va(VAProfile profile);
+    StdVideoH264ChromaFormatIdc std_chroma_from_va(uint32_t chroma_format_idc);
+    StdVideoH264PocType         std_poc_type_from_va(uint32_t pic_order_cnt_type);
+    StdVideoH264LevelIdc        clamp_h264_level(StdVideoH264LevelIdc level, StdVideoH264LevelIdc max_level);
+    StdVideoH264LevelIdc        derive_h264_level_idc(uint32_t width_mbs, uint32_t height_map_units, StdVideoH264LevelIdc max_level);
+    void                        destroy_h264_video_session(VulkanRuntime* runtime, H264VideoSession* session);
+    void                        destroy_h264_encode_session(VulkanRuntime* runtime, H264EncodeSession* session);
+    VkImageUsageFlags           h264_surface_image_usage();
+    VkImageUsageFlags           h264_encode_input_image_usage();
+    bool                        reset_h264_session(VulkanRuntime* runtime, H264VideoSession* session, VkVideoSessionParametersKHR parameters, char* reason, size_t reason_size);
+    bool                        h264_picture_is_invalid(const VAPictureH264& picture);
+    int                         h264_dpb_slot_for_surface(const H264VideoSession* session, VASurfaceID surface_id);
+    void                        h264_set_dpb_slot_for_surface(H264VideoSession* session, VASurfaceID surface_id, int slot);
+    int                         allocate_dpb_slot(H264VideoSession* session, const bool used_slots[max_h264_dpb_slots]);
+    void                        fill_reference_info(const VAPictureH264& picture, uint16_t frame_num, StdVideoDecodeH264ReferenceInfo* info);
+    bool                        bitstream_has_idr(const VkvvH264DecodeInput* input);
+    void                        build_h264_std_parameters(H264VideoSession* session, VAProfile profile, const VkvvH264DecodeInput* input, H264StdParameters* std_params);
     bool create_h264_session_parameters(VulkanRuntime* runtime, H264VideoSession* session, const H264StdParameters* std_params, VkVideoSessionParametersKHR* parameters,
                                         char* reason, size_t reason_size);
     bool create_empty_h264_session_parameters(VulkanRuntime* runtime, H264VideoSession* session, VkVideoSessionParametersKHR* parameters, char* reason, size_t reason_size);

@@ -44,6 +44,7 @@ vulkan_runtime_sources = files(
 h264_vulkan_sources = files(
   'src/vulkan/codecs/h264/common.cpp',
   'src/vulkan/codecs/h264/decode.cpp',
+  'src/vulkan/codecs/h264/encode.cpp',
   'src/vulkan/codecs/h264/parameters.cpp',
   'src/vulkan/codecs/h264/session.cpp',
 )
@@ -216,6 +217,18 @@ encode_image_smoke = executable(
   install: false,
 )
 
+encode_session_smoke = executable(
+  'vkvv-h264-encode-session-smoke',
+  files(
+    'tests/smoke/h264/encode_session_smoke.cpp',
+    'src/vulkan/codecs/h264/encode.cpp',
+    'src/vulkan/codecs/h264/parameters.cpp',
+  ) + vulkan_runtime_sources,
+  include_directories: src_inc,
+  dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
+  install: false,
+)
+
 hevc_session_smoke = executable(
   'vkvv-hevc-session-smoke',
   files(
@@ -326,6 +339,7 @@ test('smoke-session', session_smoke, is_parallel: false, timeout: 30)
 test('smoke-encode-runtime', encode_runtime_smoke, is_parallel: false, timeout: 30)
 test('smoke-h264-encode-surface', encode_surface_smoke, is_parallel: false, timeout: 30)
 test('smoke-h264-encode-image', encode_image_smoke, is_parallel: false, timeout: 30)
+test('smoke-h264-encode-session', encode_session_smoke, is_parallel: false, timeout: 30)
 test('smoke-h264-encode-parser', encode_parser_smoke, is_parallel: false, timeout: 30)
 test('smoke-hevc-session', hevc_session_smoke, is_parallel: false, timeout: 30)
 test('smoke-vp9-session', vp9_session_smoke, is_parallel: false, timeout: 30)

@@ -26,8 +26,8 @@ namespace {
     }
 
     bool encode_ops_complete(const VkvvEncodeOps* ops) {
-        return ops != nullptr && ops->name != nullptr && ops->state_create != nullptr && ops->state_destroy != nullptr && ops->begin_picture != nullptr &&
-            ops->render_buffer != nullptr && ops->prepare_encode != nullptr;
+        return ops != nullptr && ops->name != nullptr && ops->state_create != nullptr && ops->state_destroy != nullptr && ops->session_create != nullptr &&
+            ops->session_destroy != nullptr && ops->begin_picture != nullptr && ops->render_buffer != nullptr && ops->prepare_encode != nullptr && ops->ensure_session != nullptr;
     }
 
     std::vector<uint8_t> make_vp9_keyframe() {

@@ -65,6 +65,7 @@ void vkvv_release_context_payload(VkvvDriver* drv, VkvvContext* vctx) {
     }
     if (vctx->encode_ops != NULL) {
         vctx->encode_ops->state_destroy(vctx->encode_state);
+        vctx->encode_ops->session_destroy(drv != NULL ? drv->vulkan : NULL, vctx->encode_session);
     }
     vctx->decode_ops     = NULL;
     vctx->decode_state   = NULL;
@@ -132,8 +133,9 @@ VAStatus vkvvCreateContext(VADriverContextP ctx, VAConfigID config_id, int pictu
                 vctx->stream_id = drv->next_stream_id++;
             }
         }
-        vctx->encode_state = vctx->encode_ops->state_create();
-        if (vctx->encode_state == NULL) {
+        vctx->encode_state   = vctx->encode_ops->state_create();
+        vctx->encode_session = vctx->encode_ops->session_create(config);
+        if (vctx->encode_state == NULL || vctx->encode_session == NULL) {
             vkvv_release_context_payload(drv, vctx);
             delete vctx;
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
@@ -327,6 +329,23 @@ namespace {
         vctx->render_target = VA_INVALID_ID;
         if (status != VA_STATUS_SUCCESS) {
             return status;
+        }
+        if (drv->vulkan == NULL) {
+            return VA_STATUS_ERROR_OPERATION_FAILED;
+        }
+        status = vkvv_vulkan_drain_pending_work(drv->vulkan, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            vkvv_log("%s", reason);
+        }
+        if (status != VA_STATUS_SUCCESS) {
+            return status;
+        }
+        if (vctx->encode_ops->ensure_session != NULL) {
+            status = vctx->encode_ops->ensure_session(drv->vulkan, vctx->encode_session, drv, vctx, vctx->encode_state, reason, sizeof(reason));
+            vkvv_log("%s", reason);
+            if (status != VA_STATUS_SUCCESS) {
+                return status;
+            }
         }
         return VA_STATUS_ERROR_UNIMPLEMENTED;
     }
