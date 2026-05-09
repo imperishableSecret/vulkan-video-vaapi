@@ -260,24 +260,22 @@ int main(void) {
     std::vector<VAProfile> profiles(static_cast<size_t>(vaMaxNumProfiles(display)));
     int                    profile_count = 0;
     ok                                   = check_va(vaQueryConfigProfiles(display, profiles.data(), &profile_count), "vaQueryConfigProfiles") && ok;
-    if (ok && profile_count != 6) {
-        std::fprintf(stderr, "expected exactly 6 usable profiles, got %d\n", profile_count);
+    if (ok && profile_count != 7) {
+        std::fprintf(stderr, "expected exactly 7 usable profiles, got %d\n", profile_count);
         ok = false;
     }
     ok = profile_present(profiles, profile_count, VAProfileH264ConstrainedBaseline) && ok;
     ok = profile_present(profiles, profile_count, VAProfileH264Main) && ok;
     ok = profile_present(profiles, profile_count, VAProfileH264High) && ok;
+    ok = profile_present(profiles, profile_count, VAProfileHEVCMain) && ok;
     ok = profile_present(profiles, profile_count, VAProfileVP9Profile0) && ok;
     ok = profile_present(profiles, profile_count, VAProfileVP9Profile2) && ok;
     ok = profile_present(profiles, profile_count, VAProfileAV1Profile0) && ok;
-    if (profile_present(profiles, profile_count, VAProfileHEVCMain)) {
-        std::fprintf(stderr, "driver advertised a profile without wired decode/export\n");
-        ok = false;
-    }
 
     ok = check_decode_profile(display, VAProfileH264ConstrainedBaseline, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
     ok = check_decode_profile(display, VAProfileH264Main, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
     ok = check_decode_profile(display, VAProfileH264High, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
+    ok = check_decode_profile(display, VAProfileHEVCMain, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
     ok = check_decode_profile(display, VAProfileVP9Profile0, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
     ok = check_decode_profile(display, VAProfileVP9Profile2, VA_RT_FORMAT_YUV420_10, VA_FOURCC_P010) && ok;
     ok = check_decode_profile(display, VAProfileAV1Profile0, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
@@ -286,7 +284,6 @@ int main(void) {
     ok = check_encode_entrypoint_not_advertised(display, VAProfileH264High, VAEntrypointEncSliceLP, "H.264 EncSliceLP advertising") && ok;
     ok = check_encode_entrypoint_not_advertised(display, VAProfileH264High, VAEntrypointEncPicture, "H.264 EncPicture advertising") && ok;
 
-    ok = check_profile_not_advertised(display, VAProfileHEVCMain, "HEVC Main advertising") && ok;
     ok = check_profile_not_advertised(display, VAProfileHEVCMain10, "HEVC Main10 advertising") && ok;
 
     VAImageFormat image_formats[4]   = {};

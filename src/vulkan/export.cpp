@@ -8,6 +8,14 @@
 
 using namespace vkvv;
 
+bool vkvv_vulkan_surface_has_exported_backing(const VkvvSurface* surface) {
+    if (surface == nullptr || surface->vulkan == nullptr) {
+        return false;
+    }
+    const auto* resource = static_cast<const SurfaceResource*>(surface->vulkan);
+    return resource->exported;
+}
+
 bool vkvv_vulkan_surface_has_predecode_export(const VkvvSurface* surface) {
     if (surface == nullptr || surface->vulkan == nullptr) {
         return false;
@@ -133,6 +141,20 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
                static_cast<unsigned long long>(resource->export_resource.content_generation), resource->export_resource.predecode_exported ? 1U : 0U,
                resource->export_resource.predecode_seeded ? 1U : 0U, resource->export_resource.seed_source_surface_id,
                static_cast<unsigned long long>(resource->export_resource.seed_source_generation));
+
+    if (!displayable) {
+        if (resource->export_resource.content_generation == 0) {
+            (void)seed_predecode_export_from_last_good(runtime, resource, reason, reason_size);
+        }
+        vkvv_trace("export-refresh-skip-nondisplay",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u seeded=%u", surface->id,
+                   static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                   static_cast<unsigned long long>(resource->content_generation), vkvv_trace_handle(resource->export_resource.memory),
+                   static_cast<unsigned long long>(resource->export_resource.content_generation), resource->export_resource.predecode_exported ? 1U : 0U,
+                   resource->export_resource.predecode_seeded ? 1U : 0U);
+        return VA_STATUS_SUCCESS;
+    }
+
     uint32_t seeded_predecode_exports = 0;
     if (!copy_surface_to_export_resource(runtime, resource, &seeded_predecode_exports, reason, reason_size)) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
@@ -258,6 +280,8 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         close(fd);
         return descriptor_status;
     }
+
+    resource->exported = true;
     if (exported_shadow != nullptr) {
         exported_shadow->exported = true;
         if (!surface->decoded) {

@@ -49,6 +49,10 @@ inline bool vkvv_profile_is_vp9(VAProfile profile) {
     return profile == VAProfileVP9Profile0 || profile == VAProfileVP9Profile2;
 }
 
+inline bool vkvv_profile_is_hevc(VAProfile profile) {
+    return profile == VAProfileHEVCMain || profile == VAProfileHEVCMain10 || profile == VAProfileHEVCMain12;
+}
+
 void     vkvv_log(const char* fmt, ...);
 void*    vkvv_get_or_create_vulkan_runtime(char* reason, size_t reason_size);
 void     vkvv_release_context_payload(VkvvDriver* drv, VkvvContext* vctx);

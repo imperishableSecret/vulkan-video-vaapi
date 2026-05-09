@@ -355,6 +355,7 @@ namespace vkvv {
         }
 
         unregister_predecode_export_resource(runtime, &resource->export_resource);
+        resource->exported = false;
         RetainedExportBacking backing{};
         ExportResource&       detached = backing.resource;
         detached                       = resource->export_resource;

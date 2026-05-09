@@ -457,8 +457,11 @@ namespace {
             caps->av1    = probe_one_profile(caps->av1, get_queue_family_properties2, get_video_capabilities, device, probes[7], &caps->av1_limits, av1_reason, sizeof(av1_reason));
             caps->av1_10 = probe_one_profile(caps->av1_10, get_queue_family_properties2, get_video_capabilities, device, probes[8], &caps->av1_10_limits, av1_10_reason,
                                              sizeof(av1_10_reason));
-            if (device_has_required_extensions(device, VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME) &&
-                device_has_decode_queue(get_queue_family_properties2, device, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR)) {
+            if ((caps->h264 || caps->h265 || caps->h265_10 || caps->h265_12 || caps->vp9 || caps->vp9_10 || caps->vp9_12 || caps->av1 || caps->av1_10) &&
+                (device_has_decode_queue(get_queue_family_properties2, device, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) ||
+                 device_has_decode_queue(get_queue_family_properties2, device, VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR) ||
+                 device_has_decode_queue(get_queue_family_properties2, device, VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR) ||
+                 device_has_decode_queue(get_queue_family_properties2, device, VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR))) {
                 caps->surface_export_nv12 = caps->surface_export_nv12 || device_supports_export_format(device, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM);
                 caps->surface_export_p010 = caps->surface_export_p010 || device_supports_export_format(device, VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16);
                 caps->surface_export_p012 = false;

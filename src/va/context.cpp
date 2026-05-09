@@ -11,6 +11,9 @@ namespace {
         if (vkvv_profile_is_h264(profile)) {
             return VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR;
         }
+        if (vkvv_profile_is_hevc(profile)) {
+            return VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR;
+        }
         if (vkvv_profile_is_vp9(profile)) {
             return VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR;
         }
@@ -332,8 +335,8 @@ namespace {
             return finish_surface(status);
         }
 
-        if (vkvv_surface_has_pending_work(target) && vkvv_vulkan_surface_has_predecode_export(target)) {
-            vkvv_trace("va-end-predecode-drain", "driver=%llu target=%u stream=%llu codec=0x%x", (unsigned long long)drv->driver_instance_id, target->id,
+        if (vkvv_surface_has_pending_work(target) && vkvv_vulkan_surface_has_exported_backing(target)) {
+            vkvv_trace("va-end-export-drain", "driver=%llu target=%u stream=%llu codec=0x%x", (unsigned long long)drv->driver_instance_id, target->id,
                        (unsigned long long)target->stream_id, target->codec_operation);
             status = vkvv_vulkan_complete_surface_work(drv->vulkan, target, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
             if (reason[0] != '\0') {

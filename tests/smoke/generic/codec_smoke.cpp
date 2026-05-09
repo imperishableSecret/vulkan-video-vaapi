@@ -1,10 +1,12 @@
 #include "va/private.h"
 #include "codecs/av1/av1.h"
+#include "codecs/hevc/hevc.h"
 #include "codecs/vp9/vp9.h"
 
 #include <cstdio>
 #include <cstring>
 #include <va/va_dec_av1.h>
+#include <va/va_dec_hevc.h>
 #include <vector>
 #include <vulkan/vulkan.h>
 
@@ -253,6 +255,99 @@ namespace {
         return ok;
     }
 
+    bool check_hevc_parser(const VkvvDecodeOps* hevc) {
+        void* state = hevc != nullptr ? hevc->state_create() : nullptr;
+        if (!check(state != nullptr, "HEVC codec state allocation failed")) {
+            return false;
+        }
+
+        hevc->begin_picture(state);
+
+        VAPictureParameterBufferHEVC pic{};
+        pic.CurrPic.picture_id                                      = 7;
+        pic.pic_width_in_luma_samples                               = 128;
+        pic.pic_height_in_luma_samples                              = 72;
+        pic.pic_fields.bits.chroma_format_idc                       = 1;
+        pic.slice_parsing_fields.bits.RapPicFlag                    = 1;
+        pic.slice_parsing_fields.bits.IdrPicFlag                    = 1;
+        pic.slice_parsing_fields.bits.IntraPicFlag                  = 1;
+        pic.log2_min_luma_coding_block_size_minus3                  = 0;
+        pic.log2_diff_max_min_luma_coding_block_size                = 3;
+        pic.log2_min_transform_block_size_minus2                    = 0;
+        pic.log2_diff_max_min_transform_block_size                  = 3;
+        pic.log2_parallel_merge_level_minus2                        = 0;
+        for (VAPictureHEVC& ref : pic.ReferenceFrames) {
+            ref.picture_id = VA_INVALID_ID;
+            ref.flags      = VA_PICTURE_HEVC_INVALID;
+        }
+
+        VASliceParameterBufferHEVC first_slice{};
+        first_slice.slice_data_offset                     = 3;
+        first_slice.slice_data_size                       = 4;
+        first_slice.LongSliceFlags.fields.LastSliceOfPic  = 0;
+        first_slice.LongSliceFlags.fields.slice_type      = STD_VIDEO_H265_SLICE_TYPE_I;
+
+        VASliceParameterBufferHEVC second_slice{};
+        second_slice.slice_data_offset                    = 10;
+        second_slice.slice_data_size                      = 3;
+        second_slice.LongSliceFlags.fields.LastSliceOfPic = 1;
+        second_slice.LongSliceFlags.fields.slice_type     = STD_VIDEO_H265_SLICE_TYPE_I;
+
+        VASliceParameterBufferHEVC slices[2] = {
+            first_slice,
+            second_slice,
+        };
+
+        std::vector<uint8_t> data = {
+            0x00, 0x00, 0x01, 0x26, 0x01, 0xaa, 0xbb, 0x00, 0x00, 0x01, 0x02, 0x01, 0xcc,
+        };
+
+        VkvvBuffer pic_buffer{};
+        pic_buffer.type         = VAPictureParameterBufferType;
+        pic_buffer.size         = sizeof(pic);
+        pic_buffer.num_elements = 1;
+        pic_buffer.data         = &pic;
+
+        VkvvBuffer slice_buffer{};
+        slice_buffer.type         = VASliceParameterBufferType;
+        slice_buffer.size         = sizeof(first_slice);
+        slice_buffer.num_elements = 2;
+        slice_buffer.data         = slices;
+
+        VkvvBuffer data_buffer{};
+        data_buffer.type         = VASliceDataBufferType;
+        data_buffer.size         = static_cast<unsigned int>(data.size());
+        data_buffer.num_elements = 1;
+        data_buffer.data         = data.data();
+
+        bool ok = check(hevc->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "HEVC picture buffer ingestion failed");
+        ok      = check(hevc->render_buffer(state, &slice_buffer) == VA_STATUS_SUCCESS, "HEVC slice buffer ingestion failed") && ok;
+        ok      = check(hevc->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS, "HEVC slice data ingestion failed") && ok;
+
+        unsigned int width       = 0;
+        unsigned int height      = 0;
+        char         reason[512] = {};
+        ok                       = check(hevc->prepare_decode(state, &width, &height, reason, sizeof(reason)) == VA_STATUS_SUCCESS, "HEVC prepare_decode failed") && ok;
+        if (!ok) {
+            std::fprintf(stderr, "%s\n", reason);
+        }
+        ok = check(width == 128 && height == 72, "HEVC prepare_decode returned the wrong dimensions") && ok;
+
+        VkvvHEVCDecodeInput input{};
+        ok = check(vkvv_hevc_get_decode_input(state, &input) == VA_STATUS_SUCCESS, "HEVC decode input extraction failed") && ok;
+        ok = check(input.slice_count == 2, "HEVC parser returned the wrong slice count") && ok;
+        ok = check(input.bitstream_size == 13 && input.slice_offsets[0] == 0 && input.slice_offsets[1] == 7, "HEVC parser returned wrong slice offsets or size") && ok;
+        ok = check(input.bitstream[0] == 0x00 && input.bitstream[1] == 0x00 && input.bitstream[2] == 0x01 && input.bitstream[3] == 0x26,
+                   "HEVC parser did not prefix the first slice with an Annex-B start code") &&
+            ok;
+        ok = check(input.bitstream[7] == 0x00 && input.bitstream[8] == 0x00 && input.bitstream[9] == 0x01 && input.bitstream[10] == 0x02,
+                   "HEVC parser did not prefix the second slice with an Annex-B start code") &&
+            ok;
+
+        hevc->state_destroy(state);
+        return ok;
+    }
+
 } // namespace
 
 int main(void) {
@@ -278,7 +373,12 @@ int main(void) {
     }
 
     ok = check(vkvv_decode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointEncSlice) == nullptr, "H.264 encode entrypoint must not resolve decode ops") && ok;
-    ok = check(vkvv_decode_ops_for_profile_entrypoint(VAProfileHEVCMain, VAEntrypointVLD) == nullptr, "HEVC should not have decode ops before its decoder is wired") && ok;
+    const VkvvDecodeOps* hevc_main = vkvv_decode_ops_for_profile_entrypoint(VAProfileHEVCMain, VAEntrypointVLD);
+    ok                              = check(ops_complete(hevc_main), "HEVC Main decode ops are incomplete") && ok;
+    if (hevc_main != nullptr) {
+        ok = check(std::strcmp(hevc_main->name, "hevc-main") == 0, "HEVC Main decode ops used the wrong name") && ok;
+        ok = check_hevc_parser(hevc_main) && ok;
+    }
     const VkvvDecodeOps* vp9 = vkvv_decode_ops_for_profile_entrypoint(VAProfileVP9Profile0, VAEntrypointVLD);
     ok                       = check(ops_complete(vp9), "VP9 decode ops are incomplete") && ok;
     if (vp9 != nullptr) {
@@ -345,9 +445,15 @@ int main(void) {
     const VkvvProfileCapability* vp9_profile2_record = vkvv_profile_capability_record(&drv, VAProfileVP9Profile2, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
     ok                                               = check(vp9_profile2_record == vp9_profile2_decode, "VP9 Profile2 advertised capability should match its full record") && ok;
 
-    const VkvvProfileCapability* hevc_hidden = vkvv_profile_capability_record(&drv, VAProfileHEVCMain, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
-    ok                                       = check(hevc_hidden != nullptr && hevc_hidden->hardware_supported && !hevc_hidden->runtime_wired && !hevc_hidden->advertise,
-                                                     "HEVC hardware capability should remain hidden until decode is wired") &&
+    const VkvvProfileCapability* hevc_main_cap = vkvv_profile_capability_record(&drv, VAProfileHEVCMain, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
+    ok                                         = check(hevc_main_cap != nullptr && hevc_main_cap->hardware_supported && hevc_main_cap->runtime_wired &&
+                                                           hevc_main_cap->parser_wired && hevc_main_cap->advertise && hevc_main_cap->formats[0].fourcc == VA_FOURCC_NV12,
+                                                       "HEVC Main capability should advertise NV12 after decode wiring lands") &&
+        ok;
+
+    const VkvvProfileCapability* hevc_main10_cap = vkvv_profile_capability_record(&drv, VAProfileHEVCMain10, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
+    ok                                           = check(hevc_main10_cap != nullptr && !hevc_main10_cap->runtime_wired && !hevc_main10_cap->advertise,
+                                                         "HEVC Main10 should remain hidden until P010 decode/export is wired") &&
         ok;
 
     const VkvvProfileCapability* av1_decode = vkvv_profile_capability_record(&drv, VAProfileAV1Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);

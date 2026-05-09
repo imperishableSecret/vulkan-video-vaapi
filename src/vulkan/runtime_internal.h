@@ -146,6 +146,7 @@ namespace vkvv {
         uint64_t                      drm_format_modifier     = 0;
         bool                          exportable              = false;
         bool                          has_drm_format_modifier = false;
+        bool                          exported                = false;
         VkvvExternalSurfaceImport     import;
         ExportResource                export_resource{};
         uint64_t                      content_generation = 0;

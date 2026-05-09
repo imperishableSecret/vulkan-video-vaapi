@@ -144,7 +144,7 @@ void vkvv_init_profile_capabilities(VkvvDriver* drv) {
                               VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME, VA_RT_FORMAT_YUV420, drv->caps.h264_limits, drv->caps.h264, true, true, drv->caps.h264,
                               drv->caps.surface_export_nv12);
     add_single_format_profile(drv, VAProfileHEVCMain, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE, VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
-                              VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME, VA_RT_FORMAT_YUV420, drv->caps.h265_limits, drv->caps.h265, false, false, drv->caps.h265,
+                              VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME, VA_RT_FORMAT_YUV420, drv->caps.h265_limits, drv->caps.h265, true, true, drv->caps.h265,
                               drv->caps.surface_export_nv12);
     add_single_format_profile(drv, VAProfileHEVCMain10, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE, VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
                               VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME, VA_RT_FORMAT_YUV420_10, drv->caps.h265_10_limits, drv->caps.h265_10, false, false, drv->caps.h265_10,

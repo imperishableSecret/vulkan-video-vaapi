@@ -23,6 +23,11 @@ namespace vkvv {
             VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME,
         },
         {
+            "hevc",
+            VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+            VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME,
+        },
+        {
             "vp9",
             VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR,
             VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME,
