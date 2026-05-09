@@ -25,6 +25,11 @@ namespace {
             ops->configure_session != nullptr && ops->decode != nullptr;
     }
 
+    bool encode_ops_complete(const VkvvEncodeOps* ops) {
+        return ops != nullptr && ops->name != nullptr && ops->state_create != nullptr && ops->state_destroy != nullptr && ops->begin_picture != nullptr &&
+            ops->render_buffer != nullptr && ops->prepare_encode != nullptr;
+    }
+
     std::vector<uint8_t> make_vp9_keyframe() {
         return {
             0x82, 0x49, 0x83, 0x42, 0x00, 0x00, 0xf0, 0x00, 0xf6, 0x06, 0x38, 0x24, 0x1c, 0x18, 0x42, 0x00, 0x00, 0x20, 0x40, 0x00,
@@ -453,8 +458,11 @@ int main(void) {
         ok = check_av1_parser(av1, 0, 8, VA_FOURCC_NV12, "AV1 NV12") && ok;
         ok = check_av1_parser(av1, 1, 10, VA_FOURCC_P010, "AV1 P010") && ok;
     }
-    ok =
-        check(vkvv_encode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointEncSlice) == nullptr, "H.264 EncSlice should not have encode ops before encode is wired") && ok;
+    const VkvvEncodeOps* h264_encode_ops = vkvv_encode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointEncSlice);
+    ok                                   = check(encode_ops_complete(h264_encode_ops), "H.264 EncSlice encode parser ops are incomplete") && ok;
+    if (h264_encode_ops != nullptr) {
+        ok = check(std::strcmp(h264_encode_ops->name, "h264-encode") == 0, "H.264 encode ops used the wrong name") && ok;
+    }
     ok =
         check(vkvv_encode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointEncSliceLP) == nullptr, "H.264 EncSliceLP should not have encode ops before encode is wired") &&
         ok;

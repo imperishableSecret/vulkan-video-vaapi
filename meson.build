@@ -78,6 +78,7 @@ driver_sources = files(
   'src/va/context.cpp',
   'src/va/surfaces.cpp',
   'src/codecs/av1/av1.cpp',
+  'src/codecs/h264/encode.cpp',
   'src/codecs/h264/h264.cpp',
   'src/codecs/hevc/hevc.cpp',
   'src/codecs/vp9/vp9.cpp',
@@ -133,6 +134,7 @@ codec_smoke = executable(
     'src/caps/formats.cpp',
     'src/codecs/registry.cpp',
     'src/codecs/av1/av1.cpp',
+    'src/codecs/h264/encode.cpp',
     'src/codecs/h264/h264.cpp',
     'src/codecs/hevc/hevc.cpp',
     'src/codecs/vp9/vp9.cpp',
@@ -147,6 +149,19 @@ coded_buffer_smoke = executable(
   'vkvv-coded-buffer-smoke',
   files(
     'tests/smoke/generic/coded_buffer_smoke.cpp',
+    'src/va/buffers.cpp',
+    'src/va/object.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [libva_dep, threads_dep],
+  install: false,
+)
+
+encode_parser_smoke = executable(
+  'vkvv-h264-encode-parser-smoke',
+  files(
+    'tests/smoke/h264/encode_parser_smoke.cpp',
+    'src/codecs/h264/encode.cpp',
     'src/va/buffers.cpp',
     'src/va/object.cpp',
   ),
@@ -285,6 +300,7 @@ driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
 
 test('smoke-session', session_smoke, is_parallel: false, timeout: 30)
 test('smoke-encode-runtime', encode_runtime_smoke, is_parallel: false, timeout: 30)
+test('smoke-h264-encode-parser', encode_parser_smoke, is_parallel: false, timeout: 30)
 test('smoke-hevc-session', hevc_session_smoke, is_parallel: false, timeout: 30)
 test('smoke-vp9-session', vp9_session_smoke, is_parallel: false, timeout: 30)
 test('smoke-av1-session', av1_session_smoke, is_parallel: false, timeout: 30)

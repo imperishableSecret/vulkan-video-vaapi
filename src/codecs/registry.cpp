@@ -2,6 +2,7 @@
 #include "codecs/ops.h"
 #include "codecs/av1/av1.h"
 #include "codecs/h264/h264.h"
+#include "codecs/h264/encode.h"
 #include "codecs/hevc/hevc.h"
 #include "codecs/vp9/vp9.h"
 #include "vulkan/codecs/av1/api.h"
@@ -213,6 +214,10 @@ namespace {
         {VAEntrypointVLD, av1_profile0_matches, &av1_profile0_decode_ops},
     };
 
+    const VkvvEncodeOps h264_encode_ops = {
+        "h264-encode", vkvv_h264_encode_state_create, vkvv_h264_encode_state_destroy, vkvv_h264_encode_begin_picture, vkvv_h264_encode_render_buffer, vkvv_h264_encode_prepare,
+    };
+
 } // namespace
 
 const VkvvDecodeOps* vkvv_decode_ops_for_profile_entrypoint(VAProfile profile, VAEntrypoint entrypoint) {
@@ -225,7 +230,8 @@ const VkvvDecodeOps* vkvv_decode_ops_for_profile_entrypoint(VAProfile profile, V
 }
 
 const VkvvEncodeOps* vkvv_encode_ops_for_profile_entrypoint(VAProfile profile, VAEntrypoint entrypoint) {
-    (void)profile;
-    (void)entrypoint;
+    if (profile == VAProfileH264High && entrypoint == VAEntrypointEncSlice) {
+        return &h264_encode_ops;
+    }
     return nullptr;
 }

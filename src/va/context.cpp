@@ -56,6 +56,9 @@ void vkvv_release_context_payload(VkvvDriver* drv, VkvvContext* vctx) {
         vctx->decode_ops->state_destroy(vctx->decode_state);
         vctx->decode_ops->session_destroy(drv != NULL ? drv->vulkan : NULL, vctx->decode_session);
     }
+    if (vctx->encode_ops != NULL) {
+        vctx->encode_ops->state_destroy(vctx->encode_state);
+    }
     vctx->decode_ops     = NULL;
     vctx->decode_state   = NULL;
     vctx->decode_session = NULL;
@@ -113,6 +116,12 @@ VAStatus vkvvCreateContext(VADriverContextP ctx, VAConfigID config_id, int pictu
         if (vctx->encode_ops == NULL) {
             delete vctx;
             return VA_STATUS_ERROR_UNIMPLEMENTED;
+        }
+        vctx->encode_state = vctx->encode_ops->state_create();
+        if (vctx->encode_state == NULL) {
+            vkvv_release_context_payload(drv, vctx);
+            delete vctx;
+            return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
     }
 
@@ -173,7 +182,7 @@ VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID
     if (vctx == NULL) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
-    {
+    if (vctx->mode == VKVV_CONTEXT_MODE_DECODE) {
         VkvvLockGuard state_lock(&drv->state_mutex);
         auto*         domain_surface = vkvv_surface_get_locked(drv, render_target);
         if (domain_surface != NULL) {
@@ -198,7 +207,19 @@ VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID
     }
     VkvvLockGuard context_lock(&vctx->mutex);
     if (vctx->mode == VKVV_CONTEXT_MODE_ENCODE) {
-        return VA_STATUS_ERROR_UNIMPLEMENTED;
+        auto* surface = static_cast<VkvvSurface*>(vkvv_object_get(drv, render_target, VKVV_OBJECT_SURFACE));
+        if (surface == NULL) {
+            return VA_STATUS_ERROR_INVALID_SURFACE;
+        }
+        VkvvLockGuard surface_lock(&surface->mutex);
+        if (surface->destroying) {
+            return VA_STATUS_ERROR_INVALID_SURFACE;
+        }
+        vctx->render_target = render_target;
+        if (vctx->encode_ops != NULL) {
+            vctx->encode_ops->begin_picture(vctx->encode_state);
+        }
+        return VA_STATUS_SUCCESS;
     }
     if (vctx->render_target != VA_INVALID_ID) {
         auto* previous = static_cast<VkvvSurface*>(vkvv_object_get(drv, vctx->render_target, VKVV_OBJECT_SURFACE));
@@ -252,9 +273,13 @@ VAStatus vkvvRenderPicture(VADriverContextP ctx, VAContextID context, VABufferID
                    (unsigned long long)drv->driver_instance_id, context, (unsigned long long)vctx->stream_id, vctx->codec_operation, i, buffers[i], buffer->type, buffer->size,
                    buffer->num_elements, buffer->mapped ? 1U : 0U, vctx->render_target);
         if (vctx->mode == VKVV_CONTEXT_MODE_ENCODE) {
-            vkvv_trace("va-render-buffer-status", "driver=%llu ctx=%u stream=%llu codec=0x%x index=%d buffer=%u type=%u status=%d", (unsigned long long)drv->driver_instance_id,
-                       context, (unsigned long long)vctx->stream_id, vctx->codec_operation, i, buffers[i], buffer->type, VA_STATUS_ERROR_UNIMPLEMENTED);
-            return VA_STATUS_ERROR_UNIMPLEMENTED;
+            VAStatus status = vctx->encode_ops != NULL ? vctx->encode_ops->render_buffer(vctx->encode_state, buffer) : VA_STATUS_ERROR_UNIMPLEMENTED;
+            if (status != VA_STATUS_SUCCESS) {
+                vkvv_trace("va-render-buffer-status", "driver=%llu ctx=%u stream=%llu codec=0x%x index=%d buffer=%u type=%u status=%d", (unsigned long long)drv->driver_instance_id,
+                           context, (unsigned long long)vctx->stream_id, vctx->codec_operation, i, buffers[i], buffer->type, status);
+                return status;
+            }
+            continue;
         }
         if (vctx->decode_ops != NULL) {
             VAStatus status = vctx->decode_ops->render_buffer(vctx->decode_state, buffer);
@@ -272,8 +297,19 @@ VAStatus vkvvRenderPicture(VADriverContextP ctx, VAContextID context, VABufferID
 namespace {
 
     VAStatus end_encode_picture(VkvvDriver* drv, VkvvContext* vctx) {
-        (void)drv;
-        (void)vctx;
+        if (vctx->encode_ops == NULL) {
+            return VA_STATUS_ERROR_UNIMPLEMENTED;
+        }
+        unsigned int width        = 0;
+        unsigned int height       = 0;
+        VABufferID   coded_buffer = VA_INVALID_ID;
+        char         reason[512]  = {};
+        VAStatus     status       = vctx->encode_ops->prepare_encode(vctx->encode_state, drv, vctx, &width, &height, &coded_buffer, reason, sizeof(reason));
+        vkvv_log("%s", reason);
+        vctx->render_target = VA_INVALID_ID;
+        if (status != VA_STATUS_SUCCESS) {
+            return status;
+        }
         return VA_STATUS_ERROR_UNIMPLEMENTED;
     }
 
