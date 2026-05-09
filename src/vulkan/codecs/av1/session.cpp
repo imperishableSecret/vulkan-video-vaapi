@@ -42,6 +42,18 @@ namespace vkvv {
 
     } // namespace
 
+    AV1VideoSession* create_av1_session(VAProfile va_profile, unsigned int va_rt_format, unsigned int va_fourcc, uint8_t bitstream_profile, uint8_t bit_depth,
+                                        VideoProfileSpec profile_spec) {
+        auto* session              = new AV1VideoSession();
+        session->va_profile        = va_profile;
+        session->va_rt_format      = va_rt_format;
+        session->va_fourcc         = va_fourcc;
+        session->bitstream_profile = bitstream_profile;
+        session->bit_depth         = bit_depth;
+        session->profile_spec      = profile_spec;
+        return session;
+    }
+
     VkImageUsageFlags av1_surface_image_usage() {
         return VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     }
@@ -184,8 +196,21 @@ using namespace vkvv;
 
 void* vkvv_vulkan_av1_session_create(void) {
     try {
-        return new AV1VideoSession();
+        return create_av1_session(VAProfileAV1Profile0, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12, 0, 8, av1_profile0_spec);
     } catch (const std::bad_alloc&) { return nullptr; }
+}
+
+void* vkvv_vulkan_av1_p010_session_create(void) {
+    try {
+        return create_av1_session(VAProfileAV1Profile0, VA_RT_FORMAT_YUV420_10, VA_FOURCC_P010, 0, 10, av1_profile0_10bit_spec);
+    } catch (const std::bad_alloc&) { return nullptr; }
+}
+
+void* vkvv_vulkan_av1_session_create_for_config(const VkvvConfig* config) {
+    if (config != nullptr && (config->rt_format & VA_RT_FORMAT_YUV420_10) != 0) {
+        return vkvv_vulkan_av1_p010_session_create();
+    }
+    return vkvv_vulkan_av1_session_create();
 }
 
 void vkvv_vulkan_av1_session_destroy(void* runtime_ptr, void* session_ptr) {

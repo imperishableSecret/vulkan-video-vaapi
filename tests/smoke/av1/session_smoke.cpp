@@ -15,7 +15,7 @@ namespace {
     }
 
     bool ensure_session(void* runtime, void* session, unsigned int width, unsigned int height, unsigned int min_expected_width, unsigned int min_expected_height,
-                        const char* label) {
+                        VkFormat expected_format, VkVideoComponentBitDepthFlagBitsKHR expected_depth, const char* label) {
         char     reason[512] = {};
         VAStatus status      = vkvv_vulkan_ensure_av1_session(runtime, session, width, height, reason, sizeof(reason));
         std::printf("%s\n", reason);
@@ -34,12 +34,11 @@ namespace {
         if (!check(video.key.codec_profile == STD_VIDEO_AV1_PROFILE_MAIN, "AV1 session key did not record the expected AV1 profile")) {
             return false;
         }
-        if (!check(video.key.picture_format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM && video.key.reference_picture_format == video.key.picture_format,
-                   "AV1 session key did not record NV12 picture/reference formats")) {
+        if (!check(video.key.picture_format == expected_format && video.key.reference_picture_format == video.key.picture_format,
+                   "AV1 session key did not record expected picture/reference formats")) {
             return false;
         }
-        if (!check(video.key.luma_bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR && video.key.chroma_bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-                   "AV1 session key did not record 8-bit decode")) {
+        if (!check(video.key.luma_bit_depth == expected_depth && video.key.chroma_bit_depth == expected_depth, "AV1 session key did not record expected bit depth")) {
             return false;
         }
         if (!check(video.key.max_coded_extent.width >= min_expected_width && video.key.max_coded_extent.height >= min_expected_height,
@@ -288,7 +287,7 @@ int main(void) {
         return 1;
     }
 
-    ok                                 = ensure_session(runtime, session, 64, 64, 64, 64, "AV1 Profile0") && ok;
+    ok = ensure_session(runtime, session, 64, 64, 64, 64, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, "AV1 Profile0") && ok;
     auto*                typed_session = static_cast<vkvv::AV1VideoSession*>(session);
     std::vector<uint8_t> first_upload(256, 0x11);
     ok                                         = ensure_upload(typed_runtime, typed_session, first_upload) && ok;
@@ -303,12 +302,29 @@ int main(void) {
               "smaller AV1 upload did not reuse the existing buffer") &&
         ok;
 
-    ok                                    = ensure_session(runtime, session, 640, 360, 640, 368, "AV1 Profile0") && ok;
+    ok = ensure_session(runtime, session, 640, 360, 640, 368, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, "AV1 Profile0") && ok;
     const VkVideoSessionKHR grown_session = typed_session->video.session;
-    ok                                    = ensure_session(runtime, session, 320, 180, 640, 368, "AV1 Profile0") && ok;
-    ok                                    = check(typed_session->video.session == grown_session, "AV1 session unexpectedly shrank or recreated") && ok;
+    ok = ensure_session(runtime, session, 320, 180, 640, 368, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, "AV1 Profile0") && ok;
+    ok = check(typed_session->video.session == grown_session, "AV1 session unexpectedly shrank or recreated") && ok;
 
     vkvv_vulkan_av1_session_destroy(runtime, session);
+
+    VkvvConfig p010_config{};
+    p010_config.rt_format = VA_RT_FORMAT_YUV420_10;
+    p010_config.fourcc    = VA_FOURCC_P010;
+    p010_config.bit_depth = 10;
+    session               = vkvv_vulkan_av1_session_create_for_config(&p010_config);
+    if (session == nullptr) {
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    ok = ensure_session(runtime, session, 64, 64, 64, 64, VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16, VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR, "AV1 Profile0 P010") && ok;
+    typed_session = static_cast<vkvv::AV1VideoSession*>(session);
+    ok            = check(typed_session->va_rt_format == VA_RT_FORMAT_YUV420_10 && typed_session->va_fourcc == VA_FOURCC_P010 && typed_session->bit_depth == 10,
+                          "AV1 P010 session did not record VA format metadata") &&
+        ok;
+    vkvv_vulkan_av1_session_destroy(runtime, session);
+
     vkvv_vulkan_runtime_destroy(runtime);
     if (!ok) {
         return 1;

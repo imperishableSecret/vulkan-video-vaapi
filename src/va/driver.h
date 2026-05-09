@@ -201,7 +201,7 @@ typedef struct VkvvDecodeOps {
     const char* name;
     void* (*state_create)(void);
     void (*state_destroy)(void* state);
-    void* (*session_create)(void);
+    void* (*session_create)(const VkvvConfig* config);
     void (*session_destroy)(void* runtime, void* session);
     void (*begin_picture)(void* state);
     VAStatus (*render_buffer)(void* state, const VkvvBuffer* buffer);

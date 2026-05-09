@@ -116,7 +116,7 @@ namespace {
         return ok;
     }
 
-    bool check_av1_parser(const VkvvDecodeOps* av1) {
+    bool check_av1_parser(const VkvvDecodeOps* av1, uint8_t bit_depth_idx, uint8_t expected_bit_depth, unsigned int expected_fourcc, const char* label) {
         void* state = av1 != nullptr ? av1->state_create() : nullptr;
         if (!check(state != nullptr, "AV1 codec state allocation failed")) {
             return false;
@@ -129,7 +129,7 @@ namespace {
         VADecPictureParameterBufferAV1 pic{};
         pic.profile                                        = 0;
         pic.order_hint_bits_minus_1                        = 6;
-        pic.bit_depth_idx                                  = 0;
+        pic.bit_depth_idx                                  = bit_depth_idx;
         pic.matrix_coefficients                            = 1;
         pic.seq_info_fields.fields.enable_order_hint       = 1;
         pic.seq_info_fields.fields.enable_cdef             = 1;
@@ -192,11 +192,11 @@ namespace {
         VkvvAV1DecodeInput input{};
         ok                = check(vkvv_av1_get_decode_input(state, &input) == VA_STATUS_SUCCESS, "AV1 decode input extraction failed") && ok;
         const bool parsed = input.header.valid && input.header.frame_type == STD_VIDEO_AV1_FRAME_TYPE_KEY && input.header.refresh_frame_flags == 0xff && input.tile_count == 1 &&
-            input.tiles[0].offset == 0 && input.tiles[0].size == bitstream.size() && input.bitstream_size == bitstream.size() && input.bit_depth == 8 &&
-            input.fourcc == VA_FOURCC_NV12;
+            input.tiles[0].offset == 0 && input.tiles[0].size == bitstream.size() && input.bitstream_size == bitstream.size() && input.bit_depth == expected_bit_depth &&
+            input.fourcc == expected_fourcc;
         if (!parsed) {
-            std::fprintf(stderr, "AV1 parsed header mismatch: valid=%u frame=%u refresh=0x%02x tiles=%zu off0=%u size0=%u bytes=%zu depth=%u fourcc=0x%x\n", input.header.valid,
-                         input.header.frame_type, input.header.refresh_frame_flags, input.tile_count, input.tile_count > 0 ? input.tiles[0].offset : 0,
+            std::fprintf(stderr, "%s parsed header mismatch: valid=%u frame=%u refresh=0x%02x tiles=%zu off0=%u size0=%u bytes=%zu depth=%u fourcc=0x%x\n", label,
+                         input.header.valid, input.header.frame_type, input.header.refresh_frame_flags, input.tile_count, input.tile_count > 0 ? input.tiles[0].offset : 0,
                          input.tile_count > 0 ? input.tiles[0].size : 0, input.bitstream_size, input.bit_depth, input.fourcc);
         }
         ok = check(parsed, "AV1 parser did not expose expected keyframe values") && ok;
@@ -214,7 +214,8 @@ namespace {
         }
         VkvvAV1DecodeInput second_input{};
         ok = check(vkvv_av1_get_decode_input(state, &second_input) == VA_STATUS_SUCCESS, "AV1 second decode input extraction failed") && ok;
-        ok = check(second_input.header.valid && second_input.header.refresh_frame_flags == 0xff && second_input.tile_count == 1 && second_input.bitstream_size == bitstream.size(),
+        ok = check(second_input.header.valid && second_input.header.refresh_frame_flags == 0xff && second_input.tile_count == 1 &&
+                       second_input.bitstream_size == bitstream.size() && second_input.bit_depth == expected_bit_depth && second_input.fourcc == expected_fourcc,
                    "AV1 parser failed to reuse state for a second picture") &&
             ok;
 
@@ -243,7 +244,8 @@ namespace {
         VkvvAV1DecodeInput multi_input{};
         ok = check(vkvv_av1_get_decode_input(state, &multi_input) == VA_STATUS_SUCCESS, "AV1 multi-frame decode input extraction failed") && ok;
         ok = check(multi_input.header.frame_header_offset == 0 && multi_input.tiles[0].offset < multi_input.bitstream_size &&
-                       multi_input.tiles[0].size <= multi_input.bitstream_size - multi_input.tiles[0].offset && multi_input.bitstream_size < multi_frame.size(),
+                       multi_input.tiles[0].size <= multi_input.bitstream_size - multi_input.tiles[0].offset && multi_input.bitstream_size < multi_frame.size() &&
+                       multi_input.bit_depth == expected_bit_depth && multi_input.fourcc == expected_fourcc,
                    "AV1 parser did not normalize the selected frame window for a packed buffer") &&
             ok;
 
@@ -269,7 +271,7 @@ int main(void) {
         h264->state_destroy(state);
     }
 
-    void* session = h264 != nullptr ? h264->session_create() : nullptr;
+    void* session = h264 != nullptr ? h264->session_create(nullptr) : nullptr;
     ok            = check(session != nullptr, "H.264 codec session allocation failed") && ok;
     if (session != nullptr) {
         h264->session_destroy(nullptr, session);
@@ -293,7 +295,8 @@ int main(void) {
     ok                       = check(ops_complete(av1), "AV1 decode ops are incomplete") && ok;
     if (av1 != nullptr) {
         ok = check(std::strcmp(av1->name, "av1") == 0, "AV1 decode ops used the wrong name") && ok;
-        ok = check_av1_parser(av1) && ok;
+        ok = check_av1_parser(av1, 0, 8, VA_FOURCC_NV12, "AV1 NV12") && ok;
+        ok = check_av1_parser(av1, 1, 10, VA_FOURCC_P010, "AV1 P010") && ok;
     }
     ok =
         check(vkvv_encode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointEncSlice) == nullptr, "H.264 EncSlice should not have encode ops before encode is wired") && ok;
@@ -347,17 +350,16 @@ int main(void) {
                                                      "HEVC hardware capability should remain hidden until decode is wired") &&
         ok;
 
-    const VkvvProfileCapability* av1_hidden = vkvv_profile_capability_record(&drv, VAProfileAV1Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
-    ok = check(av1_hidden != nullptr && av1_hidden->format_count == 2 && av1_hidden->advertise && av1_hidden->rt_format == VA_RT_FORMAT_YUV420 &&
-                   vkvv_profile_format_variant(av1_hidden, VA_RT_FORMAT_YUV420, true) != nullptr &&
-                   vkvv_profile_format_variant(av1_hidden, VA_RT_FORMAT_YUV420_10, false) != nullptr &&
-                   vkvv_profile_format_variant(av1_hidden, VA_RT_FORMAT_YUV420_10, true) == nullptr,
-               "AV1 Profile0 should advertise NV12 while keeping P010 hidden") &&
+    const VkvvProfileCapability* av1_decode = vkvv_profile_capability_record(&drv, VAProfileAV1Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
+    ok =
+        check(av1_decode != nullptr && av1_decode->format_count == 2 && av1_decode->advertise && av1_decode->rt_format == (VA_RT_FORMAT_YUV420 | VA_RT_FORMAT_YUV420_10) &&
+                  vkvv_profile_format_variant(av1_decode, VA_RT_FORMAT_YUV420, true) != nullptr && vkvv_profile_format_variant(av1_decode, VA_RT_FORMAT_YUV420_10, true) != nullptr,
+              "AV1 Profile0 should advertise NV12 and P010 when both paths are wired") &&
         ok;
 
     VAConfigAttrib av1_features{};
     av1_features.type = VAConfigAttribDecAV1Features;
-    vkvv_fill_config_attribute(av1_hidden, &av1_features);
+    vkvv_fill_config_attribute(av1_decode, &av1_features);
     VAConfigAttribValDecAV1Features av1_feature_value{};
     av1_feature_value.value = av1_features.value;
     ok =

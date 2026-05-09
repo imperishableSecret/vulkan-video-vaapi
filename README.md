@@ -39,9 +39,8 @@ Important limits:
 
 - HEVC is probed by Vulkan but not advertised yet because the HEVC parser,
   session-parameter builder, and decode command path are not implemented.
-- AV1 Profile0 is advertised for the current 8-bit NV12 path. AV1 10-bit/P010
-  is still hidden until the AV1 format selection and browser validation are
-  complete.
+- AV1 Profile0 now supports both the 8-bit NV12 path and the 10-bit P010 path.
+  Browser HDR validation is still pending.
 - VP9 Profile2 uses the P010 path. 12-bit/P012 stays hidden because P012 export
   is not wired.
 - Encode entrypoints are deliberately not advertised. The tree has structural
@@ -56,6 +55,7 @@ Important limits:
 - VP9 Profile0 8-bit NV12 browser decode path.
 - VP9 Profile2 10-bit P010 browser decode path.
 - AV1 Profile0 8-bit NV12 browser decode path.
+- AV1 Profile0 10-bit P010 decode/export path.
 - Single-FD, two-layer dma-buf export for NV12 and P010.
 - Export shadow images for NVIDIA's optimal-only decode images.
 - Retained export backing logic for Chrome stream switches and imported
@@ -183,8 +183,8 @@ Codec work:
 - Complete VP9 hardening: show-existing frames, superframes, invisible
   references, alt-ref behavior, resolution/profile transitions, and broader
   sample coverage.
-- Complete AV1 hardening: 10-bit/P010 enablement, film-grain policy, more tile
-  and reference edge cases, and long-session browser validation.
+- Complete AV1 hardening: browser HDR/P010 validation, film-grain policy, more
+  tile and reference edge cases, and long-session browser validation.
 - Add HEVC after VP9 and AV1 are stable: start with HEVC Main/NV12, then
   HEVC Main10/P010. Keep HEVC Main12/P012, 4:2:2, 4:4:4, and SCC hidden.
 - Revisit H.264 completeness: interlaced/field pictures, cropping, SPS/PPS edge

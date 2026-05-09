@@ -428,6 +428,11 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
                       session->va_rt_format, session->va_fourcc);
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
+    if (input->rt_format != session->va_rt_format || input->fourcc != session->va_fourcc) {
+        std::snprintf(reason, reason_size, "AV1 bitstream/output format mismatch: rt=0x%x fourcc=0x%x expected_rt=0x%x expected_fourcc=0x%x", input->rt_format, input->fourcc,
+                      session->va_rt_format, session->va_fourcc);
+        return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
+    }
     if (session->video.session == VK_NULL_HANDLE) {
         std::snprintf(reason, reason_size, "missing AV1 video session");
         return VA_STATUS_ERROR_INVALID_CONTEXT;
@@ -495,12 +500,13 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         const std::string ref_slots_before     = av1_reference_slots_string(session);
         const std::string surface_slots_before = av1_surface_slots_string(session);
         vkvv_trace("av1-frame-enter",
-                   "driver=%llu ctx_stream=%llu target=%u current_frame=%u order_hint=%u frame_type=%u show=%u refresh=0x%02x primary_ref=%u bitstream=%zu header=%u tiles=%zu "
+                   "driver=%llu ctx_stream=%llu target=%u current_frame=%u order_hint=%u frame_type=%u show=%u refresh=0x%02x primary_ref=%u depth=%u fourcc=0x%x bitstream=%zu "
+                   "header=%u tiles=%zu "
                    "ref_map=\"%s\" ref_slots=\"%s\" surface_slots=\"%s\"",
                    static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id), target_surface_id, input->pic->current_frame,
                    input->pic->order_hint, input->pic->pic_info_fields.bits.frame_type, input->pic->pic_info_fields.bits.show_frame, input->header.refresh_frame_flags,
-                   input->pic->primary_ref_frame, input->bitstream_size, input->header.frame_header_offset, input->tile_count, ref_map.c_str(), ref_slots_before.c_str(),
-                   surface_slots_before.c_str());
+                   input->pic->primary_ref_frame, input->bit_depth, input->fourcc, input->bitstream_size, input->header.frame_header_offset, input->tile_count, ref_map.c_str(),
+                   ref_slots_before.c_str(), surface_slots_before.c_str());
     }
 
     if (!av1_frame_is_intra(input->pic)) {
@@ -587,17 +593,18 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         const std::string surface_slots_before   = av1_surface_slots_string(session);
         const std::string active_refs            = av1_active_refs_string(input, reference_name_slot_indices);
         const auto*       target_resource_before = static_cast<const SurfaceResource*>(target->vulkan);
-        vkvv_trace(
-            "av1-decode-plan",
-            "driver=%llu ctx_stream=%llu target=%u surface_stream=%llu surface_codec=0x%x frame_type=%u show=%u current_frame=%u order_hint=%u primary_ref=%u refresh=0x%02x "
-            "refs=%u current_ref=%u target_slot=%d used_mask=0x%03x content_gen=%llu shadow_gen=%llu predecode=%u active_refs=\"%s\" ref_slots=\"%s\" surface_slots=\"%s\"",
-            static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id), target_surface_id,
-            static_cast<unsigned long long>(target->stream_id), target->codec_operation, input->pic->pic_info_fields.bits.frame_type, input->pic->pic_info_fields.bits.show_frame,
-            input->pic->current_frame, input->pic->order_hint, input->pic->primary_ref_frame, input->header.refresh_frame_flags, reference_count, current_is_reference ? 1U : 0U,
-            target_dpb_slot, used_slot_mask(used_slots), target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->content_generation) : 0ULL,
-            target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->export_resource.content_generation) : 0ULL,
-            target_resource_before != nullptr && target_resource_before->export_resource.predecode_exported ? 1U : 0U, active_refs.c_str(), ref_slots_before.c_str(),
-            surface_slots_before.c_str());
+        vkvv_trace("av1-decode-plan",
+                   "driver=%llu ctx_stream=%llu target=%u surface_stream=%llu surface_codec=0x%x frame_type=%u show=%u current_frame=%u order_hint=%u primary_ref=%u "
+                   "refresh=0x%02x depth=%u fourcc=0x%x "
+                   "refs=%u current_ref=%u target_slot=%d used_mask=0x%03x content_gen=%llu shadow_gen=%llu predecode=%u active_refs=\"%s\" ref_slots=\"%s\" surface_slots=\"%s\"",
+                   static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id), target_surface_id,
+                   static_cast<unsigned long long>(target->stream_id), target->codec_operation, input->pic->pic_info_fields.bits.frame_type,
+                   input->pic->pic_info_fields.bits.show_frame, input->pic->current_frame, input->pic->order_hint, input->pic->primary_ref_frame, input->header.refresh_frame_flags,
+                   input->bit_depth, input->fourcc, reference_count, current_is_reference ? 1U : 0U, target_dpb_slot, used_slot_mask(used_slots),
+                   target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->content_generation) : 0ULL,
+                   target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->export_resource.content_generation) : 0ULL,
+                   target_resource_before != nullptr && target_resource_before->export_resource.predecode_exported ? 1U : 0U, active_refs.c_str(), ref_slots_before.c_str(),
+                   surface_slots_before.c_str());
     }
     used_slots[target_dpb_slot] = true;
 
@@ -779,16 +786,17 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     }
 
     track_pending_decode(runtime, target, parameters, upload_allocation_size, input->pic->pic_info_fields.bits.show_frame != 0, "AV1 decode");
-    vkvv_trace("av1-submit", "driver=%llu ctx_stream=%llu target=%u slot=%d refresh=0x%02x refs=%u bytes=%zu upload_mem=%llu session_mem=%llu",
+    vkvv_trace("av1-submit", "driver=%llu ctx_stream=%llu target=%u slot=%d refresh=0x%02x depth=%u fourcc=0x%x refs=%u bytes=%zu upload_mem=%llu session_mem=%llu",
                static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id), target_surface_id, target_dpb_slot,
-               input->header.refresh_frame_flags, reference_count, input->bitstream_size, static_cast<unsigned long long>(upload_allocation_size),
+               input->header.refresh_frame_flags, input->bit_depth, input->fourcc, reference_count, input->bitstream_size, static_cast<unsigned long long>(upload_allocation_size),
                static_cast<unsigned long long>(session->video.memory_bytes));
     std::snprintf(reason, reason_size,
-                  "submitted async AV1 Vulkan decode: %ux%u tiles=%zu bytes=%zu refs=%u setup=%u slot=%d refresh=0x%02x header=%u tile0=%u/%u decode_mem=%llu upload_mem=%llu "
+                  "submitted async AV1 Vulkan decode: %ux%u depth=%u fourcc=0x%x tiles=%zu bytes=%zu refs=%u setup=%u slot=%d refresh=0x%02x header=%u tile0=%u/%u decode_mem=%llu "
+                  "upload_mem=%llu "
                   "session_mem=%llu",
-                  coded_extent.width, coded_extent.height, input->tile_count, input->bitstream_size, reference_count, setup_slot_ptr != nullptr ? 1U : 0U, target_dpb_slot,
-                  input->header.refresh_frame_flags, av1_picture.frameHeaderOffset, tile_offsets.empty() ? 0 : tile_offsets[0], tile_sizes.empty() ? 0 : tile_sizes[0],
-                  static_cast<unsigned long long>(target_resource->allocation_size), static_cast<unsigned long long>(upload_allocation_size),
-                  static_cast<unsigned long long>(session->video.memory_bytes));
+                  coded_extent.width, coded_extent.height, input->bit_depth, input->fourcc, input->tile_count, input->bitstream_size, reference_count,
+                  setup_slot_ptr != nullptr ? 1U : 0U, target_dpb_slot, input->header.refresh_frame_flags, av1_picture.frameHeaderOffset,
+                  tile_offsets.empty() ? 0 : tile_offsets[0], tile_sizes.empty() ? 0 : tile_sizes[0], static_cast<unsigned long long>(target_resource->allocation_size),
+                  static_cast<unsigned long long>(upload_allocation_size), static_cast<unsigned long long>(session->video.memory_bytes));
     return VA_STATUS_SUCCESS;
 }

@@ -9,6 +9,25 @@
 
 namespace {
 
+    void* h264_session_create(const VkvvConfig* config) {
+        (void)config;
+        return vkvv_vulkan_h264_session_create();
+    }
+
+    void* vp9_profile0_session_create(const VkvvConfig* config) {
+        (void)config;
+        return vkvv_vulkan_vp9_session_create();
+    }
+
+    void* vp9_profile2_session_create(const VkvvConfig* config) {
+        (void)config;
+        return vkvv_vulkan_vp9_profile2_session_create();
+    }
+
+    void* av1_session_create(const VkvvConfig* config) {
+        return vkvv_vulkan_av1_session_create_for_config(config);
+    }
+
     VAStatus h264_decode(void* runtime, void* session, VkvvDriver* drv, VkvvContext* vctx, VkvvSurface* target, VAProfile profile, void* state, char* reason, size_t reason_size) {
         VkvvH264DecodeInput input  = {};
         VAStatus            status = vkvv_h264_get_decode_input(state, &input);
@@ -22,7 +41,7 @@ namespace {
         "h264",
         vkvv_h264_state_create,
         vkvv_h264_state_destroy,
-        vkvv_vulkan_h264_session_create,
+        h264_session_create,
         vkvv_vulkan_h264_session_destroy,
         vkvv_h264_begin_picture,
         vkvv_h264_render_buffer,
@@ -44,7 +63,7 @@ namespace {
         "vp9",
         vkvv_vp9_state_create,
         vkvv_vp9_state_destroy,
-        vkvv_vulkan_vp9_session_create,
+        vp9_profile0_session_create,
         vkvv_vulkan_vp9_session_destroy,
         vkvv_vp9_begin_picture,
         vkvv_vp9_render_buffer,
@@ -54,8 +73,8 @@ namespace {
     };
 
     const VkvvDecodeOps vp9_profile2_decode_ops = {
-        "vp9-profile2",         vkvv_vp9_state_create,  vkvv_vp9_state_destroy,  vkvv_vulkan_vp9_profile2_session_create, vkvv_vulkan_vp9_session_destroy,
-        vkvv_vp9_begin_picture, vkvv_vp9_render_buffer, vkvv_vp9_prepare_decode, vkvv_vulkan_ensure_vp9_session,          vp9_decode,
+        "vp9-profile2",         vkvv_vp9_state_create,  vkvv_vp9_state_destroy,  vp9_profile2_session_create,    vkvv_vulkan_vp9_session_destroy,
+        vkvv_vp9_begin_picture, vkvv_vp9_render_buffer, vkvv_vp9_prepare_decode, vkvv_vulkan_ensure_vp9_session, vp9_decode,
     };
 
     VAStatus av1_decode(void* runtime, void* session, VkvvDriver* drv, VkvvContext* vctx, VkvvSurface* target, VAProfile profile, void* state, char* reason, size_t reason_size) {
@@ -71,7 +90,7 @@ namespace {
         "av1",
         vkvv_av1_state_create,
         vkvv_av1_state_destroy,
-        vkvv_vulkan_av1_session_create,
+        av1_session_create,
         vkvv_vulkan_av1_session_destroy,
         vkvv_av1_begin_picture,
         vkvv_av1_render_buffer,

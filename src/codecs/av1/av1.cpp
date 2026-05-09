@@ -379,6 +379,18 @@ namespace {
         return true;
     }
 
+    bool av1_supported_bit_depth(uint8_t bit_depth) {
+        return bit_depth == 8 || bit_depth == 10;
+    }
+
+    unsigned int av1_rt_format(uint8_t bit_depth) {
+        return bit_depth > 8 ? VA_RT_FORMAT_YUV420_10 : VA_RT_FORMAT_YUV420;
+    }
+
+    unsigned int av1_fourcc(uint8_t bit_depth) {
+        return bit_depth > 8 ? VA_FOURCC_P010 : VA_FOURCC_NV12;
+    }
+
 } // namespace
 
 void* vkvv_av1_state_create(void) {
@@ -483,8 +495,9 @@ VAStatus vkvv_av1_prepare_decode(void* state, unsigned int* width, unsigned int*
         std::snprintf(reason, reason_size, "AV1 path currently supports only Profile0/Main");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
-    if (av1->pic.bit_depth_idx != 0) {
-        std::snprintf(reason, reason_size, "AV1 path currently supports only 8-bit NV12 decode");
+    const uint8_t bit_depth = av1_bit_depth(av1->pic);
+    if (!av1_supported_bit_depth(bit_depth)) {
+        std::snprintf(reason, reason_size, "AV1 path currently supports only 8-bit NV12 and 10-bit P010 decode");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
     if (av1->pic.seq_info_fields.fields.mono_chrome || !av1->pic.seq_info_fields.fields.subsampling_x || !av1->pic.seq_info_fields.fields.subsampling_y) {
@@ -524,11 +537,12 @@ VAStatus vkvv_av1_prepare_decode(void* state, unsigned int* width, unsigned int*
     if (!av1->decode_tiles.empty()) {
         first_tile_offset = av1->decode_tiles[0].offset;
     }
-    std::snprintf(reason, reason_size,
-                  "captured AV1 picture: %ux%u profile=%u depth=%u tiles=%zu bitstream=%zu decode=%zu window=%u frame=%u show=%u refresh=0x%02x header=%u tile0=%u q=%u", *width,
-                  *height, av1->pic.profile, av1_bit_depth(av1->pic), av1->decode_tiles.size(), av1->bitstream.size(), av1->decode_bitstream.size(), window_offset,
-                  av1->pic.pic_info_fields.bits.frame_type, av1->pic.pic_info_fields.bits.show_frame, av1->header.refresh_frame_flags, av1->header.frame_header_offset,
-                  first_tile_offset, av1->pic.base_qindex);
+    std::snprintf(
+        reason, reason_size,
+        "captured AV1 picture: %ux%u profile=%u depth=%u fourcc=0x%x tiles=%zu bitstream=%zu decode=%zu window=%u frame=%u show=%u refresh=0x%02x header=%u tile0=%u q=%u", *width,
+        *height, av1->pic.profile, bit_depth, av1_fourcc(bit_depth), av1->decode_tiles.size(), av1->bitstream.size(), av1->decode_bitstream.size(), window_offset,
+        av1->pic.pic_info_fields.bits.frame_type, av1->pic.pic_info_fields.bits.show_frame, av1->header.refresh_frame_flags, av1->header.frame_header_offset, first_tile_offset,
+        av1->pic.base_qindex);
     return VA_STATUS_SUCCESS;
 }
 
@@ -549,8 +563,8 @@ VAStatus vkvv_av1_get_decode_input(void* state, VkvvAV1DecodeInput* input) {
     input->bitstream_size = av1->decode_bitstream.size();
     input->header         = av1->header;
     input->bit_depth      = av1_bit_depth(av1->pic);
-    input->rt_format      = VA_RT_FORMAT_YUV420;
-    input->fourcc         = VA_FOURCC_NV12;
+    input->rt_format      = av1_rt_format(input->bit_depth);
+    input->fourcc         = av1_fourcc(input->bit_depth);
     input->frame_width    = static_cast<uint32_t>(av1->pic.frame_width_minus1) + 1;
     input->frame_height   = static_cast<uint32_t>(av1->pic.frame_height_minus1) + 1;
     return VA_STATUS_SUCCESS;

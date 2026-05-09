@@ -19,6 +19,12 @@ namespace vkvv {
         .std_profile = STD_VIDEO_AV1_PROFILE_MAIN,
     };
 
+    inline constexpr VideoProfileSpec av1_profile0_10bit_spec{
+        .operation   = VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR,
+        .bit_depth   = VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
+        .std_profile = STD_VIDEO_AV1_PROFILE_MAIN,
+    };
+
     struct AV1ReferenceSlot {
         VASurfaceID                    surface_id = VA_INVALID_ID;
         int                            slot       = -1;

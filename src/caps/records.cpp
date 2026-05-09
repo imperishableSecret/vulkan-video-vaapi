@@ -110,7 +110,7 @@ namespace {
         VkvvProfileCapability* cap = add_profile_record(drv, VAProfileAV1Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE, VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR,
                                                         VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME, drv->caps.av1_limits, drv->caps.av1 || drv->caps.av1_10, true, true);
         add_format_variant(cap, VA_RT_FORMAT_YUV420, drv->caps.av1, drv->caps.surface_export_nv12);
-        add_format_variant(cap, VA_RT_FORMAT_YUV420_10, drv->caps.av1_10, false);
+        add_format_variant(cap, VA_RT_FORMAT_YUV420_10, drv->caps.av1_10, drv->caps.surface_export_p010);
     }
 
     void add_vp9_profile2(VkvvDriver* drv) {

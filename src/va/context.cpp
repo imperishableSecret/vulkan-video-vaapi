@@ -99,7 +99,7 @@ VAStatus vkvvCreateContext(VADriverContextP ctx, VAConfigID config_id, int pictu
             }
         }
         vctx->decode_state   = vctx->decode_ops->state_create();
-        vctx->decode_session = vctx->decode_ops->session_create();
+        vctx->decode_session = vctx->decode_ops->session_create(config);
         if (vctx->decode_state == NULL || vctx->decode_session == NULL) {
             vkvv_release_context_payload(drv, vctx);
             delete vctx;

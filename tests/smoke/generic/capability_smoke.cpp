@@ -281,6 +281,7 @@ int main(void) {
     ok = check_decode_profile(display, VAProfileVP9Profile0, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
     ok = check_decode_profile(display, VAProfileVP9Profile2, VA_RT_FORMAT_YUV420_10, VA_FOURCC_P010) && ok;
     ok = check_decode_profile(display, VAProfileAV1Profile0, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12) && ok;
+    ok = check_decode_profile(display, VAProfileAV1Profile0, VA_RT_FORMAT_YUV420_10, VA_FOURCC_P010) && ok;
     ok = check_encode_entrypoint_not_advertised(display, VAProfileH264High, VAEntrypointEncSlice, "H.264 EncSlice advertising") && ok;
     ok = check_encode_entrypoint_not_advertised(display, VAProfileH264High, VAEntrypointEncSliceLP, "H.264 EncSliceLP advertising") && ok;
     ok = check_encode_entrypoint_not_advertised(display, VAProfileH264High, VAEntrypointEncPicture, "H.264 EncPicture advertising") && ok;
