@@ -509,8 +509,63 @@ namespace vkvv {
         reference->temporal_id         = 0;
     }
 
-    bool copy_encoded_output_to_coded_buffer(VulkanRuntime* runtime, H264EncodeSession* session, VkvvBuffer* coded, uint32_t offset, uint32_t bytes, char* reason,
-                                             size_t reason_size) {
+    bool fetch_h264_encode_parameter_bytes(VulkanRuntime* runtime, H264EncodeSession* session, const VkvvH264EncodeInput* input, std::vector<uint8_t>* parameter_bytes,
+                                           char* reason, size_t reason_size) {
+        if (runtime == nullptr || session == nullptr || input == nullptr || input->sequence == nullptr || input->picture == nullptr || parameter_bytes == nullptr) {
+            std::snprintf(reason, reason_size, "missing H.264 encode parameter fetch state");
+            return false;
+        }
+        parameter_bytes->clear();
+        if (input->frame_type != VKVV_H264_ENCODE_FRAME_IDR) {
+            return true;
+        }
+
+        VkVideoEncodeH264SessionParametersGetInfoKHR h264_get{};
+        h264_get.sType       = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_SESSION_PARAMETERS_GET_INFO_KHR;
+        h264_get.writeStdSPS = VK_TRUE;
+        h264_get.writeStdPPS = VK_TRUE;
+        h264_get.stdSPSId    = input->sequence->seq_parameter_set_id;
+        h264_get.stdPPSId    = input->picture->pic_parameter_set_id;
+
+        VkVideoEncodeSessionParametersGetInfoKHR get{};
+        get.sType                  = VK_STRUCTURE_TYPE_VIDEO_ENCODE_SESSION_PARAMETERS_GET_INFO_KHR;
+        get.pNext                  = &h264_get;
+        get.videoSessionParameters = session->parameters;
+
+        VkVideoEncodeH264SessionParametersFeedbackInfoKHR h264_feedback{};
+        h264_feedback.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_SESSION_PARAMETERS_FEEDBACK_INFO_KHR;
+
+        VkVideoEncodeSessionParametersFeedbackInfoKHR feedback{};
+        feedback.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_SESSION_PARAMETERS_FEEDBACK_INFO_KHR;
+        feedback.pNext = &h264_feedback;
+
+        size_t   data_size = 0;
+        VkResult result    = runtime->get_encoded_video_session_parameters(runtime->device, &get, &feedback, &data_size, nullptr);
+        if (!record_vk_result(runtime, result, "vkGetEncodedVideoSessionParametersKHR", "H.264 encode parameter size", reason, reason_size)) {
+            return false;
+        }
+        if (data_size == 0) {
+            std::snprintf(reason, reason_size, "H.264 encode returned empty SPS/PPS parameters");
+            return false;
+        }
+
+        try {
+            parameter_bytes->resize(data_size);
+        } catch (const std::bad_alloc&) {
+            std::snprintf(reason, reason_size, "failed to allocate H.264 parameter bytes");
+            return false;
+        }
+        result = runtime->get_encoded_video_session_parameters(runtime->device, &get, &feedback, &data_size, parameter_bytes->data());
+        if (!record_vk_result(runtime, result, "vkGetEncodedVideoSessionParametersKHR", "H.264 encode parameters", reason, reason_size)) {
+            parameter_bytes->clear();
+            return false;
+        }
+        parameter_bytes->resize(data_size);
+        return true;
+    }
+
+    bool copy_encoded_output_to_coded_buffer(VulkanRuntime* runtime, H264EncodeSession* session, VkvvBuffer* coded, const std::vector<uint8_t>& parameter_prefix, uint32_t offset,
+                                             uint32_t bytes, char* reason, size_t reason_size) {
         if (coded == nullptr || coded->coded_payload == nullptr) {
             std::snprintf(reason, reason_size, "missing H.264 coded output buffer");
             return false;
@@ -536,7 +591,29 @@ namespace vkvv {
         }
 
         const uint64_t generation = coded->coded_payload->generation;
-        VAStatus       status     = vkvv_coded_buffer_store(coded, static_cast<uint8_t*>(mapped) + offset, bytes, 0, generation);
+        VAStatus       status     = VA_STATUS_SUCCESS;
+        if (parameter_prefix.empty()) {
+            status = vkvv_coded_buffer_store(coded, static_cast<uint8_t*>(mapped) + offset, bytes, 0, generation);
+        } else {
+            const size_t total_size = parameter_prefix.size() + bytes;
+            if (total_size > coded->coded_payload->capacity) {
+                vkUnmapMemory(runtime->device, session->readback.memory);
+                std::snprintf(reason, reason_size, "H.264 coded output plus parameters exceeds coded buffer: params=%llu bytes=%u capacity=%u",
+                              static_cast<unsigned long long>(parameter_prefix.size()), bytes, coded->coded_payload->capacity);
+                return false;
+            }
+            std::vector<uint8_t> combined;
+            try {
+                combined.resize(total_size);
+            } catch (const std::bad_alloc&) {
+                vkUnmapMemory(runtime->device, session->readback.memory);
+                std::snprintf(reason, reason_size, "failed to allocate combined H.264 coded output");
+                return false;
+            }
+            std::memcpy(combined.data(), parameter_prefix.data(), parameter_prefix.size());
+            std::memcpy(combined.data() + parameter_prefix.size(), static_cast<uint8_t*>(mapped) + offset, bytes);
+            status = vkvv_coded_buffer_store(coded, combined.data(), combined.size(), 0, generation);
+        }
         vkUnmapMemory(runtime->device, session->readback.memory);
         if (status != VA_STATUS_SUCCESS) {
             std::snprintf(reason, reason_size, "failed to store H.264 coded output: %s", vaErrorStr(status));
@@ -781,7 +858,17 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
         return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
     }
 
-    const VkDeviceSize output_capacity = std::max<VkDeviceSize>(coded->coded_payload->capacity, 1);
+    std::vector<uint8_t> parameter_prefix;
+    if (!fetch_h264_encode_parameter_bytes(runtime, session, input, &parameter_prefix, reason, reason_size)) {
+        return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
+    }
+    if (parameter_prefix.size() >= coded->coded_payload->capacity) {
+        std::snprintf(reason, reason_size, "H.264 SPS/PPS parameters exceed coded buffer capacity: params=%llu capacity=%u",
+                      static_cast<unsigned long long>(parameter_prefix.size()), coded->coded_payload->capacity);
+        return fail_coded(VA_STATUS_ERROR_NOT_ENOUGH_BUFFER);
+    }
+
+    const VkDeviceSize output_capacity = std::max<VkDeviceSize>(coded->coded_payload->capacity - parameter_prefix.size(), 1);
     if (!ensure_buffer(runtime, &h264_encode_profile_spec, output_capacity, VK_BUFFER_USAGE_VIDEO_ENCODE_DST_BIT_KHR | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, &session->output, "H.264 encoded output", reason, reason_size)) {
         return fail_coded(VA_STATUS_ERROR_ALLOCATION_FAILED);
@@ -987,7 +1074,7 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
         std::snprintf(reason, reason_size, "H.264 encode feedback reported status=%d bytes=%u", feedback.status, feedback.bytes_written);
         return fail_coded(feedback.status == VK_QUERY_RESULT_STATUS_INSUFFICIENT_BITSTREAM_BUFFER_RANGE_KHR ? VA_STATUS_ERROR_NOT_ENOUGH_BUFFER : VA_STATUS_ERROR_OPERATION_FAILED);
     }
-    if (!copy_encoded_output_to_coded_buffer(runtime, session, coded, feedback.offset, feedback.bytes_written, reason, reason_size)) {
+    if (!copy_encoded_output_to_coded_buffer(runtime, session, coded, parameter_prefix, feedback.offset, feedback.bytes_written, reason, reason_size)) {
         return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
     }
 
@@ -999,8 +1086,9 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
             reconstructed_resource->content_generation++;
         }
     }
-    std::snprintf(reason, reason_size, "submitted H.264 Vulkan encode: %ux%u bytes=%u coded=%u rc=disabled input_mem=%llu recon_mem=%llu output_mem=%llu", coded_extent.width,
-                  coded_extent.height, feedback.bytes_written, input->coded_buffer, static_cast<unsigned long long>(input_resource->allocation_size),
+    std::snprintf(reason, reason_size, "submitted H.264 Vulkan encode: %ux%u params=%llu bytes=%u coded=%u rc=disabled input_mem=%llu recon_mem=%llu output_mem=%llu",
+                  coded_extent.width, coded_extent.height, static_cast<unsigned long long>(parameter_prefix.size()), feedback.bytes_written, input->coded_buffer,
+                  static_cast<unsigned long long>(input_resource->allocation_size),
                   static_cast<unsigned long long>(reconstructed_resource != nullptr ? reconstructed_resource->allocation_size : 0),
                   static_cast<unsigned long long>(session->output.allocation_size));
     return VA_STATUS_SUCCESS;

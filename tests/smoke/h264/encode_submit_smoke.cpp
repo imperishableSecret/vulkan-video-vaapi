@@ -34,6 +34,24 @@ namespace {
         return size >= 4 && bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0x00 && bytes[3] == 0x01;
     }
 
+    bool contains_h264_nal_type(const unsigned char* bytes, unsigned int size, unsigned int expected_type) {
+        if (bytes == nullptr || size < 4) {
+            return false;
+        }
+        for (unsigned int i = 0; i + 3 < size; i++) {
+            unsigned int nal_offset = 0;
+            if (bytes[i] == 0x00 && bytes[i + 1] == 0x00 && bytes[i + 2] == 0x01) {
+                nal_offset = i + 3;
+            } else if (i + 4 < size && bytes[i] == 0x00 && bytes[i + 1] == 0x00 && bytes[i + 2] == 0x00 && bytes[i + 3] == 0x01) {
+                nal_offset = i + 4;
+            }
+            if (nal_offset != 0 && nal_offset < size && (bytes[nal_offset] & 0x1f) == expected_type) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool check_coded_segment(const VACodedBufferSegment* segment) {
         if (!check(segment != nullptr && segment->size > 0 && segment->buf != nullptr, "encoded coded segment is empty")) {
             return false;
@@ -44,6 +62,16 @@ namespace {
             non_zero = non_zero || bytes[i] != 0;
         }
         return check(non_zero, "encoded coded segment was all zeroes") && check(has_annexb_start_code(bytes, segment->size), "encoded coded segment did not start with Annex-B");
+    }
+
+    bool check_idr_access_unit(const VACodedBufferSegment* segment) {
+        if (!check_coded_segment(segment)) {
+            return false;
+        }
+        const auto* bytes = static_cast<const unsigned char*>(segment->buf);
+        return check(contains_h264_nal_type(bytes, segment->size, 7), "encoded IDR access unit did not include SPS") &&
+            check(contains_h264_nal_type(bytes, segment->size, 8), "encoded IDR access unit did not include PPS") &&
+            check(contains_h264_nal_type(bytes, segment->size, 5), "encoded IDR access unit did not include IDR slice");
     }
 
     VASurfaceID add_test_surface(VkvvDriver* drv, unsigned int width, unsigned int height, uint64_t stream_id) {
@@ -217,7 +245,7 @@ int main(void) {
     void* mapped_coded = nullptr;
     ok                 = check_va(vkvvMapBuffer(&ctx, coded_buffer, &mapped_coded), VA_STATUS_SUCCESS, "map coded buffer") && ok;
     auto* segment      = static_cast<VACodedBufferSegment*>(mapped_coded);
-    ok                 = check_coded_segment(segment) && ok;
+    ok                 = check_idr_access_unit(segment) && ok;
     ok                 = check_va(vkvvUnmapBuffer(&ctx, coded_buffer), VA_STATUS_SUCCESS, "unmap coded buffer") && ok;
 
     picture.pic_fields.bits.idr_pic_flag = 0;
