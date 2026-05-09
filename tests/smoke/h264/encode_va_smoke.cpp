@@ -242,7 +242,6 @@ int main(void) {
     VABufferID  coded_buffer     = VA_INVALID_ID;
     VABufferID  p_picture_buffer = VA_INVALID_ID;
     VABufferID  p_slice_buffer   = VA_INVALID_ID;
-    VABufferID  p_coded_buffer   = VA_INVALID_ID;
 
     if (ok) {
         ok = check_va(vaCreateSurfaces(display, VA_RT_FORMAT_YUV420, 64, 64, surfaces, 3, nullptr, 0), "vaCreateSurfaces(H264 encode)") && ok;
@@ -297,9 +296,8 @@ int main(void) {
     }
 
     if (ok) {
-        ok = check_va(vaPutImage(display, surfaces[0], image.image_id, 0, 0, 64, 64, 0, 0, 64, 64), "vaPutImage(P encode input)") && ok;
-        ok = check_va(vaCreateBuffer(display, context, VAEncCodedBufferType, 1024 * 1024, 1, nullptr, &p_coded_buffer), "vaCreateBuffer(P coded)") && ok;
-        VAEncPictureParameterBufferH264 p_picture = make_picture(surfaces[2], p_coded_buffer, false, 1, 2, surfaces[1]);
+        ok                                        = check_va(vaPutImage(display, surfaces[0], image.image_id, 0, 0, 64, 64, 0, 0, 64, 64), "vaPutImage(P encode input)") && ok;
+        VAEncPictureParameterBufferH264 p_picture = make_picture(surfaces[2], coded_buffer, false, 1, 2, surfaces[1]);
         VAEncSliceParameterBufferH264   p_slice   = make_slice(0, surfaces[1]);
 
         ok = check_va(vaCreateBuffer(display, context, VAEncPictureParameterBufferType, sizeof(p_picture), 1, &p_picture, &p_picture_buffer), "vaCreateBuffer(P picture)") && ok;
@@ -309,13 +307,13 @@ int main(void) {
         ok                          = check_va(vaBeginPicture(display, context, surfaces[0]), "vaBeginPicture(H264 P encode)") && ok;
         ok                          = check_va(vaRenderPicture(display, context, render_buffers, 3), "vaRenderPicture(H264 P encode)") && ok;
         ok                          = check_va(vaEndPicture(display, context), "vaEndPicture(H264 P encode)") && ok;
-        ok                          = check_va(vaSyncBuffer(display, p_coded_buffer, UINT64_MAX), "vaSyncBuffer(P coded)") && ok;
+        ok                          = check_va(vaSyncBuffer(display, coded_buffer, UINT64_MAX), "vaSyncBuffer(reused P coded)") && ok;
 
         void* mapped_coded = nullptr;
-        ok                 = check_va(vaMapBuffer(display, p_coded_buffer, &mapped_coded), "vaMapBuffer(P coded)") && ok;
+        ok                 = check_va(vaMapBuffer(display, coded_buffer, &mapped_coded), "vaMapBuffer(reused P coded)") && ok;
         auto* segment      = static_cast<VACodedBufferSegment*>(mapped_coded);
-        ok                 = check(segment != nullptr && segment->size > 0 && segment->buf != nullptr, "P encoded coded segment is empty") && ok;
-        ok                 = check_va(vaUnmapBuffer(display, p_coded_buffer), "vaUnmapBuffer(P coded)") && ok;
+        ok                 = check(segment != nullptr && segment->size > 0 && segment->buf != nullptr, "reused P encoded coded segment is empty") && ok;
+        ok                 = check_va(vaUnmapBuffer(display, coded_buffer), "vaUnmapBuffer(reused P coded)") && ok;
     }
 
     if (sequence_buffer != VA_INVALID_ID) {
@@ -335,9 +333,6 @@ int main(void) {
     }
     if (p_slice_buffer != VA_INVALID_ID) {
         ok = check_va(vaDestroyBuffer(display, p_slice_buffer), "vaDestroyBuffer(P slice)") && ok;
-    }
-    if (p_coded_buffer != VA_INVALID_ID) {
-        ok = check_va(vaDestroyBuffer(display, p_coded_buffer), "vaDestroyBuffer(P coded)") && ok;
     }
     if (image.image_id != VA_INVALID_ID) {
         ok = check_va(vaDestroyImage(display, image.image_id), "vaDestroyImage") && ok;
