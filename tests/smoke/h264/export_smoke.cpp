@@ -45,6 +45,24 @@ namespace {
         };
     }
 
+    vkvv::DecodeImageKey vp9_decode_key(const vkvv::VP9VideoSession* session, const VkvvSurface* surface, VkExtent2D coded_extent) {
+        return {
+            .codec_operation          = session->video.key.codec_operation,
+            .codec_profile            = session->video.key.codec_profile,
+            .picture_format           = session->video.key.picture_format,
+            .reference_picture_format = session->video.key.reference_picture_format,
+            .va_rt_format             = surface->rt_format,
+            .va_fourcc                = surface->fourcc,
+            .coded_extent             = coded_extent,
+            .usage                    = session->video.key.image_usage,
+            .create_flags             = session->video.key.image_create_flags,
+            .tiling                   = session->video.key.image_tiling,
+            .chroma_subsampling       = session->video.key.chroma_subsampling,
+            .luma_bit_depth           = session->video.key.luma_bit_depth,
+            .chroma_bit_depth         = session->video.key.chroma_bit_depth,
+        };
+    }
+
     bool retained_memory_present(const vkvv::VulkanRuntime* runtime, VkDeviceMemory memory, uint64_t driver_instance_id, VASurfaceID surface_id) {
         for (const vkvv::RetainedExportBacking& backing : runtime->retained_exports) {
             const vkvv::ExportResource& resource = backing.resource;
@@ -289,6 +307,255 @@ namespace {
             late_resource->export_resource.black_placeholder || late_resource->export_resource.seed_source_surface_id != decoded.id ||
             late_resource->export_resource.seed_source_generation != decoded_resource->content_generation) {
             std::fprintf(stderr, "predecode export did not seed from the last same-stream decoded surface before fd return\n");
+            cleanup();
+            return false;
+        }
+
+        cleanup();
+        return true;
+    }
+
+    bool check_nondisplay_decode_does_not_replace_last_good_seed(vkvv::VulkanRuntime* runtime) {
+        char                        reason[512] = {};
+        void*                       session     = nullptr;
+        VADRMPRIMESurfaceDescriptor nondisplay_descriptor{};
+        VADRMPRIMESurfaceDescriptor late_descriptor{};
+        nondisplay_descriptor.objects[0].fd = -1;
+        late_descriptor.objects[0].fd       = -1;
+
+        VkvvSurface decoded{};
+        init_nv12_surface(&decoded, 915, h264_stream_id + 4, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+
+        VkvvSurface nondisplay{};
+        init_nv12_surface(&nondisplay, 916, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+
+        VkvvSurface late_export{};
+        init_nv12_surface(&late_export, 917, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+
+        auto cleanup = [&]() {
+            if (nondisplay_descriptor.objects[0].fd >= 0) {
+                close(nondisplay_descriptor.objects[0].fd);
+                nondisplay_descriptor.objects[0].fd = -1;
+            }
+            if (late_descriptor.objects[0].fd >= 0) {
+                close(late_descriptor.objects[0].fd);
+                late_descriptor.objects[0].fd = -1;
+            }
+            vkvv_vulkan_surface_destroy(runtime, &late_export);
+            vkvv_vulkan_surface_destroy(runtime, &nondisplay);
+            vkvv_vulkan_surface_destroy(runtime, &decoded);
+            vkvv_vulkan_h264_session_destroy(runtime, session);
+        };
+
+        session = vkvv_vulkan_h264_session_create();
+        if (session == nullptr) {
+            cleanup();
+            return false;
+        }
+        VAStatus status = vkvv_vulkan_ensure_h264_session(runtime, session, 64, 64, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        if (status != VA_STATUS_SUCCESS) {
+            cleanup();
+            return false;
+        }
+
+        auto*                      typed_session = static_cast<vkvv::H264VideoSession*>(session);
+        const vkvv::DecodeImageKey decode_key    = h264_decode_key(typed_session, &decoded, {64, 64});
+        if (!vkvv::ensure_surface_resource(runtime, &decoded, decode_key, reason, sizeof(reason))) {
+            std::fprintf(stderr, "%s\n", reason);
+            cleanup();
+            return false;
+        }
+        auto* decoded_resource = static_cast<vkvv::SurfaceResource*>(decoded.vulkan);
+        decoded.decoded        = true;
+        decoded_resource->content_generation++;
+        status = vkvv_vulkan_refresh_surface_export(runtime, &decoded, true, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            std::printf("%s\n", reason);
+        }
+        if (status != VA_STATUS_SUCCESS || decoded_resource->export_seed_generation != decoded_resource->content_generation) {
+            std::fprintf(stderr, "displayable decode was not published as an export seed\n");
+            cleanup();
+            return false;
+        }
+
+        status = vkvv_vulkan_prepare_surface_export(runtime, &nondisplay, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        if (status != VA_STATUS_SUCCESS) {
+            cleanup();
+            return false;
+        }
+        status = vkvv_vulkan_export_surface(runtime, &nondisplay, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &nondisplay_descriptor, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        auto* nondisplay_resource = static_cast<vkvv::SurfaceResource*>(nondisplay.vulkan);
+        if (status != VA_STATUS_SUCCESS || nondisplay_resource == nullptr || !nondisplay_resource->export_resource.predecode_seeded ||
+            nondisplay_resource->export_resource.seed_source_surface_id != decoded.id) {
+            std::fprintf(stderr, "non-display predecode export did not seed from the displayable last-good frame\n");
+            cleanup();
+            return false;
+        }
+
+        const vkvv::DecodeImageKey nondisplay_decode_key = h264_decode_key(typed_session, &nondisplay, {64, 64});
+        if (!vkvv::ensure_surface_resource(runtime, &nondisplay, nondisplay_decode_key, reason, sizeof(reason))) {
+            std::fprintf(stderr, "%s\n", reason);
+            cleanup();
+            return false;
+        }
+        nondisplay_resource = static_cast<vkvv::SurfaceResource*>(nondisplay.vulkan);
+        nondisplay.decoded  = true;
+        nondisplay_resource->content_generation++;
+        status = vkvv_vulkan_refresh_surface_export(runtime, &nondisplay, false, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            std::printf("%s\n", reason);
+        }
+        if (status != VA_STATUS_SUCCESS || nondisplay_resource->export_seed_generation != 0) {
+            std::fprintf(stderr, "non-display decode incorrectly remained eligible as an export seed\n");
+            cleanup();
+            return false;
+        }
+        if (nondisplay_resource->export_resource.content_generation != nondisplay_resource->content_generation ||
+            vkvv_vulkan_surface_has_predecode_export(&nondisplay)) {
+            std::fprintf(stderr, "non-display decode did not refresh its already exported shadow in place\n");
+            cleanup();
+            return false;
+        }
+
+        status = vkvv_vulkan_prepare_surface_export(runtime, &late_export, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        if (status != VA_STATUS_SUCCESS) {
+            cleanup();
+            return false;
+        }
+        status = vkvv_vulkan_export_surface(runtime, &late_export, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &late_descriptor, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        auto* late_resource = static_cast<vkvv::SurfaceResource*>(late_export.vulkan);
+        if (status != VA_STATUS_SUCCESS || late_resource == nullptr || !late_resource->export_resource.predecode_seeded ||
+            late_resource->export_resource.seed_source_surface_id != decoded.id || late_resource->export_resource.seed_source_surface_id == nondisplay.id) {
+            std::fprintf(stderr, "non-display decode replaced the displayable last-good export seed\n");
+            cleanup();
+            return false;
+        }
+
+        cleanup();
+        return true;
+    }
+
+    bool check_nondisplay_import_does_not_attach_retained_cross_codec_backing(vkvv::VulkanRuntime* runtime) {
+        char                        reason[512] = {};
+        void*                       vp9_session = nullptr;
+        void*                       h264_session = nullptr;
+        VADRMPRIMESurfaceDescriptor descriptor{};
+        descriptor.objects[0].fd = -1;
+
+        VkvvSurface vp9_decoded{};
+        init_nv12_surface(&vp9_decoded, 918, vp9_stream_id + 1, VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR);
+
+        VkvvSurface imported_nondisplay{};
+        init_nv12_surface(&imported_nondisplay, 919, h264_stream_id + 5, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+
+        auto cleanup = [&]() {
+            if (descriptor.objects[0].fd >= 0) {
+                close(descriptor.objects[0].fd);
+                descriptor.objects[0].fd = -1;
+            }
+            vkvv_vulkan_surface_destroy(runtime, &imported_nondisplay);
+            vkvv_vulkan_surface_destroy(runtime, &vp9_decoded);
+            vkvv_vulkan_h264_session_destroy(runtime, h264_session);
+            vkvv_vulkan_vp9_session_destroy(runtime, vp9_session);
+        };
+
+        vp9_session = vkvv_vulkan_vp9_session_create();
+        if (vp9_session == nullptr) {
+            cleanup();
+            return false;
+        }
+        VAStatus status = vkvv_vulkan_ensure_vp9_session(runtime, vp9_session, 64, 64, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        if (status != VA_STATUS_SUCCESS) {
+            cleanup();
+            return false;
+        }
+
+        auto*                      typed_vp9_session = static_cast<vkvv::VP9VideoSession*>(vp9_session);
+        const vkvv::DecodeImageKey vp9_key           = vp9_decode_key(typed_vp9_session, &vp9_decoded, {64, 64});
+        if (!vkvv::ensure_surface_resource(runtime, &vp9_decoded, vp9_key, reason, sizeof(reason))) {
+            std::fprintf(stderr, "%s\n", reason);
+            cleanup();
+            return false;
+        }
+        auto* vp9_resource = static_cast<vkvv::SurfaceResource*>(vp9_decoded.vulkan);
+        vp9_decoded.decoded = true;
+        vp9_resource->content_generation++;
+        status = vkvv_vulkan_refresh_surface_export(runtime, &vp9_decoded, true, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            std::printf("%s\n", reason);
+        }
+        if (status != VA_STATUS_SUCCESS) {
+            cleanup();
+            return false;
+        }
+        status = vkvv_vulkan_export_surface(runtime, &vp9_decoded, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &descriptor, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        const VkvvFdIdentity retained_fd = vkvv::retained_export_fd_identity(vp9_resource->export_resource);
+        if (status != VA_STATUS_SUCCESS || !retained_fd.valid) {
+            std::fprintf(stderr, "VP9 source export did not produce a retained fd identity\n");
+            cleanup();
+            return false;
+        }
+        vkvv_vulkan_surface_destroy(runtime, &vp9_decoded);
+        if (runtime->retained_exports.empty()) {
+            std::fprintf(stderr, "destroying VP9 source did not retain its exported backing\n");
+            cleanup();
+            return false;
+        }
+
+        imported_nondisplay.import.external = true;
+        imported_nondisplay.import.fd       = retained_fd;
+        imported_nondisplay.import.fourcc   = imported_nondisplay.fourcc;
+        imported_nondisplay.import.width    = imported_nondisplay.width;
+        imported_nondisplay.import.height   = imported_nondisplay.height;
+
+        h264_session = vkvv_vulkan_h264_session_create();
+        if (h264_session == nullptr) {
+            cleanup();
+            return false;
+        }
+        status = vkvv_vulkan_ensure_h264_session(runtime, h264_session, 64, 64, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        if (status != VA_STATUS_SUCCESS) {
+            cleanup();
+            return false;
+        }
+
+        auto*                      typed_h264_session = static_cast<vkvv::H264VideoSession*>(h264_session);
+        const vkvv::DecodeImageKey h264_key           = h264_decode_key(typed_h264_session, &imported_nondisplay, {64, 64});
+        if (!vkvv::ensure_surface_resource(runtime, &imported_nondisplay, h264_key, reason, sizeof(reason))) {
+            std::fprintf(stderr, "%s\n", reason);
+            cleanup();
+            return false;
+        }
+        auto* imported_resource       = static_cast<vkvv::SurfaceResource*>(imported_nondisplay.vulkan);
+        imported_nondisplay.decoded   = true;
+        imported_resource->content_generation++;
+        status = vkvv_vulkan_refresh_surface_export(runtime, &imported_nondisplay, false, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            std::printf("%s\n", reason);
+        }
+        if (status != VA_STATUS_SUCCESS || imported_resource->export_resource.image != VK_NULL_HANDLE || imported_resource->exported) {
+            std::fprintf(stderr, "non-display imported decode attached a retained cross-codec export backing\n");
+            cleanup();
+            return false;
+        }
+
+        imported_resource->content_generation++;
+        status = vkvv_vulkan_refresh_surface_export(runtime, &imported_nondisplay, true, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            std::printf("%s\n", reason);
+        }
+        if (status != VA_STATUS_SUCCESS || imported_resource->export_resource.image == VK_NULL_HANDLE ||
+            imported_resource->export_resource.content_generation != imported_resource->content_generation ||
+            imported_resource->export_resource.codec_operation != VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) {
+            std::fprintf(stderr, "displayable imported decode did not attach and refresh the retained backing\n");
             cleanup();
             return false;
         }
@@ -630,6 +897,14 @@ int main(void) {
         return 1;
     }
     if (!check_export_time_last_good_seeding(typed_runtime)) {
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    if (!check_nondisplay_decode_does_not_replace_last_good_seed(typed_runtime)) {
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    if (!check_nondisplay_import_does_not_attach_retained_cross_codec_backing(typed_runtime)) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }

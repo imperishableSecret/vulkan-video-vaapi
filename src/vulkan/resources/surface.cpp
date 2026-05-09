@@ -421,6 +421,10 @@ namespace vkvv {
         resource->has_drm_format_modifier = false;
         resource->decode_key              = {};
         resource->layout                  = VK_IMAGE_LAYOUT_UNDEFINED;
+        resource->last_nondisplay_skip_generation        = 0;
+        resource->last_nondisplay_skip_shadow_generation = 0;
+        resource->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
+        resource->last_display_refresh_generation        = 0;
     }
 
     void destroy_surface_resource_raw(VulkanRuntime* runtime, SurfaceResource* resource) {
@@ -467,7 +471,12 @@ namespace vkvv {
             if (existing->stream_id != stream_id || existing->codec_operation != codec_operation) {
                 unregister_export_seed_resource(runtime, existing);
                 detach_export_resource(runtime, existing);
-                existing->content_generation = 0;
+                existing->content_generation     = 0;
+                existing->export_seed_generation = 0;
+                existing->last_nondisplay_skip_generation        = 0;
+                existing->last_nondisplay_skip_shadow_generation = 0;
+                existing->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
+                existing->last_display_refresh_generation        = 0;
             }
             existing->driver_instance_id = surface->driver_instance_id;
             existing->stream_id          = stream_id;
@@ -657,6 +666,10 @@ namespace vkvv {
         resource->decode_key         = key;
         resource->allocation_size    = requirements.size;
         resource->import             = surface->import;
+        resource->last_nondisplay_skip_generation        = 0;
+        resource->last_nondisplay_skip_shadow_generation = 0;
+        resource->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
+        resource->last_display_refresh_generation        = 0;
         if (request_exportable) {
             VkImageSubresource plane0{};
             plane0.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT;

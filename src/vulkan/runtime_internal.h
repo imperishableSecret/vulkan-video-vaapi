@@ -148,9 +148,14 @@ namespace vkvv {
         bool                          has_drm_format_modifier = false;
         bool                          exported                = false;
         VkvvExternalSurfaceImport     import;
+        uint64_t                      last_nondisplay_skip_generation        = 0;
+        uint64_t                      last_nondisplay_skip_shadow_generation = 0;
+        VkDeviceMemory                last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
+        uint64_t                      last_display_refresh_generation        = 0;
         ExportResource                export_resource{};
-        uint64_t                      content_generation = 0;
-        VkImageLayout                 layout             = VK_IMAGE_LAYOUT_UNDEFINED;
+        uint64_t                      content_generation     = 0;
+        uint64_t                      export_seed_generation = 0;
+        VkImageLayout                 layout                 = VK_IMAGE_LAYOUT_UNDEFINED;
     };
 
     struct UploadBuffer {

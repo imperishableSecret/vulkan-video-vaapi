@@ -530,6 +530,10 @@ namespace vkvv {
         resource->has_drm_format_modifier = false;
         resource->import                  = surface->import;
         resource->layout                  = VK_IMAGE_LAYOUT_UNDEFINED;
+        resource->last_nondisplay_skip_generation        = 0;
+        resource->last_nondisplay_skip_shadow_generation = 0;
+        resource->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
+        resource->last_display_refresh_generation        = 0;
         return true;
     }
 
@@ -574,8 +578,9 @@ namespace vkvv {
     }
 
     bool export_seed_source_valid(const SurfaceResource* source) {
-        return source != nullptr && source->image != VK_NULL_HANDLE && source->content_generation != 0 && source->driver_instance_id != 0 && source->stream_id != 0 &&
-            source->codec_operation != 0 && source->format != VK_FORMAT_UNDEFINED && source->va_fourcc != 0 && source->coded_extent.width != 0 && source->coded_extent.height != 0;
+        return source != nullptr && source->image != VK_NULL_HANDLE && source->content_generation != 0 && source->export_seed_generation == source->content_generation &&
+            source->driver_instance_id != 0 && source->stream_id != 0 && source->codec_operation != 0 && source->format != VK_FORMAT_UNDEFINED && source->va_fourcc != 0 &&
+            source->coded_extent.width != 0 && source->coded_extent.height != 0;
     }
 
     bool export_seed_target_valid(const SurfaceResource* target) {
@@ -616,7 +621,7 @@ namespace vkvv {
             .coded_extent       = resource->coded_extent,
             .resource           = resource,
             .surface_id         = resource->surface_id,
-            .content_generation = resource->content_generation,
+            .content_generation = resource->export_seed_generation,
         });
     }
 
@@ -641,12 +646,19 @@ namespace vkvv {
         for (size_t i = 0; i < runtime->export_seed_records.size();) {
             ExportSeedRecord& record = runtime->export_seed_records[i];
             if (!export_seed_source_valid(record.resource)) {
+                vkvv_trace("export-seed-stale-drop",
+                           "record_surface=%u record_stream=%llu record_codec=0x%x record_gen=%llu source_surface=%u source_gen=%llu source_seed_gen=%llu source_shadow_gen=%llu",
+                           record.surface_id, static_cast<unsigned long long>(record.stream_id), record.codec_operation, static_cast<unsigned long long>(record.content_generation),
+                           record.resource != nullptr ? record.resource->surface_id : VA_INVALID_ID,
+                           record.resource != nullptr ? static_cast<unsigned long long>(record.resource->content_generation) : 0ULL,
+                           record.resource != nullptr ? static_cast<unsigned long long>(record.resource->export_seed_generation) : 0ULL,
+                           record.resource != nullptr ? static_cast<unsigned long long>(record.resource->export_resource.content_generation) : 0ULL);
                 runtime->export_seed_records.erase(runtime->export_seed_records.begin() + static_cast<std::ptrdiff_t>(i));
                 continue;
             }
             if (export_seed_record_matches(record, target)) {
                 record.surface_id         = record.resource->surface_id;
-                record.content_generation = record.resource->content_generation;
+                record.content_generation = record.resource->export_seed_generation;
                 return record.resource;
             }
             i++;
@@ -661,9 +673,11 @@ namespace vkvv {
         std::string text;
         char        item[160] = {};
         for (const ExportSeedRecord& record : runtime->export_seed_records) {
-            std::snprintf(item, sizeof(item), "%ssurf%u/stream%llu/codec0x%x/gen%llu/%ux%u", text.empty() ? "" : ",", record.surface_id,
+            std::snprintf(item, sizeof(item), "%ssurf%u/stream%llu/codec0x%x/gen%llu/seed%llu/shadow%llu/%ux%u", text.empty() ? "" : ",", record.surface_id,
                           static_cast<unsigned long long>(record.stream_id), record.codec_operation, static_cast<unsigned long long>(record.content_generation),
-                          record.coded_extent.width, record.coded_extent.height);
+                          record.resource != nullptr ? static_cast<unsigned long long>(record.resource->export_seed_generation) : 0ULL,
+                          record.resource != nullptr ? static_cast<unsigned long long>(record.resource->export_resource.content_generation) : 0ULL, record.coded_extent.width,
+                          record.coded_extent.height);
             text += item;
         }
         return text.empty() ? "-" : text;
@@ -900,11 +914,12 @@ namespace vkvv {
         std::vector<ExportResource*> predecode_seed_targets = collect_predecode_seed_targets_locked(runtime, source);
         const bool                   owner_export_current   = source->content_generation != 0 && source->export_resource.content_generation == source->content_generation;
         if (owner_export_current && predecode_seed_targets.empty()) {
+            source->export_seed_generation = source->content_generation;
             remember_export_seed_resource_locked(runtime, source);
-            vkvv_trace("export-copy-skip-current", "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu", source->surface_id,
-                       static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
-                       static_cast<unsigned long long>(source->content_generation), vkvv_trace_handle(source->export_resource.memory),
-                       static_cast<unsigned long long>(source->export_resource.content_generation));
+            vkvv_trace("export-copy-skip-current", "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu seed_gen=%llu shadow_mem=0x%llx shadow_gen=%llu",
+                       source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
+                       static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(source->export_seed_generation),
+                       vkvv_trace_handle(source->export_resource.memory), static_cast<unsigned long long>(source->export_resource.content_generation));
             return true;
         }
 
@@ -917,6 +932,7 @@ namespace vkvv {
             return false;
         }
         unregister_predecode_export_resource_locked(runtime, export_resource);
+        source->export_seed_generation = source->content_generation;
         remember_export_seed_resource_locked(runtime, source);
         if (seeded_predecode_exports != nullptr) {
             *seeded_predecode_exports = static_cast<uint32_t>(predecode_seed_targets.size());
@@ -926,6 +942,62 @@ namespace vkvv {
                    static_cast<unsigned long long>(source->content_generation), vkvv_trace_handle(source->export_resource.memory),
                    static_cast<unsigned long long>(source->export_resource.content_generation), predecode_seed_targets.size(), source->export_resource.predecode_exported ? 1U : 0U,
                    source->export_resource.predecode_seeded ? 1U : 0U);
+        return true;
+    }
+
+    bool copy_surface_to_owner_export_resource(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size) {
+        if (runtime == nullptr || source == nullptr || source->image == VK_NULL_HANDLE) {
+            std::snprintf(reason, reason_size, "missing surface owner export copy source");
+            return false;
+        }
+        const ExportFormatInfo* format = export_format_for_surface(nullptr, source, reason, reason_size);
+        if (format == nullptr) {
+            return false;
+        }
+        vkvv_trace("export-owner-copy-enter", "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u seeded=%u",
+                   source != nullptr ? source->surface_id : VA_INVALID_ID, source != nullptr ? static_cast<unsigned long long>(source->driver_instance_id) : 0ULL,
+                   source != nullptr ? static_cast<unsigned long long>(source->stream_id) : 0ULL, source != nullptr ? source->codec_operation : 0U,
+                   source != nullptr ? static_cast<unsigned long long>(source->content_generation) : 0ULL,
+                   source != nullptr ? vkvv_trace_handle(source->export_resource.memory) : 0ULL,
+                   source != nullptr ? static_cast<unsigned long long>(source->export_resource.content_generation) : 0ULL,
+                   source != nullptr && source->export_resource.predecode_exported ? 1U : 0U, source != nullptr && source->export_resource.predecode_seeded ? 1U : 0U);
+        retag_predecode_export_to_source(source);
+        if (source->export_resource.exported && !export_resource_matches_surface(source)) {
+            vkvv_trace("export-owner-copy-detach-mismatch", "surface=%u driver=%llu stream=%llu codec=0x%x shadow_stream=%llu shadow_codec=0x%x shadow_mem=0x%llx",
+                       source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id),
+                       source->codec_operation, static_cast<unsigned long long>(source->export_resource.stream_id), source->export_resource.codec_operation,
+                       vkvv_trace_handle(source->export_resource.memory));
+            detach_export_resource(runtime, source);
+        }
+        if (!ensure_export_resource(runtime, source, reason, reason_size)) {
+            return false;
+        }
+
+        std::unique_lock<std::mutex> export_lock(runtime->export_mutex);
+        const bool owner_export_current = source->content_generation != 0 && source->export_resource.content_generation == source->content_generation;
+        if (owner_export_current) {
+            source->export_seed_generation = 0;
+            unregister_export_seed_resource_locked(runtime, source);
+            vkvv_trace("export-owner-copy-skip-current",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu seed_gen=%llu", source->surface_id,
+                       static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
+                       static_cast<unsigned long long>(source->content_generation), vkvv_trace_handle(source->export_resource.memory),
+                       static_cast<unsigned long long>(source->export_resource.content_generation), static_cast<unsigned long long>(source->export_seed_generation));
+            return true;
+        }
+
+        std::vector<ExportResource*> no_predecode_targets;
+        if (!copy_surface_to_export_targets_locked(runtime, source, &source->export_resource, true, no_predecode_targets, reason, reason_size)) {
+            return false;
+        }
+        unregister_predecode_export_resource_locked(runtime, &source->export_resource);
+        source->export_seed_generation = 0;
+        unregister_export_seed_resource_locked(runtime, source);
+        vkvv_trace("export-owner-copy-done", "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u seeded=%u seed_gen=%llu",
+                   source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
+                   static_cast<unsigned long long>(source->content_generation), vkvv_trace_handle(source->export_resource.memory),
+                   static_cast<unsigned long long>(source->export_resource.content_generation), source->export_resource.predecode_exported ? 1U : 0U,
+                   source->export_resource.predecode_seeded ? 1U : 0U, static_cast<unsigned long long>(source->export_seed_generation));
         return true;
     }
 
@@ -948,10 +1020,12 @@ namespace vkvv {
 
         std::vector<ExportResource*> targets{&target->export_resource};
         target->export_resource.predecode_exported = true;
-        vkvv_trace("export-seed-hit", "surface=%u driver=%llu stream=%llu codec=0x%x source_surface=%u source_gen=%llu source_shadow_gen=%llu target_mem=0x%llx target_gen=%llu",
+        vkvv_trace("export-seed-hit",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x source_surface=%u source_gen=%llu source_seed_gen=%llu source_shadow_gen=%llu target_mem=0x%llx target_gen=%llu",
                    target->surface_id, static_cast<unsigned long long>(target->driver_instance_id), static_cast<unsigned long long>(target->stream_id), target->codec_operation,
-                   source->surface_id, static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(source->export_resource.content_generation),
-                   vkvv_trace_handle(target->export_resource.memory), static_cast<unsigned long long>(target->export_resource.content_generation));
+                   source->surface_id, static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(source->export_seed_generation),
+                   static_cast<unsigned long long>(source->export_resource.content_generation), vkvv_trace_handle(target->export_resource.memory),
+                   static_cast<unsigned long long>(target->export_resource.content_generation));
         return copy_surface_to_export_targets_locked(runtime, source, nullptr, false, targets, reason, reason_size);
     }
 
