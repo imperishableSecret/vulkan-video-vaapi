@@ -107,6 +107,20 @@ namespace {
         return ops->render_buffer(state, &misc_buffer) == VA_STATUS_SUCCESS;
     }
 
+    bool reject_packed_headers(const VkvvEncodeOps* ops, void* state) {
+        VAEncPackedHeaderParameterBuffer packed{};
+        packed.type              = VAEncPackedHeaderSequence;
+        packed.bit_length        = 8;
+        VkvvBuffer packed_buffer = buffer_for(VAEncPackedHeaderParameterBufferType, &packed, sizeof(packed));
+        if (ops->render_buffer(state, &packed_buffer) != VA_STATUS_ERROR_UNIMPLEMENTED) {
+            return false;
+        }
+
+        uint8_t    data[]      = {0x00, 0x00, 0x01, 0x67};
+        VkvvBuffer data_buffer = buffer_for(VAEncPackedHeaderDataBufferType, data, sizeof(data));
+        return ops->render_buffer(state, &data_buffer) == VA_STATUS_ERROR_UNIMPLEMENTED;
+    }
+
 } // namespace
 
 int main(void) {
@@ -182,6 +196,9 @@ int main(void) {
         ops.begin_picture(state);
         ok = check(render_minimal_h264(&ops, state, coded_buffer, 1, false), "B-slice H.264 encode buffers were rejected too early") && ok;
         ok = check_va(ops.prepare_encode(state, &drv, &vctx, &width, &height, &coded, reason, sizeof(reason)), VA_STATUS_ERROR_UNIMPLEMENTED, "B-slice rejection") && ok;
+
+        ops.begin_picture(state);
+        ok = check(reject_packed_headers(&ops, state), "H.264 packed headers were not rejected") && ok;
 
         ops.state_destroy(state);
     }

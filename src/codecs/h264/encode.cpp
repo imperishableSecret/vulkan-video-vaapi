@@ -44,16 +44,6 @@ namespace {
         return h264->has_slices;
     }
 
-    bool copy_bytes(const VkvvBuffer* buffer, std::vector<uint8_t>* out) {
-        if (buffer == nullptr || out == nullptr || buffer->data == nullptr) {
-            return false;
-        }
-        const size_t total = static_cast<size_t>(buffer->size) * buffer->num_elements;
-        const auto*  bytes = static_cast<const uint8_t*>(buffer->data);
-        out->assign(bytes, bytes + total);
-        return true;
-    }
-
     VAStatus copy_misc_parameter(H264EncodeState* h264, const VkvvBuffer* buffer) {
         if (h264 == nullptr || buffer == nullptr || buffer->data == nullptr) {
             return VA_STATUS_ERROR_INVALID_BUFFER;
@@ -237,13 +227,7 @@ VAStatus vkvv_h264_encode_render_buffer(void* state, const VkvvBuffer* buffer) {
         case VAEncMiscParameterBufferType: return copy_misc_parameter(h264, buffer);
 
         case VAEncPackedHeaderParameterBufferType:
-            if (!copy_first_element(buffer, &h264->packed_header, sizeof(h264->packed_header))) {
-                return VA_STATUS_ERROR_INVALID_BUFFER;
-            }
-            h264->has_packed_header = true;
-            return VA_STATUS_SUCCESS;
-
-        case VAEncPackedHeaderDataBufferType: return copy_bytes(buffer, &h264->packed_header_data) ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_INVALID_BUFFER;
+        case VAEncPackedHeaderDataBufferType: return VA_STATUS_ERROR_UNIMPLEMENTED;
 
         default: return VA_STATUS_ERROR_UNSUPPORTED_BUFFERTYPE;
     }
