@@ -82,6 +82,10 @@ VAStatus vkvvSyncSurface(VADriverContextP ctx, VASurfaceID render_target);
 VAStatus vkvvQuerySurfaceStatus(VADriverContextP ctx, VASurfaceID render_target, VASurfaceStatus* status);
 VAStatus vkvvQuerySurfaceError(VADriverContextP ctx, VASurfaceID render_target, VAStatus error_status, void** error_info);
 VAStatus vkvvQueryImageFormats(VADriverContextP ctx, VAImageFormat* format_list, int* num_formats);
+VAStatus vkvvCreateImage(VADriverContextP ctx, VAImageFormat* format, int width, int height, VAImage* image);
+VAStatus vkvvDestroyImage(VADriverContextP ctx, VAImageID image);
+VAStatus vkvvPutImage(VADriverContextP ctx, VASurfaceID surface, VAImageID image, int src_x, int src_y, unsigned int src_width, unsigned int src_height, int dest_x, int dest_y,
+                      unsigned int dest_width, unsigned int dest_height);
 VAStatus vkvvQuerySurfaceAttributes(VADriverContextP ctx, VAConfigID config, VASurfaceAttrib* attrib_list, unsigned int* num_attribs);
 VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, uint32_t mem_type, uint32_t flags, void* descriptor);
 VAStatus vkvvSyncSurface2(VADriverContextP ctx, VASurfaceID surface, uint64_t timeout_ns);

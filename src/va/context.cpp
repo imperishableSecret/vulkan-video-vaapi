@@ -23,6 +23,13 @@ namespace {
         return 0;
     }
 
+    unsigned int codec_operation_for_encode_profile_entrypoint(VAProfile profile, VAEntrypoint entrypoint) {
+        if (profile == VAProfileH264High && entrypoint == VAEntrypointEncSlice) {
+            return VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR;
+        }
+        return 0;
+    }
+
     void tag_surface_for_context(VkvvDriver* drv, VkvvContext* vctx, VASurfaceID surface_id) {
         if (drv == NULL || vctx == NULL || surface_id == VA_INVALID_ID) {
             return;
@@ -116,6 +123,14 @@ VAStatus vkvvCreateContext(VADriverContextP ctx, VAConfigID config_id, int pictu
         if (vctx->encode_ops == NULL) {
             delete vctx;
             return VA_STATUS_ERROR_UNIMPLEMENTED;
+        }
+        vctx->codec_operation = codec_operation_for_encode_profile_entrypoint(vctx->profile, vctx->entrypoint);
+        {
+            VkvvLockGuard state_lock(&drv->state_mutex);
+            vctx->stream_id = drv->next_stream_id++;
+            if (vctx->stream_id == 0) {
+                vctx->stream_id = drv->next_stream_id++;
+            }
         }
         vctx->encode_state = vctx->encode_ops->state_create();
         if (vctx->encode_state == NULL) {
@@ -215,6 +230,9 @@ VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID
         if (surface->destroying) {
             return VA_STATUS_ERROR_INVALID_SURFACE;
         }
+        surface->stream_id       = vctx->stream_id;
+        surface->codec_operation = vctx->codec_operation;
+        surface->role_flags |= VKVV_SURFACE_ROLE_ENCODE_INPUT;
         vctx->render_target = render_target;
         if (vctx->encode_ops != NULL) {
             vctx->encode_ops->begin_picture(vctx->encode_state);

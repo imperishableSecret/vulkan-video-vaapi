@@ -51,6 +51,7 @@ namespace {
                 delete buffer;
                 break;
             }
+            case VKVV_OBJECT_IMAGE: delete static_cast<VkvvImage*>(object->payload); break;
             default: break;
         }
         object->payload = NULL;

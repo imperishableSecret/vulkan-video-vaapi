@@ -26,6 +26,7 @@ typedef enum {
     VKVV_OBJECT_CONTEXT,
     VKVV_OBJECT_SURFACE,
     VKVV_OBJECT_BUFFER,
+    VKVV_OBJECT_IMAGE,
 } VkvvObjectType;
 
 typedef struct VkvvDriver    VkvvDriver;
@@ -208,6 +209,11 @@ typedef struct VkvvBuffer {
     VkvvCodedBufferPayload* coded_payload;
     bool                    mapped;
 } VkvvBuffer;
+
+typedef struct VkvvImage {
+    VAImage    image{};
+    VABufferID buffer_id = VA_INVALID_ID;
+} VkvvImage;
 
 typedef struct VkvvDecodeOps {
     const char* name;

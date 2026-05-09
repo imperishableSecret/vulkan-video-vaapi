@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <new>
 #include <vector>
@@ -70,6 +71,191 @@ namespace vkvv {
             existing.coded_extent.height >= requested.coded_extent.height && existing.usage == requested.usage && existing.create_flags == requested.create_flags &&
             existing.tiling == requested.tiling && existing.chroma_subsampling == requested.chroma_subsampling && existing.luma_bit_depth == requested.luma_bit_depth &&
             existing.chroma_bit_depth == requested.chroma_bit_depth;
+    }
+
+    VkFormat encode_input_vk_format(unsigned int fourcc) {
+        switch (fourcc) {
+            case VA_FOURCC_NV12: return VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+            case VA_FOURCC_P010: return VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
+            default: return VK_FORMAT_UNDEFINED;
+        }
+    }
+
+    VkVideoComponentBitDepthFlagBitsKHR encode_input_bit_depth(unsigned int fourcc) {
+        return fourcc == VA_FOURCC_P010 ? VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR : VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
+    }
+
+    unsigned int encode_input_rt_format(unsigned int fourcc) {
+        return fourcc == VA_FOURCC_P010 ? VA_RT_FORMAT_YUV420_10 : VA_RT_FORMAT_YUV420;
+    }
+
+    bool make_encode_input_key(const VkvvSurface* surface, const VkvvImage* image, EncodeImageKey* key, char* reason, size_t reason_size) {
+        if (surface == nullptr || image == nullptr || key == nullptr) {
+            std::snprintf(reason, reason_size, "missing encode input key source");
+            return false;
+        }
+        if (image->image.format.fourcc != VA_FOURCC_NV12) {
+            std::snprintf(reason, reason_size, "H.264 encode input only supports NV12 currently");
+            return false;
+        }
+        const VkFormat format = encode_input_vk_format(image->image.format.fourcc);
+        if (format == VK_FORMAT_UNDEFINED) {
+            std::snprintf(reason, reason_size, "unsupported encode input fourcc=0x%x", image->image.format.fourcc);
+            return false;
+        }
+
+        const VkVideoComponentBitDepthFlagBitsKHR bit_depth = encode_input_bit_depth(image->image.format.fourcc);
+        *key                                                = {
+            .codec_operation    = VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
+            .codec_profile      = STD_VIDEO_H264_PROFILE_IDC_HIGH,
+            .picture_format     = format,
+            .va_rt_format       = encode_input_rt_format(image->image.format.fourcc),
+            .va_fourcc          = image->image.format.fourcc,
+            .coded_extent       = {surface->width, surface->height},
+            .usage              = VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            .create_flags       = 0,
+            .tiling             = VK_IMAGE_TILING_OPTIMAL,
+            .chroma_subsampling = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+            .luma_bit_depth     = bit_depth,
+            .chroma_bit_depth   = bit_depth,
+        };
+        return true;
+    }
+
+    bool create_host_transfer_buffer(VulkanRuntime* runtime, const void* data, VkDeviceSize data_size, UploadBuffer* staging, char* reason, size_t reason_size) {
+        if (runtime == nullptr || data == nullptr || data_size == 0 || staging == nullptr) {
+            std::snprintf(reason, reason_size, "missing encode input upload buffer data");
+            return false;
+        }
+
+        staging->size = data_size;
+
+        VkBufferCreateInfo buffer_info{};
+        buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.size        = staging->size;
+        buffer_info.usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        VkResult result         = vkCreateBuffer(runtime->device, &buffer_info, nullptr, &staging->buffer);
+        if (!record_vk_result(runtime, result, "vkCreateBuffer", "encode input upload", reason, reason_size)) {
+            return false;
+        }
+
+        VkMemoryRequirements requirements{};
+        vkGetBufferMemoryRequirements(runtime->device, staging->buffer, &requirements);
+        staging->capacity        = data_size;
+        staging->allocation_size = requirements.size;
+
+        uint32_t memory_type_index = 0;
+        staging->coherent          = true;
+        if (!find_memory_type(runtime->memory_properties, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              &memory_type_index)) {
+            staging->coherent = false;
+            if (!find_memory_type(runtime->memory_properties, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &memory_type_index)) {
+                destroy_upload_buffer(runtime, staging);
+                std::snprintf(reason, reason_size, "no host-visible memory type for encode input upload");
+                return false;
+            }
+        }
+
+        VkMemoryAllocateInfo allocate_info{};
+        allocate_info.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate_info.allocationSize  = requirements.size;
+        allocate_info.memoryTypeIndex = memory_type_index;
+        result                        = vkAllocateMemory(runtime->device, &allocate_info, nullptr, &staging->memory);
+        if (!record_vk_result(runtime, result, "vkAllocateMemory", "encode input upload", reason, reason_size)) {
+            destroy_upload_buffer(runtime, staging);
+            return false;
+        }
+
+        result = vkBindBufferMemory(runtime->device, staging->buffer, staging->memory, 0);
+        if (!record_vk_result(runtime, result, "vkBindBufferMemory", "encode input upload", reason, reason_size)) {
+            destroy_upload_buffer(runtime, staging);
+            return false;
+        }
+
+        void* mapped = nullptr;
+        result       = vkMapMemory(runtime->device, staging->memory, 0, staging->size, 0, &mapped);
+        if (!record_vk_result(runtime, result, "vkMapMemory", "encode input upload", reason, reason_size)) {
+            destroy_upload_buffer(runtime, staging);
+            return false;
+        }
+        std::memcpy(mapped, data, static_cast<size_t>(data_size));
+        if (!staging->coherent) {
+            VkMappedMemoryRange range{};
+            range.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+            range.memory = staging->memory;
+            range.offset = 0;
+            range.size   = VK_WHOLE_SIZE;
+            vkFlushMappedMemoryRanges(runtime->device, 1, &range);
+        }
+        vkUnmapMemory(runtime->device, staging->memory);
+        return true;
+    }
+
+    bool fill_encode_input_copy_regions(const VAImage& image, VkBufferImageCopy* regions, uint32_t* region_count, char* reason, size_t reason_size) {
+        if (regions == nullptr || region_count == nullptr || image.num_planes < 2) {
+            std::snprintf(reason, reason_size, "invalid encode input image layout");
+            return false;
+        }
+
+        struct Plane {
+            VkImageAspectFlags aspect;
+            uint32_t           width_divisor;
+            uint32_t           height_divisor;
+            uint32_t           texel_bytes;
+            uint32_t           pitch;
+            uint32_t           offset;
+        };
+
+        Plane planes[2]{};
+        if (image.format.fourcc == VA_FOURCC_NV12) {
+            planes[0] = {VK_IMAGE_ASPECT_PLANE_0_BIT, 1, 1, 1, image.pitches[0], image.offsets[0]};
+            planes[1] = {VK_IMAGE_ASPECT_PLANE_1_BIT, 2, 2, 2, image.pitches[1], image.offsets[1]};
+        } else if (image.format.fourcc == VA_FOURCC_P010) {
+            planes[0] = {VK_IMAGE_ASPECT_PLANE_0_BIT, 1, 1, 2, image.pitches[0], image.offsets[0]};
+            planes[1] = {VK_IMAGE_ASPECT_PLANE_1_BIT, 2, 2, 4, image.pitches[1], image.offsets[1]};
+        } else {
+            std::snprintf(reason, reason_size, "unsupported encode input copy fourcc=0x%x", image.format.fourcc);
+            return false;
+        }
+
+        for (uint32_t i = 0; i < 2; i++) {
+            const uint32_t extent_width  = (image.width + planes[i].width_divisor - 1u) / planes[i].width_divisor;
+            const uint32_t extent_height = (image.height + planes[i].height_divisor - 1u) / planes[i].height_divisor;
+            if (planes[i].texel_bytes == 0 || planes[i].pitch % planes[i].texel_bytes != 0) {
+                std::snprintf(reason, reason_size, "unsupported encode input pitch for plane %u", i);
+                return false;
+            }
+            const uint32_t row_length = planes[i].pitch / planes[i].texel_bytes;
+            if (row_length < extent_width) {
+                std::snprintf(reason, reason_size, "encode input pitch too small for plane %u", i);
+                return false;
+            }
+
+            regions[i]                             = {};
+            regions[i].bufferOffset                = planes[i].offset;
+            regions[i].bufferRowLength             = row_length == extent_width ? 0 : row_length;
+            regions[i].bufferImageHeight           = 0;
+            regions[i].imageSubresource.aspectMask = planes[i].aspect;
+            regions[i].imageSubresource.layerCount = 1;
+            regions[i].imageExtent                 = {extent_width, extent_height, 1};
+        }
+        *region_count = 2;
+        return true;
+    }
+
+    VkPipelineStageFlags2 destination_stage_for_layout(VkImageLayout layout) {
+        switch (layout) {
+            case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+            case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL: return VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+            case VK_IMAGE_LAYOUT_VIDEO_ENCODE_SRC_KHR:
+            case VK_IMAGE_LAYOUT_VIDEO_ENCODE_DST_KHR:
+            case VK_IMAGE_LAYOUT_VIDEO_ENCODE_DPB_KHR: return VK_PIPELINE_STAGE_2_VIDEO_ENCODE_BIT_KHR;
+            case VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR:
+            case VK_IMAGE_LAYOUT_VIDEO_DECODE_DST_KHR:
+            case VK_IMAGE_LAYOUT_VIDEO_DECODE_SRC_KHR: return VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR;
+            default: return VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        }
     }
 
     void destroy_export_resource(VulkanRuntime* runtime, ExportResource* resource) {
@@ -875,7 +1061,7 @@ namespace vkvv {
         barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
         barrier.srcStageMask                    = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
         barrier.srcAccessMask                   = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
-        barrier.dstStageMask                    = VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR;
+        barrier.dstStageMask                    = destination_stage_for_layout(new_layout);
         barrier.dstAccessMask                   = dst_access;
         barrier.oldLayout                       = resource->layout;
         barrier.newLayout                       = new_layout;
@@ -911,4 +1097,110 @@ void vkvv_vulkan_surface_destroy(void* runtime_ptr, VkvvSurface* surface) {
         return;
     }
     destroy_surface_resource(runtime, surface);
+}
+
+VAStatus vkvv_vulkan_upload_encode_input_image(void* runtime_ptr, VkvvSurface* surface, const VkvvImage* image, const void* data, size_t data_size, char* reason,
+                                               size_t reason_size) {
+    auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
+    if (!ensure_runtime_usable(runtime, reason, reason_size, "encode input upload")) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    if (surface == nullptr || image == nullptr || data == nullptr || data_size < image->image.data_size) {
+        std::snprintf(reason, reason_size, "missing encode input upload source");
+        return VA_STATUS_ERROR_INVALID_PARAMETER;
+    }
+
+    EncodeImageKey key{};
+    if (!make_encode_input_key(surface, image, &key, reason, reason_size)) {
+        return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
+    }
+
+    surface->codec_operation = key.codec_operation;
+    surface->role_flags |= VKVV_SURFACE_ROLE_ENCODE_INPUT;
+    if (!ensure_encode_input_resource(runtime, surface, key, reason, reason_size)) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+
+    auto* resource = static_cast<SurfaceResource*>(surface->vulkan);
+    if (resource == nullptr || resource->image == VK_NULL_HANDLE) {
+        std::snprintf(reason, reason_size, "encode input upload did not create a Vulkan image");
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+
+    VkBufferImageCopy regions[2]{};
+    uint32_t          region_count = 0;
+    if (!fill_encode_input_copy_regions(image->image, regions, &region_count, reason, reason_size)) {
+        return VA_STATUS_ERROR_INVALID_IMAGE;
+    }
+
+    UploadBuffer staging{};
+    if (!create_host_transfer_buffer(runtime, data, image->image.data_size, &staging, reason, reason_size)) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+
+    std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+    if (!ensure_command_resources(runtime, reason, reason_size)) {
+        destroy_upload_buffer(runtime, &staging);
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+
+    VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
+    if (!record_vk_result(runtime, result, "vkResetFences", "encode input upload", reason, reason_size)) {
+        destroy_upload_buffer(runtime, &staging);
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    result = vkResetCommandBuffer(runtime->command_buffer, 0);
+    if (!record_vk_result(runtime, result, "vkResetCommandBuffer", "encode input upload", reason, reason_size)) {
+        destroy_upload_buffer(runtime, &staging);
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+
+    VkCommandBufferBeginInfo begin_info{};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    result           = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
+    if (!record_vk_result(runtime, result, "vkBeginCommandBuffer", "encode input upload", reason, reason_size)) {
+        destroy_upload_buffer(runtime, &staging);
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+
+    std::vector<VkImageMemoryBarrier2> barriers;
+    add_image_layout_barrier(&barriers, resource, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    if (!barriers.empty()) {
+        VkDependencyInfo dependency{};
+        dependency.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+        dependency.pImageMemoryBarriers    = barriers.data();
+        vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
+    }
+
+    vkCmdCopyBufferToImage(runtime->command_buffer, staging.buffer, resource->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region_count, regions);
+
+    barriers.clear();
+    add_image_layout_barrier(&barriers, resource, VK_IMAGE_LAYOUT_VIDEO_ENCODE_SRC_KHR, VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR);
+    if (!barriers.empty()) {
+        VkDependencyInfo dependency{};
+        dependency.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+        dependency.pImageMemoryBarriers    = barriers.data();
+        vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
+    }
+
+    result = vkEndCommandBuffer(runtime->command_buffer);
+    if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "encode input upload", reason, reason_size)) {
+        destroy_upload_buffer(runtime, &staging);
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "encode input upload")) {
+        destroy_upload_buffer(runtime, &staging);
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+
+    destroy_upload_buffer(runtime, &staging);
+    resource->content_generation++;
+    surface->sync_status = VA_STATUS_SUCCESS;
+    surface->work_state  = VKVV_SURFACE_WORK_READY;
+    std::snprintf(reason, reason_size, "uploaded H.264 encode input image: surface=%u %ux%u bytes=%u mem=%llu gen=%llu", surface->id, surface->width, surface->height,
+                  image->image.data_size, static_cast<unsigned long long>(resource->allocation_size), static_cast<unsigned long long>(resource->content_generation));
+    return VA_STATUS_SUCCESS;
 }

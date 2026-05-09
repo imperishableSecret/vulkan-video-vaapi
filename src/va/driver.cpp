@@ -66,6 +66,7 @@ static void release_owned_payloads(VkvvDriver* drv) {
                     vkvv_vulkan_surface_destroy(drv->vulkan, static_cast<VkvvSurface*>(object->payload));
                 }
                 break;
+            case VKVV_OBJECT_IMAGE: break;
             default: break;
         }
     }
@@ -118,12 +119,12 @@ static struct VADriverVTable make_vtable(void) {
     vt.vaQuerySurfaceError        = vkvvQuerySurfaceError;
     vt.vaPutSurface               = unsupported_callback(vt.vaPutSurface);
     vt.vaQueryImageFormats        = vkvvQueryImageFormats;
-    vt.vaCreateImage              = unsupported_callback(vt.vaCreateImage);
+    vt.vaCreateImage              = vkvvCreateImage;
     vt.vaDeriveImage              = unsupported_callback(vt.vaDeriveImage);
-    vt.vaDestroyImage             = unsupported_callback(vt.vaDestroyImage);
+    vt.vaDestroyImage             = vkvvDestroyImage;
     vt.vaSetImagePalette          = unsupported_callback(vt.vaSetImagePalette);
     vt.vaGetImage                 = unsupported_callback(vt.vaGetImage);
-    vt.vaPutImage                 = unsupported_callback(vt.vaPutImage);
+    vt.vaPutImage                 = vkvvPutImage;
     vt.vaQuerySubpictureFormats   = unsupported_callback(vt.vaQuerySubpictureFormats);
     vt.vaCreateSubpicture         = unsupported_callback(vt.vaCreateSubpicture);
     vt.vaDestroySubpicture        = unsupported_callback(vt.vaDestroySubpicture);
@@ -169,7 +170,8 @@ static VAStatus              vkvvDriverInit(VADriverContextP ctx) {
         drv->driver_instance_id = next_driver_instance_id.fetch_add(1, std::memory_order_relaxed);
     }
     vkvv_probe_vulkan_video(&drv->caps);
-    if (drv->caps.h264 || drv->caps.h265 || drv->caps.h265_10 || drv->caps.h265_12 || drv->caps.vp9 || drv->caps.vp9_10 || drv->caps.vp9_12 || drv->caps.av1 || drv->caps.av1_10) {
+    if (drv->caps.h264 || drv->caps.h265 || drv->caps.h265_10 || drv->caps.h265_12 || drv->caps.vp9 || drv->caps.vp9_10 || drv->caps.vp9_12 || drv->caps.av1 || drv->caps.av1_10 ||
+        drv->caps.h264_encode) {
         char reason[512] = {};
         drv->vulkan      = vkvv_get_or_create_vulkan_runtime(reason, sizeof(reason));
         vkvv_log("%s", reason);

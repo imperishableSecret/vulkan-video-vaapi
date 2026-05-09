@@ -19,6 +19,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime, VkvvSurface* surface,
 VAStatus vkvv_vulkan_complete_surface_work(void* runtime, VkvvSurface* surface, uint64_t timeout_ns, char* reason, size_t reason_size);
 VAStatus vkvv_vulkan_drain_pending_work(void* runtime, char* reason, size_t reason_size);
 VAStatus vkvv_vulkan_export_surface(void* runtime, const VkvvSurface* surface, uint32_t flags, VADRMPRIMESurfaceDescriptor* descriptor, char* reason, size_t reason_size);
+VAStatus vkvv_vulkan_upload_encode_input_image(void* runtime, VkvvSurface* surface, const VkvvImage* image, const void* data, size_t data_size, char* reason, size_t reason_size);
 void     vkvv_vulkan_note_surface_created(void* runtime, const VkvvSurface* surface);
 void     vkvv_vulkan_prune_driver_exports(void* runtime, uint64_t driver_instance_id);
 void     vkvv_vulkan_surface_destroy(void* runtime, VkvvSurface* surface);
