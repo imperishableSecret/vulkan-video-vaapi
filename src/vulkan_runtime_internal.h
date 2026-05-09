@@ -87,6 +87,28 @@ enum class RetainedExportMatch {
     ExtentMismatch,
 };
 
+struct RetainedExportBudget {
+    size_t target_count = 0;
+    VkDeviceSize target_bytes = 0;
+    VkDeviceSize global_cap_bytes = 0;
+    size_t headroom_count = 0;
+    VkDeviceSize average_bytes = 0;
+};
+
+struct TransitionRetentionWindow {
+    bool active = false;
+    uint64_t driver_instance_id = 0;
+    uint64_t stream_id = 0;
+    VkVideoCodecOperationFlagsKHR codec_operation = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    unsigned int va_fourcc = 0;
+    VkExtent2D coded_extent{};
+    size_t retained_count = 0;
+    VkDeviceSize retained_bytes = 0;
+    size_t attached_count = 0;
+    RetainedExportBudget budget{};
+};
+
 struct DecodeImageKey {
     VkVideoCodecOperationFlagsKHR codec_operation = 0;
     uint32_t codec_profile = 0;
@@ -227,9 +249,10 @@ class VulkanRuntime {
     std::vector<RetainedExportBacking> retained_exports;
     std::vector<ExportSeedRecord> export_seed_records;
     VkDeviceSize retained_export_memory_bytes = 0;
-    VkDeviceSize retained_export_memory_budget = 384ull * 1024ull * 1024ull;
-    size_t retained_export_count_limit = 48;
+    VkDeviceSize retained_export_memory_budget = 64ull * 1024ull * 1024ull;
+    size_t retained_export_count_limit = 4;
     uint64_t retained_export_sequence = 0;
+    TransitionRetentionWindow transition_retention{};
     size_t transition_export_cursor = 0;
 
     void destroy_command_resources() {
@@ -272,6 +295,11 @@ RetainedExportMatch retained_export_match_import(
         VkFormat format,
         VkExtent2D coded_extent);
 const char *retained_export_match_reason(RetainedExportMatch match);
+VkDeviceSize retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties &properties);
+RetainedExportBudget retained_export_budget_from_expected(
+        size_t expected_count,
+        VkDeviceSize expected_bytes,
+        VkDeviceSize global_cap_bytes);
 size_t runtime_detached_export_count(VulkanRuntime *runtime);
 VkDeviceSize runtime_detached_export_memory_bytes(VulkanRuntime *runtime);
 void prune_detached_exports_for_surface(
@@ -285,6 +313,7 @@ void prune_detached_exports_for_surface(
         VkExtent2D coded_extent);
 void prune_detached_exports_for_driver(VulkanRuntime *runtime, uint64_t driver_instance_id);
 void detach_export_resource(VulkanRuntime *runtime, SurfaceResource *resource);
+void note_retained_export_attached_locked(VulkanRuntime *runtime);
 void register_predecode_export_resource(VulkanRuntime *runtime, ExportResource *resource);
 void unregister_predecode_export_resource(VulkanRuntime *runtime, ExportResource *resource);
 void unregister_predecode_export_resource_locked(VulkanRuntime *runtime, ExportResource *resource);

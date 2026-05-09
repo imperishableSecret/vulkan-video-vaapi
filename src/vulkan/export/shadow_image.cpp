@@ -473,6 +473,7 @@ bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, cha
                         runtime->retained_export_memory_bytes > resource->allocation_size ?
                             runtime->retained_export_memory_bytes - resource->allocation_size : 0;
                     runtime->retained_exports.erase(it);
+                    note_retained_export_attached_locked(runtime);
                     reattached = true;
                     break;
                 }
@@ -576,6 +577,7 @@ bool attach_imported_export_resource_by_fd(VulkanRuntime *runtime, SurfaceResour
                    static_cast<unsigned long long>(runtime->retained_export_memory_bytes),
                    static_cast<unsigned long long>(it->retained_sequence));
         runtime->retained_exports.erase(it);
+        note_retained_export_attached_locked(runtime);
         return true;
     }
 
@@ -1369,6 +1371,7 @@ bool seed_predecode_export_from_last_good(
     }
 
     std::vector<ExportResource *> targets{&target->export_resource};
+    target->export_resource.predecode_exported = true;
     vkvv_trace("export-seed-hit",
                "surface=%u driver=%llu stream=%llu codec=0x%x source_surface=%u source_gen=%llu source_shadow_gen=%llu target_mem=0x%llx target_gen=%llu",
                target->surface_id,

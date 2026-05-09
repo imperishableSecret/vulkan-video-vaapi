@@ -179,6 +179,124 @@ void register_predecode_export_resource(VulkanRuntime *runtime, ExportResource *
     }
 }
 
+bool retained_export_matches_window(
+        const ExportResource &resource,
+        const TransitionRetentionWindow &window) {
+    return window.active &&
+           resource.driver_instance_id == window.driver_instance_id &&
+           resource.stream_id == window.stream_id &&
+           resource.codec_operation == window.codec_operation &&
+           resource.format == window.format &&
+           resource.va_fourcc == window.va_fourcc &&
+           resource.extent.width == window.coded_extent.width &&
+           resource.extent.height == window.coded_extent.height;
+}
+
+void close_transition_retention_window_locked(VulkanRuntime *runtime, const char *reason) {
+    if (runtime == nullptr || !runtime->transition_retention.active) {
+        return;
+    }
+
+    const TransitionRetentionWindow closed = runtime->transition_retention;
+    vkvv_trace("retained-export-window-close",
+               "driver=%llu stream=%llu codec=0x%x retained=%zu retained_mem=%llu attached=%zu target=%zu budget=%llu reason=%s",
+               static_cast<unsigned long long>(closed.driver_instance_id),
+               static_cast<unsigned long long>(closed.stream_id),
+               closed.codec_operation,
+               closed.retained_count,
+               static_cast<unsigned long long>(closed.retained_bytes),
+               closed.attached_count,
+               closed.budget.target_count,
+               static_cast<unsigned long long>(closed.budget.target_bytes),
+               reason != nullptr ? reason : "unknown");
+    runtime->transition_retention = {};
+    runtime->retained_export_count_limit = 4;
+    runtime->retained_export_memory_budget = 64ull * 1024ull * 1024ull;
+}
+
+void refresh_transition_retention_window_locked(
+        VulkanRuntime *runtime,
+        const ExportResource *seed,
+        const char *reason) {
+    if (runtime == nullptr) {
+        return;
+    }
+    if (seed != nullptr) {
+        TransitionRetentionWindow &window = runtime->transition_retention;
+        const bool was_active = window.active;
+        const bool same_window =
+            was_active &&
+            window.driver_instance_id == seed->driver_instance_id &&
+            window.stream_id == seed->stream_id &&
+            window.codec_operation == seed->codec_operation &&
+            window.format == seed->format &&
+            window.va_fourcc == seed->va_fourcc &&
+            window.coded_extent.width == seed->extent.width &&
+            window.coded_extent.height == seed->extent.height;
+        if (!same_window) {
+            window = {};
+            window.active = true;
+            window.driver_instance_id = seed->driver_instance_id;
+            window.stream_id = seed->stream_id;
+            window.codec_operation = seed->codec_operation;
+            window.format = seed->format;
+            window.va_fourcc = seed->va_fourcc;
+            window.coded_extent = seed->extent;
+            vkvv_trace("retained-export-window-open",
+                       "driver=%llu stream=%llu codec=0x%x fourcc=0x%x format=%d extent=%ux%u reason=%s",
+                       static_cast<unsigned long long>(window.driver_instance_id),
+                       static_cast<unsigned long long>(window.stream_id),
+                       window.codec_operation,
+                       window.va_fourcc,
+                       window.format,
+                       window.coded_extent.width,
+                       window.coded_extent.height,
+                       reason != nullptr ? reason : "unknown");
+        }
+    }
+
+    TransitionRetentionWindow &window = runtime->transition_retention;
+    if (!window.active) {
+        return;
+    }
+
+    size_t retained_count = 0;
+    VkDeviceSize retained_bytes = 0;
+    for (const RetainedExportBacking &backing : runtime->retained_exports) {
+        if (retained_export_matches_window(backing.resource, window)) {
+            retained_count++;
+            retained_bytes += backing.resource.allocation_size;
+        }
+    }
+    if (retained_count == 0) {
+        close_transition_retention_window_locked(runtime, reason);
+        return;
+    }
+
+    window.retained_count = retained_count;
+    window.retained_bytes = retained_bytes;
+    const VkDeviceSize global_cap =
+        retained_export_global_cap_bytes(runtime->memory_properties);
+    window.budget =
+        retained_export_budget_from_expected(retained_count, retained_bytes, global_cap);
+    runtime->retained_export_count_limit =
+        std::max<size_t>(4, window.budget.target_count);
+    runtime->retained_export_memory_budget =
+        std::max<VkDeviceSize>(64ull * 1024ull * 1024ull, window.budget.target_bytes);
+    vkvv_trace("retained-export-budget",
+               "driver=%llu stream=%llu codec=0x%x retained=%zu retained_mem=%llu headroom=%zu target=%zu budget=%llu global_cap=%llu reason=%s",
+               static_cast<unsigned long long>(window.driver_instance_id),
+               static_cast<unsigned long long>(window.stream_id),
+               window.codec_operation,
+               window.retained_count,
+               static_cast<unsigned long long>(window.retained_bytes),
+               window.budget.headroom_count,
+               window.budget.target_count,
+               static_cast<unsigned long long>(window.budget.target_bytes),
+               static_cast<unsigned long long>(window.budget.global_cap_bytes),
+               reason != nullptr ? reason : "unknown");
+}
+
 void prune_detached_export_resources_locked(VulkanRuntime *runtime) {
     if (runtime == nullptr) {
         return;
@@ -211,7 +329,18 @@ void prune_detached_export_resources_locked(VulkanRuntime *runtime) {
         runtime->retained_export_memory_bytes =
             runtime->retained_export_memory_bytes > bytes ?
                 runtime->retained_export_memory_bytes - bytes : 0;
+        refresh_transition_retention_window_locked(runtime, nullptr, "prune");
     }
+}
+
+void note_retained_export_attached_locked(VulkanRuntime *runtime) {
+    if (runtime == nullptr) {
+        return;
+    }
+    if (runtime->transition_retention.active) {
+        runtime->transition_retention.attached_count++;
+    }
+    refresh_transition_retention_window_locked(runtime, nullptr, "attach");
 }
 
 bool detached_export_same_owner(
@@ -254,6 +383,7 @@ void remove_detached_export_locked(VulkanRuntime *runtime, size_t index) {
     runtime->retained_export_memory_bytes =
         runtime->retained_export_memory_bytes > bytes ?
             runtime->retained_export_memory_bytes - bytes : 0;
+    refresh_transition_retention_window_locked(runtime, nullptr, "remove");
 }
 
 void prune_detached_exports_for_surface(
@@ -347,6 +477,8 @@ void detach_export_resource(VulkanRuntime *runtime, SurfaceResource *resource) {
                    static_cast<unsigned long long>(runtime->retained_export_memory_bytes),
                    static_cast<unsigned long long>(backing.retained_sequence));
         runtime->retained_exports.push_back(std::move(backing));
+        refresh_transition_retention_window_locked(
+            runtime, &runtime->retained_exports.back().resource, "detach");
         prune_detached_export_resources_locked(runtime);
     } catch (...) {
         destroy_export_resource(runtime, &detached);

@@ -1,6 +1,16 @@
 #include "vulkan_runtime_internal.h"
 
+#include <algorithm>
+
 namespace vkvv {
+
+namespace {
+
+constexpr VkDeviceSize mib = 1024ull * 1024ull;
+constexpr VkDeviceSize min_global_cap_bytes = 128ull * mib;
+constexpr VkDeviceSize max_global_cap_bytes = 512ull * mib;
+
+} // namespace
 
 VkvvFdIdentity retained_export_fd_identity(const ExportResource &resource) {
     VkvvFdIdentity identity{};
@@ -58,6 +68,40 @@ const char *retained_export_match_reason(RetainedExportMatch match) {
         return "extent-mismatch";
     }
     return "unknown";
+}
+
+VkDeviceSize retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties &properties) {
+    VkDeviceSize largest_device_local_heap = 0;
+    for (uint32_t i = 0; i < properties.memoryHeapCount; i++) {
+        if ((properties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) {
+            continue;
+        }
+        largest_device_local_heap = std::max(largest_device_local_heap, properties.memoryHeaps[i].size);
+    }
+    if (largest_device_local_heap == 0) {
+        return min_global_cap_bytes;
+    }
+    return std::clamp(largest_device_local_heap / 32, min_global_cap_bytes, max_global_cap_bytes);
+}
+
+RetainedExportBudget retained_export_budget_from_expected(
+        size_t expected_count,
+        VkDeviceSize expected_bytes,
+        VkDeviceSize global_cap_bytes) {
+    RetainedExportBudget budget{};
+    budget.global_cap_bytes = global_cap_bytes == 0 ? min_global_cap_bytes : global_cap_bytes;
+    if (expected_count == 0 || expected_bytes == 0) {
+        return budget;
+    }
+
+    budget.average_bytes = std::max<VkDeviceSize>(1, expected_bytes / expected_count);
+    budget.headroom_count = std::min<size_t>(4, std::max<size_t>(2, expected_count / 4));
+    budget.target_count = expected_count + budget.headroom_count;
+
+    const VkDeviceSize headroom_bytes = budget.average_bytes * budget.headroom_count;
+    const VkDeviceSize unclamped = expected_bytes + headroom_bytes;
+    budget.target_bytes = std::min(unclamped, budget.global_cap_bytes);
+    return budget;
 }
 
 } // namespace vkvv

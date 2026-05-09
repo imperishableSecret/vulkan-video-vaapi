@@ -60,6 +60,40 @@ bool expect_match(
     return true;
 }
 
+VkPhysicalDeviceMemoryProperties memory_properties_with_local_heap(VkDeviceSize size) {
+    VkPhysicalDeviceMemoryProperties properties{};
+    properties.memoryHeapCount = 1;
+    properties.memoryHeaps[0].size = size;
+    properties.memoryHeaps[0].flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
+    return properties;
+}
+
+bool check_dynamic_budget() {
+    constexpr VkDeviceSize mib = 1024ull * 1024ull;
+    bool ok = true;
+    ok &= check(vkvv::retained_export_global_cap_bytes(memory_properties_with_local_heap(16ull * 1024ull * mib)) == 512ull * mib,
+                "16 GiB heap should cap retained exports at 512 MiB");
+    ok &= check(vkvv::retained_export_global_cap_bytes(memory_properties_with_local_heap(2ull * 1024ull * mib)) == 128ull * mib,
+                "small heaps should keep the minimum 128 MiB retained export cap");
+
+    const vkvv::RetainedExportBudget low_res =
+        vkvv::retained_export_budget_from_expected(4, 4ull * mib, 512ull * mib);
+    ok &= check(low_res.headroom_count == 2, "low-res retained budget should add two headroom backings");
+    ok &= check(low_res.target_count == 6, "low-res retained budget target count mismatch");
+    ok &= check(low_res.target_bytes == 6ull * mib, "low-res retained budget should scale from actual bytes");
+
+    const vkvv::RetainedExportBudget high_res =
+        vkvv::retained_export_budget_from_expected(24, 288ull * mib, 512ull * mib);
+    ok &= check(high_res.headroom_count == 4, "high-res retained budget should cap headroom at four backings");
+    ok &= check(high_res.target_count == 28, "high-res retained budget target count mismatch");
+    ok &= check(high_res.target_bytes == 336ull * mib, "high-res retained budget target bytes mismatch");
+
+    const vkvv::RetainedExportBudget capped =
+        vkvv::retained_export_budget_from_expected(32, 512ull * mib, 256ull * mib);
+    ok &= check(capped.target_bytes == 256ull * mib, "retained budget should clamp to device-derived cap");
+    return ok;
+}
+
 } // namespace
 
 int main() {
@@ -105,5 +139,6 @@ int main() {
 
     ok &= check(std::string_view(vkvv::retained_export_match_reason(vkvv::RetainedExportMatch::Match)) == "match",
                 "match reason text should be stable");
+    ok &= check_dynamic_budget();
     return ok ? 0 : 1;
 }
