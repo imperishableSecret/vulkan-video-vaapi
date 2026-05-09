@@ -518,16 +518,16 @@ bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, cha
 bool attach_imported_export_resource_by_fd(VulkanRuntime *runtime, SurfaceResource *source) {
     if (runtime == nullptr || source == nullptr ||
         source->export_resource.image != VK_NULL_HANDLE ||
-        !source->imported_external ||
-        !source->import_fd_stat_valid) {
+        !source->import.external ||
+        !source->import.fd.valid) {
         return false;
     }
 
     std::lock_guard<std::mutex> lock(runtime->export_mutex);
     for (auto it = runtime->detached_exports.begin(); it != runtime->detached_exports.end(); ++it) {
         if (!it->fd_stat_valid ||
-            it->fd_dev != source->import_fd_dev ||
-            it->fd_ino != source->import_fd_ino ||
+            it->fd_dev != source->import.fd.dev ||
+            it->fd_ino != source->import.fd.ino ||
             it->va_fourcc != source->va_fourcc ||
             it->format != source->format ||
             it->extent.width < source->coded_extent.width ||
@@ -554,8 +554,8 @@ bool attach_imported_export_resource_by_fd(VulkanRuntime *runtime, SurfaceResour
                    static_cast<unsigned long long>(source->driver_instance_id),
                    static_cast<unsigned long long>(source->stream_id),
                    source->codec_operation,
-                   static_cast<unsigned long long>(source->import_fd_dev),
-                   static_cast<unsigned long long>(source->import_fd_ino),
+                   static_cast<unsigned long long>(source->import.fd.dev),
+                   static_cast<unsigned long long>(source->import.fd.ino),
                    it->owner_surface_id,
                    static_cast<unsigned long long>(it->driver_instance_id),
                    static_cast<unsigned long long>(it->stream_id),
@@ -574,8 +574,8 @@ bool attach_imported_export_resource_by_fd(VulkanRuntime *runtime, SurfaceResour
                static_cast<unsigned long long>(source->driver_instance_id),
                static_cast<unsigned long long>(source->stream_id),
                source->codec_operation,
-               static_cast<unsigned long long>(source->import_fd_dev),
-               static_cast<unsigned long long>(source->import_fd_ino),
+               static_cast<unsigned long long>(source->import.fd.dev),
+               static_cast<unsigned long long>(source->import.fd.ino),
                source->format,
                source->va_fourcc,
                source->coded_extent.width,
@@ -611,6 +611,7 @@ bool ensure_export_only_surface_resource(
         resource->stream_id = surface->stream_id;
         resource->codec_operation = static_cast<VkVideoCodecOperationFlagsKHR>(surface->codec_operation);
         resource->visible_extent = {surface->width, surface->height};
+        resource->import = surface->import;
         return true;
     }
 
@@ -632,6 +633,7 @@ bool ensure_export_only_surface_resource(
     resource->drm_format_modifier = 0;
     resource->exportable = false;
     resource->has_drm_format_modifier = false;
+    resource->import = surface->import;
     resource->layout = VK_IMAGE_LAYOUT_UNDEFINED;
     return true;
 }

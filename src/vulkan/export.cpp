@@ -1,37 +1,12 @@
 #include "vulkan/export/internal.h"
+#include "surface_import.h"
 #include "telemetry.h"
 
 #include <algorithm>
 #include <cstdio>
-#include <sys/stat.h>
 #include <unistd.h>
 
 using namespace vkvv;
-
-namespace {
-
-struct TraceFdStat {
-    bool valid = false;
-    unsigned long long dev = 0;
-    unsigned long long ino = 0;
-};
-
-TraceFdStat trace_fd_stat(int fd) {
-    TraceFdStat out{};
-    if (fd < 0) {
-        return out;
-    }
-    struct stat st {};
-    if (fstat(fd, &st) != 0) {
-        return out;
-    }
-    out.valid = true;
-    out.dev = static_cast<unsigned long long>(st.st_dev);
-    out.ino = static_cast<unsigned long long>(st.st_ino);
-    return out;
-}
-
-} // namespace
 
 bool vkvv_vulkan_surface_has_predecode_export(const VkvvSurface *surface) {
     if (surface == nullptr || surface->vulkan == nullptr) {
@@ -163,8 +138,8 @@ VAStatus vkvv_vulkan_refresh_surface_export(
     auto *resource = static_cast<SurfaceResource *>(surface->vulkan);
     remember_export_seed_resource(runtime, resource);
     if (resource->export_resource.image == VK_NULL_HANDLE &&
-        resource->imported_external &&
-        resource->import_fd_stat_valid) {
+        resource->import.external &&
+        resource->import.fd.valid) {
         (void) attach_imported_export_resource_by_fd(runtime, resource);
     }
     if (resource->export_resource.image == VK_NULL_HANDLE) {
@@ -388,7 +363,7 @@ VAStatus vkvv_vulkan_export_surface(
                        exported_shadow->black_placeholder ? 1U : 0U);
         }
     }
-    const TraceFdStat fd_stat = trace_fd_stat(fd);
+    const VkvvFdIdentity fd_stat = vkvv_fd_identity_from_fd(fd);
     if (exported_shadow != nullptr) {
         exported_shadow->fd_stat_valid = fd_stat.valid;
         exported_shadow->fd_dev = fd_stat.dev;
@@ -402,8 +377,8 @@ VAStatus vkvv_vulkan_export_surface(
                resource->codec_operation,
                fd,
                fd_stat.valid ? 1U : 0U,
-               fd_stat.dev,
-               fd_stat.ino,
+               static_cast<unsigned long long>(fd_stat.dev),
+               static_cast<unsigned long long>(fd_stat.ino),
                vkvv_trace_handle(export_memory),
                static_cast<unsigned long long>(resource->content_generation),
                static_cast<unsigned long long>(

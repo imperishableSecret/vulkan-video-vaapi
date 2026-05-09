@@ -153,6 +153,21 @@ typedef enum {
     VKVV_SURFACE_WORK_RENDERING,
 } VkvvSurfaceWorkState;
 
+struct VkvvFdIdentity {
+    bool valid = false;
+    uint64_t dev = 0;
+    uint64_t ino = 0;
+};
+
+struct VkvvExternalSurfaceImport {
+    bool external = false;
+    uint32_t memory_type = 0;
+    VkvvFdIdentity fd;
+    unsigned int fourcc = 0;
+    unsigned int width = 0;
+    unsigned int height = 0;
+};
+
 typedef struct VkvvSurface {
     std::mutex mutex;
     VASurfaceID id = VA_INVALID_ID;
@@ -165,14 +180,7 @@ typedef struct VkvvSurface {
     unsigned int fourcc;
     unsigned int role_flags;
     void *vulkan;
-    bool imported_external;
-    uint32_t import_memory_type;
-    bool import_fd_stat_valid;
-    uint64_t import_fd_dev;
-    uint64_t import_fd_ino;
-    unsigned int import_fourcc;
-    unsigned int import_width;
-    unsigned int import_height;
+    VkvvExternalSurfaceImport import;
     VkvvSurfaceWorkState work_state;
     VAStatus sync_status;
     bool destroying;

@@ -22,6 +22,7 @@ src_inc = include_directories('src')
 
 vulkan_runtime_sources = files(
   'src/telemetry.cpp',
+  'src/surface_import.cpp',
   'src/vulkan_runtime.cpp',
   'src/vulkan/common.cpp',
   'src/vulkan/command.cpp',
@@ -197,6 +198,17 @@ capability_smoke = executable(
   install: false,
 )
 
+surface_import_smoke = executable(
+  'vkvv-surface-import-smoke',
+  files(
+    'tests/smoke/generic/surface_import_smoke.cpp',
+    'src/surface_import.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [libva_dep],
+  install: false,
+)
+
 driver_test_env = environment()
 driver_test_env.set('LIBVA_DRIVER_NAME', 'nvidia_vulkan')
 driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
@@ -211,3 +223,4 @@ test('smoke-lifetime', lifetime_smoke, env: driver_test_env, is_parallel: false,
 test('smoke-multi-context', multi_context_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-sync', sync_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-capability', capability_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
+test('smoke-surface-import', surface_import_smoke, is_parallel: false, timeout: 30)

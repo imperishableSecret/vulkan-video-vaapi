@@ -80,11 +80,7 @@ struct SurfaceResource {
     uint64_t drm_format_modifier = 0;
     bool exportable = false;
     bool has_drm_format_modifier = false;
-    bool imported_external = false;
-    uint32_t import_memory_type = 0;
-    bool import_fd_stat_valid = false;
-    uint64_t import_fd_dev = 0;
-    uint64_t import_fd_ino = 0;
+    VkvvExternalSurfaceImport import;
     ExportResource export_resource{};
     uint64_t content_generation = 0;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;

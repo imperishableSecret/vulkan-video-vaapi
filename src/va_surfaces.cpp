@@ -1,31 +1,14 @@
 #include "va_private.h"
+#include "surface_import.h"
 #include "telemetry.h"
 #include "vulkan_runtime.h"
 
 #include <new>
-#include <sys/stat.h>
 #include <va/va_drmcommon.h>
 
 namespace {
 
 constexpr unsigned int surface_attribute_count = 7;
-
-struct TraceFdStat {
-    bool valid = false;
-    unsigned long long dev = 0;
-    unsigned long long ino = 0;
-};
-
-struct SurfaceImportInfo {
-    bool external = false;
-    uint32_t memory_type = VA_SURFACE_ATTRIB_MEM_TYPE_VA;
-    bool fd_stat_valid = false;
-    uint64_t fd_dev = 0;
-    uint64_t fd_ino = 0;
-    unsigned int fourcc = 0;
-    unsigned int width = 0;
-    unsigned int height = 0;
-};
 
 struct LockedSurface {
     explicit LockedSurface(VkvvSurface *surface) : surface(surface) {}
@@ -50,21 +33,6 @@ void set_integer_attrib(VASurfaceAttrib *attrib, VASurfaceAttribType type, uint3
     attrib->flags = flags;
     attrib->value.type = VAGenericValueTypeInteger;
     attrib->value.value.i = value;
-}
-
-TraceFdStat trace_fd_stat(int fd) {
-    TraceFdStat out{};
-    if (fd < 0) {
-        return out;
-    }
-    struct stat st {};
-    if (fstat(fd, &st) != 0) {
-        return out;
-    }
-    out.valid = true;
-    out.dev = static_cast<unsigned long long>(st.st_dev);
-    out.ino = static_cast<unsigned long long>(st.st_ino);
-    return out;
 }
 
 const char *surface_attrib_name(VASurfaceAttribType type) {
@@ -126,76 +94,6 @@ const VASurfaceAttrib *find_surface_attrib(
     return NULL;
 }
 
-uint32_t create_surface_memory_type(
-        const VASurfaceAttrib *attrib_list,
-        unsigned int num_attribs) {
-    const VASurfaceAttrib *attrib =
-            find_surface_attrib(attrib_list, num_attribs, VASurfaceAttribMemoryType);
-    if (attrib == NULL || attrib->value.type != VAGenericValueTypeInteger) {
-        return VA_SURFACE_ATTRIB_MEM_TYPE_VA;
-    }
-    return static_cast<uint32_t>(attrib->value.value.i);
-}
-
-bool create_surface_has_external_descriptor(
-        const VASurfaceAttrib *attrib_list,
-        unsigned int num_attribs) {
-    const VASurfaceAttrib *attrib =
-            find_surface_attrib(attrib_list, num_attribs, VASurfaceAttribExternalBufferDescriptor);
-    return attrib != NULL && attrib->value.type == VAGenericValueTypePointer &&
-           attrib->value.value.p != NULL;
-}
-
-SurfaceImportInfo surface_import_info_for_index(
-        const VASurfaceAttrib *attrib_list,
-        unsigned int num_attribs,
-        unsigned int index) {
-    SurfaceImportInfo info{};
-    info.memory_type = create_surface_memory_type(attrib_list, num_attribs);
-    const VASurfaceAttrib *external =
-            find_surface_attrib(attrib_list, num_attribs, VASurfaceAttribExternalBufferDescriptor);
-    if (external == NULL || external->value.type != VAGenericValueTypePointer ||
-        external->value.value.p == NULL) {
-        return info;
-    }
-
-    info.external = true;
-    int fd = -1;
-    if ((info.memory_type & VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_3) != 0) {
-        const auto *descriptors =
-                static_cast<const VADRMPRIME3SurfaceDescriptor *>(external->value.value.p);
-        const VADRMPRIME3SurfaceDescriptor &descriptor = descriptors[index];
-        fd = descriptor.num_objects > 0 ? descriptor.objects[0].fd : -1;
-        info.fourcc = descriptor.fourcc;
-        info.width = descriptor.width;
-        info.height = descriptor.height;
-    } else if ((info.memory_type & VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2) != 0) {
-        const auto *descriptors =
-                static_cast<const VADRMPRIMESurfaceDescriptor *>(external->value.value.p);
-        const VADRMPRIMESurfaceDescriptor &descriptor = descriptors[index];
-        fd = descriptor.num_objects > 0 ? descriptor.objects[0].fd : -1;
-        info.fourcc = descriptor.fourcc;
-        info.width = descriptor.width;
-        info.height = descriptor.height;
-    } else if ((info.memory_type & VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME) != 0) {
-        const auto *descriptors =
-                static_cast<const VASurfaceAttribExternalBuffers *>(external->value.value.p);
-        const VASurfaceAttribExternalBuffers &descriptor = descriptors[index];
-        const uintptr_t first_buffer =
-                descriptor.buffers != NULL && descriptor.num_buffers > 0 ? descriptor.buffers[0] : 0;
-        fd = first_buffer <= static_cast<uintptr_t>(INT32_MAX) ? static_cast<int>(first_buffer) : -1;
-        info.fourcc = descriptor.pixel_format;
-        info.width = descriptor.width;
-        info.height = descriptor.height;
-    }
-
-    const TraceFdStat fd_stat = trace_fd_stat(fd);
-    info.fd_stat_valid = fd_stat.valid;
-    info.fd_dev = fd_stat.dev;
-    info.fd_ino = fd_stat.ino;
-    return info;
-}
-
 void trace_drm_prime_descriptor(
         const VADRMPRIMESurfaceDescriptor *descriptor,
         unsigned int index) {
@@ -203,7 +101,7 @@ void trace_drm_prime_descriptor(
         return;
     }
     const int fd = descriptor->num_objects > 0 ? descriptor->objects[0].fd : -1;
-    const TraceFdStat fd_stat = trace_fd_stat(fd);
+    const VkvvFdIdentity fd_stat = vkvv_fd_identity_from_fd(fd);
     vkvv_trace("surface-import-drm-prime2",
                "index=%u fourcc=0x%x %ux%u objects=%u layers=%u fd0=%d fd0_stat=%u fd0_dev=%llu fd0_ino=%llu size0=%u mod0=0x%llx layer0_format=0x%x layer0_planes=%u layer0_object0=%u layer0_offset0=%u layer0_pitch0=%u",
                index,
@@ -214,8 +112,8 @@ void trace_drm_prime_descriptor(
                descriptor->num_layers,
                fd,
                fd_stat.valid ? 1U : 0U,
-               fd_stat.dev,
-               fd_stat.ino,
+               static_cast<unsigned long long>(fd_stat.dev),
+               static_cast<unsigned long long>(fd_stat.ino),
                descriptor->num_objects > 0 ? descriptor->objects[0].size : 0,
                descriptor->num_objects > 0 ? static_cast<unsigned long long>(descriptor->objects[0].drm_format_modifier) : 0ULL,
                descriptor->num_layers > 0 ? descriptor->layers[0].drm_format : 0,
@@ -232,7 +130,7 @@ void trace_drm_prime3_descriptor(
         return;
     }
     const int fd = descriptor->num_objects > 0 ? descriptor->objects[0].fd : -1;
-    const TraceFdStat fd_stat = trace_fd_stat(fd);
+    const VkvvFdIdentity fd_stat = vkvv_fd_identity_from_fd(fd);
     vkvv_trace("surface-import-drm-prime3",
                "index=%u fourcc=0x%x %ux%u objects=%u layers=%u fd0=%d fd0_stat=%u fd0_dev=%llu fd0_ino=%llu size0=%u mod0=0x%llx flags=0x%x layer0_format=0x%x layer0_planes=%u layer0_object0=%u layer0_offset0=%u layer0_pitch0=%u",
                index,
@@ -243,8 +141,8 @@ void trace_drm_prime3_descriptor(
                descriptor->num_layers,
                fd,
                fd_stat.valid ? 1U : 0U,
-               fd_stat.dev,
-               fd_stat.ino,
+               static_cast<unsigned long long>(fd_stat.dev),
+               static_cast<unsigned long long>(fd_stat.ino),
                descriptor->num_objects > 0 ? descriptor->objects[0].size : 0,
                descriptor->num_objects > 0 ? static_cast<unsigned long long>(descriptor->objects[0].drm_format_modifier) : 0ULL,
                descriptor->flags,
@@ -264,7 +162,7 @@ void trace_external_buffers_descriptor(
     const uintptr_t first_buffer =
             descriptor->buffers != NULL && descriptor->num_buffers > 0 ? descriptor->buffers[0] : 0;
     const int fd = first_buffer <= static_cast<uintptr_t>(INT32_MAX) ? static_cast<int>(first_buffer) : -1;
-    const TraceFdStat fd_stat = trace_fd_stat(fd);
+    const VkvvFdIdentity fd_stat = vkvv_fd_identity_from_fd(fd);
     vkvv_trace("surface-import-external-buffers",
                "index=%u fourcc=0x%x %ux%u size=%u planes=%u buffers=%u buffer0=%llu fd0_stat=%u fd0_dev=%llu fd0_ino=%llu flags=0x%x pitch0=%u offset0=%u pitch1=%u offset1=%u",
                index,
@@ -276,8 +174,8 @@ void trace_external_buffers_descriptor(
                descriptor->num_buffers,
                static_cast<unsigned long long>(first_buffer),
                fd_stat.valid ? 1U : 0U,
-               fd_stat.dev,
-               fd_stat.ino,
+               static_cast<unsigned long long>(fd_stat.dev),
+               static_cast<unsigned long long>(fd_stat.ino),
                descriptor->flags,
                descriptor->num_planes > 0 ? descriptor->pitches[0] : 0,
                descriptor->num_planes > 0 ? descriptor->offsets[0] : 0,
@@ -296,8 +194,8 @@ void trace_create_surface_attribs(
     if (!vkvv_trace_enabled()) {
         return;
     }
-    const uint32_t memory_type = create_surface_memory_type(attrib_list, num_attribs);
-    const bool has_external = create_surface_has_external_descriptor(attrib_list, num_attribs);
+    const uint32_t memory_type = vkvv_surface_import_memory_type(attrib_list, num_attribs);
+    const bool has_external = vkvv_surface_import_has_external_descriptor(attrib_list, num_attribs);
     vkvv_trace("surface-create-request",
                "driver=%llu format=0x%x %ux%u count=%u attribs=%u mem_type=0x%x external=%u",
                static_cast<unsigned long long>(driver_instance_id),
@@ -453,8 +351,8 @@ VAStatus vkvvCreateSurfaces2(
     }
 
     for (unsigned int i = 0; i < num_surfaces; i++) {
-        const SurfaceImportInfo import_info =
-                surface_import_info_for_index(attrib_list, num_attribs, i);
+        const VkvvExternalSurfaceImport import_info =
+                vkvv_surface_import_from_attribs(attrib_list, num_attribs, i);
         auto *surface = new (std::nothrow) VkvvSurface();
         if (surface == NULL) {
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
@@ -466,14 +364,7 @@ VAStatus vkvvCreateSurfaces2(
         surface->fourcc = vkvv_surface_fourcc_for_format(selected_format);
         surface->role_flags = VKVV_SURFACE_ROLE_DECODE_OUTPUT |
                               (drv->caps.surface_export ? VKVV_SURFACE_ROLE_EXPORTABLE : 0);
-        surface->imported_external = import_info.external;
-        surface->import_memory_type = import_info.memory_type;
-        surface->import_fd_stat_valid = import_info.fd_stat_valid;
-        surface->import_fd_dev = import_info.fd_dev;
-        surface->import_fd_ino = import_info.fd_ino;
-        surface->import_fourcc = import_info.fourcc;
-        surface->import_width = import_info.width;
-        surface->import_height = import_info.height;
+        surface->import = import_info;
         surface->work_state = VKVV_SURFACE_WORK_READY;
         surface->sync_status = VA_STATUS_SUCCESS;
         surfaces[i] = vkvv_object_add(drv, VKVV_OBJECT_SURFACE, surface);
@@ -496,14 +387,14 @@ VAStatus vkvvCreateSurfaces2(
                    surface->fourcc,
                    surface->rt_format,
                    surface->role_flags,
-                   surface->import_memory_type,
-                   surface->imported_external ? 1U : 0U,
-                   surface->import_fd_stat_valid ? 1U : 0U,
-                   static_cast<unsigned long long>(surface->import_fd_dev),
-                   static_cast<unsigned long long>(surface->import_fd_ino),
-                   surface->import_fourcc,
-                   surface->import_width,
-                   surface->import_height);
+                   surface->import.memory_type,
+                   surface->import.external ? 1U : 0U,
+                   surface->import.fd.valid ? 1U : 0U,
+                   static_cast<unsigned long long>(surface->import.fd.dev),
+                   static_cast<unsigned long long>(surface->import.fd.ino),
+                   surface->import.fourcc,
+                   surface->import.width,
+                   surface->import.height);
         vkvv_log("created surface %u: driver=%llu stream=%llu codec=0x%x %ux%u fourcc=0x%x rt=0x%x",
                  surfaces[i],
                  (unsigned long long) surface->driver_instance_id,

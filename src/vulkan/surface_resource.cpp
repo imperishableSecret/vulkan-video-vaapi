@@ -415,11 +415,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
         existing->codec_operation = codec_operation;
         existing->surface_id = surface->id;
         existing->visible_extent = {surface->width, surface->height};
-        existing->imported_external = surface->imported_external;
-        existing->import_memory_type = surface->import_memory_type;
-        existing->import_fd_stat_valid = surface->import_fd_stat_valid;
-        existing->import_fd_dev = surface->import_fd_dev;
-        existing->import_fd_ino = surface->import_fd_ino;
+        existing->import = surface->import;
         vkvv_trace("surface-resource-reuse",
                    "surface=%u driver=%llu stream=%llu surface_codec=0x%x key_codec=0x%x resource_codec=0x%x content_gen=%llu shadow_gen=%llu predecode=%u imported=%u import_fd_stat=%u import_fd_dev=%llu import_fd_ino=%llu",
                    surface->id,
@@ -431,10 +427,10 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
                    static_cast<unsigned long long>(existing->content_generation),
                    static_cast<unsigned long long>(existing->export_resource.content_generation),
                    existing->export_resource.predecode_exported ? 1U : 0U,
-                   existing->imported_external ? 1U : 0U,
-                   existing->import_fd_stat_valid ? 1U : 0U,
-                   static_cast<unsigned long long>(existing->import_fd_dev),
-                   static_cast<unsigned long long>(existing->import_fd_ino));
+                   existing->import.external ? 1U : 0U,
+                   existing->import.fd.valid ? 1U : 0U,
+                   static_cast<unsigned long long>(existing->import.fd.dev),
+                   static_cast<unsigned long long>(existing->import.fd.ino));
         return true;
     }
     if (existing != nullptr && existing->image != VK_NULL_HANDLE && surface->decoded) {
@@ -619,11 +615,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
     resource->va_fourcc = key.va_fourcc;
     resource->decode_key = key;
     resource->allocation_size = requirements.size;
-    resource->imported_external = surface->imported_external;
-    resource->import_memory_type = surface->import_memory_type;
-    resource->import_fd_stat_valid = surface->import_fd_stat_valid;
-    resource->import_fd_dev = surface->import_fd_dev;
-    resource->import_fd_ino = surface->import_fd_ino;
+    resource->import = surface->import;
     if (request_exportable) {
         VkImageSubresource plane0{};
         plane0.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT;
@@ -671,10 +663,10 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
                resource->exportable ? 1U : 0U,
                static_cast<unsigned long long>(resource->allocation_size),
                vkvv_trace_handle(resource->export_resource.memory),
-               resource->imported_external ? 1U : 0U,
-               resource->import_fd_stat_valid ? 1U : 0U,
-               static_cast<unsigned long long>(resource->import_fd_dev),
-               static_cast<unsigned long long>(resource->import_fd_ino));
+               resource->import.external ? 1U : 0U,
+               resource->import.fd.valid ? 1U : 0U,
+               static_cast<unsigned long long>(resource->import.fd.dev),
+               static_cast<unsigned long long>(resource->import.fd.ino));
     return true;
 }
 
