@@ -6,6 +6,9 @@ project(
   default_options: [
     'cpp_std=c++23',
     'warning_level=2',
+    'optimization=2',
+    'debug=false',
+    'b_ndebug=true',
   ],
 )
 
