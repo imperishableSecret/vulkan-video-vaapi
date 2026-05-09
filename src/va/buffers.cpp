@@ -35,6 +35,19 @@ void vkvv_coded_buffer_mark_pending(VkvvBuffer* buffer, uint64_t generation) {
     refresh_coded_segment(payload, 0);
 }
 
+void vkvv_coded_buffer_fail(VkvvBuffer* buffer, VAStatus status, uint64_t generation) {
+    if (buffer == NULL || buffer->coded_payload == NULL) {
+        return;
+    }
+    VkvvCodedBufferPayload* payload = buffer->coded_payload;
+    payload->bytes_used             = 0;
+    payload->generation             = generation;
+    payload->sync_status            = status;
+    payload->ready                  = true;
+    payload->pending                = false;
+    refresh_coded_segment(payload, 0);
+}
+
 VAStatus vkvv_coded_buffer_store(VkvvBuffer* buffer, const void* data, size_t data_size, uint32_t status_flags, uint64_t generation) {
     if (buffer == NULL || buffer->buffer_class != VKVV_BUFFER_CLASS_ENCODE_CODED_OUTPUT || buffer->coded_payload == NULL) {
         return VA_STATUS_ERROR_INVALID_BUFFER;

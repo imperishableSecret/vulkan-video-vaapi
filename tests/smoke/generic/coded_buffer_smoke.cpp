@@ -82,6 +82,15 @@ int main(void) {
     ok = check(coded->coded_payload->pending && !coded->coded_payload->ready && coded->coded_payload->generation == 8, "pending coded buffer state was not recorded") && ok;
     ok = check_va(vkvvSyncBuffer(&ctx, coded_id, 0), VA_STATUS_ERROR_TIMEDOUT, "sync pending coded buffer") && ok;
 
+    vkvv_coded_buffer_fail(coded, VA_STATUS_ERROR_OPERATION_FAILED, 9);
+    ok      = check(!coded->coded_payload->pending && coded->coded_payload->ready && coded->coded_payload->generation == 9, "failed coded buffer state was not completed") && ok;
+    ok      = check_va(vkvvSyncBuffer(&ctx, coded_id, 0), VA_STATUS_ERROR_OPERATION_FAILED, "sync failed coded buffer") && ok;
+    mapped  = nullptr;
+    ok      = check_va(vkvvMapBuffer(&ctx, coded_id, &mapped), VA_STATUS_SUCCESS, "map failed coded buffer") && ok;
+    segment = static_cast<VACodedBufferSegment*>(mapped);
+    ok      = check(segment != nullptr && segment->size == 0 && segment->buf != nullptr, "failed coded segment metadata was not cleared") && ok;
+    ok      = check_va(vkvvUnmapBuffer(&ctx, coded_id), VA_STATUS_SUCCESS, "unmap failed coded buffer") && ok;
+
     uint8_t too_large[65]{};
     ok = check_va(vkvv_coded_buffer_store(coded, too_large, sizeof(too_large), 0, 9), VA_STATUS_ERROR_NOT_ENOUGH_BUFFER, "oversized coded payload") && ok;
 

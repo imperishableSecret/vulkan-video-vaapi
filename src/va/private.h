@@ -65,6 +65,7 @@ bool     vkvv_driver_apply_active_decode_domain(VkvvDriver* drv, VkvvSurface* su
 bool     vkvv_driver_apply_active_decode_domain_locked(VkvvDriver* drv, VkvvSurface* surface);
 void     vkvv_release_buffer_payload(VkvvBuffer* buffer);
 void     vkvv_coded_buffer_mark_pending(VkvvBuffer* buffer, uint64_t generation);
+void     vkvv_coded_buffer_fail(VkvvBuffer* buffer, VAStatus status, uint64_t generation);
 VAStatus vkvv_coded_buffer_store(VkvvBuffer* buffer, const void* data, size_t data_size, uint32_t status_flags, uint64_t generation);
 
 VAStatus vkvvQueryConfigProfiles(VADriverContextP ctx, VAProfile* profile_list, int* num_profiles);

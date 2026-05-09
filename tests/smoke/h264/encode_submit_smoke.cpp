@@ -206,6 +206,27 @@ int main(void) {
     }
     ok = check_va(vkvvUnmapBuffer(&ctx, coded_buffer), VA_STATUS_SUCCESS, "unmap coded buffer") && ok;
 
+    picture.pic_fields.bits.idr_pic_flag = 0;
+    slice.slice_type                     = 0;
+    for (VAPictureH264& ref : picture.ReferenceFrames) {
+        ref.picture_id = VA_INVALID_ID;
+        ref.flags      = VA_PICTURE_H264_INVALID;
+    }
+    for (VAPictureH264& ref : slice.RefPicList0) {
+        ref.picture_id = VA_INVALID_ID;
+        ref.flags      = VA_PICTURE_H264_INVALID;
+    }
+    input.frame_type = VKVV_H264_ENCODE_FRAME_P;
+    ok               = check_va(vkvv_vulkan_encode_h264(runtime_ptr, session, &drv, &vctx, &input, reason, sizeof(reason)), VA_STATUS_ERROR_INVALID_SURFACE,
+                                "submit H.264 encode with missing P reference") &&
+        ok;
+    ok           = check_va(vkvvSyncBuffer(&ctx, coded_buffer, UINT64_MAX), VA_STATUS_ERROR_INVALID_SURFACE, "sync failed coded buffer") && ok;
+    mapped_coded = nullptr;
+    ok           = check_va(vkvvMapBuffer(&ctx, coded_buffer, &mapped_coded), VA_STATUS_SUCCESS, "map failed coded buffer") && ok;
+    segment      = static_cast<VACodedBufferSegment*>(mapped_coded);
+    ok           = check(segment != nullptr && segment->size == 0 && segment->buf != nullptr, "failed encode coded segment was not cleared") && ok;
+    ok           = check_va(vkvvUnmapBuffer(&ctx, coded_buffer), VA_STATUS_SUCCESS, "unmap failed coded buffer") && ok;
+
     if (session != nullptr) {
         vkvv_vulkan_h264_encode_session_destroy(runtime_ptr, session);
     }

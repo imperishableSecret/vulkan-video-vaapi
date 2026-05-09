@@ -685,7 +685,12 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
         std::snprintf(reason, reason_size, "invalid H.264 encode coded buffer %u", input->coded_buffer);
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
-    vkvv_coded_buffer_mark_pending(coded, coded->coded_payload->generation + 1);
+    const uint64_t coded_generation = coded->coded_payload->generation + 1;
+    vkvv_coded_buffer_mark_pending(coded, coded_generation);
+    auto fail_coded = [coded, coded_generation](VAStatus status) {
+        vkvv_coded_buffer_fail(coded, status, coded_generation);
+        return status;
+    };
 
     const VkExtent2D coded_extent{
         .width  = round_up_16(input->width),
@@ -699,26 +704,26 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
     if (input->frame_type == VKVV_H264_ENCODE_FRAME_P) {
         if (l0_reference_picture == nullptr) {
             std::snprintf(reason, reason_size, "missing H.264 P-frame L0 reference");
-            return VA_STATUS_ERROR_INVALID_SURFACE;
+            return fail_coded(VA_STATUS_ERROR_INVALID_SURFACE);
         }
         if (input->reconstructed_surface == l0_reference_picture->picture_id) {
             std::snprintf(reason, reason_size, "H.264 P-frame reconstructed surface must differ from L0 reference surface %u", input->reconstructed_surface);
-            return VA_STATUS_ERROR_INVALID_SURFACE;
+            return fail_coded(VA_STATUS_ERROR_INVALID_SURFACE);
         }
         l0_reference_surface = static_cast<VkvvSurface*>(vkvv_object_get(drv, l0_reference_picture->picture_id, VKVV_OBJECT_SURFACE));
         if (l0_reference_surface == nullptr || !l0_reference_surface->decoded || l0_reference_surface->vulkan == nullptr) {
             std::snprintf(reason, reason_size, "H.264 P-frame reference surface %u is not ready", l0_reference_picture->picture_id);
-            return VA_STATUS_ERROR_INVALID_SURFACE;
+            return fail_coded(VA_STATUS_ERROR_INVALID_SURFACE);
         }
         l0_reference_resource = static_cast<SurfaceResource*>(l0_reference_surface->vulkan);
         if (l0_reference_resource->image == VK_NULL_HANDLE || (l0_reference_resource->encode_key.usage & VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR) == 0) {
             std::snprintf(reason, reason_size, "H.264 P-frame reference surface %u has no encode DPB image", l0_reference_picture->picture_id);
-            return VA_STATUS_ERROR_INVALID_SURFACE;
+            return fail_coded(VA_STATUS_ERROR_INVALID_SURFACE);
         }
         l0_reference_slot = h264_encode_dpb_slot_for_surface(session, l0_reference_picture->picture_id);
         if (l0_reference_slot < 0) {
             std::snprintf(reason, reason_size, "H.264 P-frame reference surface %u has no DPB slot", l0_reference_picture->picture_id);
-            return VA_STATUS_ERROR_INVALID_SURFACE;
+            return fail_coded(VA_STATUS_ERROR_INVALID_SURFACE);
         }
     }
 
@@ -729,14 +734,14 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
         reconstructed_surface = static_cast<VkvvSurface*>(vkvv_object_get(drv, input->reconstructed_surface, VKVV_OBJECT_SURFACE));
         if (reconstructed_surface == nullptr) {
             std::snprintf(reason, reason_size, "missing H.264 encode reconstructed surface %u", input->reconstructed_surface);
-            return VA_STATUS_ERROR_INVALID_SURFACE;
+            return fail_coded(VA_STATUS_ERROR_INVALID_SURFACE);
         }
         reconstructed_surface->driver_instance_id = input_surface->driver_instance_id;
         reconstructed_surface->stream_id          = vctx->stream_id;
         reconstructed_surface->codec_operation    = VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR;
         const EncodeImageKey reconstructed_key    = h264_encode_reconstructed_key(session, coded_extent, input_surface->rt_format, input_surface->fourcc);
         if (!ensure_encode_input_resource(runtime, reconstructed_surface, reconstructed_key, reason, reason_size)) {
-            return VA_STATUS_ERROR_ALLOCATION_FAILED;
+            return fail_coded(VA_STATUS_ERROR_ALLOCATION_FAILED);
         }
         reconstructed_resource = static_cast<SurfaceResource*>(reconstructed_surface->vulkan);
         reconstructed_slot     = h264_encode_dpb_slot_for_surface(session, input->reconstructed_surface);
@@ -744,27 +749,27 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
             reconstructed_slot = allocate_h264_encode_dpb_slot(session, l0_reference_slot);
             if (reconstructed_slot < 0) {
                 std::snprintf(reason, reason_size, "no free H.264 encode DPB slot for reconstructed surface %u", input->reconstructed_surface);
-                return VA_STATUS_ERROR_ALLOCATION_FAILED;
+                return fail_coded(VA_STATUS_ERROR_ALLOCATION_FAILED);
             }
             h264_encode_set_dpb_slot_for_surface(session, input->reconstructed_surface, reconstructed_slot);
         }
     }
 
     if (!ensure_h264_encode_query_pool(runtime, session, reason, reason_size)) {
-        return VA_STATUS_ERROR_OPERATION_FAILED;
+        return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
     }
     if (!session->video.initialized && !reset_h264_encode_session(runtime, session, reason, reason_size)) {
-        return VA_STATUS_ERROR_OPERATION_FAILED;
+        return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
     }
 
     const VkDeviceSize output_capacity = std::max<VkDeviceSize>(coded->coded_payload->capacity, 1);
     if (!ensure_buffer(runtime, &h264_encode_profile_spec, output_capacity, VK_BUFFER_USAGE_VIDEO_ENCODE_DST_BIT_KHR | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, &session->output, "H.264 encoded output", reason, reason_size)) {
-        return VA_STATUS_ERROR_ALLOCATION_FAILED;
+        return fail_coded(VA_STATUS_ERROR_ALLOCATION_FAILED);
     }
     if (!ensure_buffer(runtime, nullptr, output_capacity, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &session->readback, "H.264 encoded readback", reason, reason_size)) {
-        return VA_STATUS_ERROR_ALLOCATION_FAILED;
+        return fail_coded(VA_STATUS_ERROR_ALLOCATION_FAILED);
     }
 
     StdVideoEncodeH264ReferenceListsInfo reference_lists{};
@@ -821,16 +826,16 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
 
     std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
     if (!ensure_command_resources_for_queue(runtime, runtime->encode_queue_family, runtime->encode_queue, reason, reason_size)) {
-        return VA_STATUS_ERROR_OPERATION_FAILED;
+        return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
     }
 
     VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
     if (!record_vk_result(runtime, result, "vkResetFences", "H.264 encode", reason, reason_size)) {
-        return VA_STATUS_ERROR_OPERATION_FAILED;
+        return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
     }
     result = vkResetCommandBuffer(runtime->command_buffer, 0);
     if (!record_vk_result(runtime, result, "vkResetCommandBuffer", "H.264 encode", reason, reason_size)) {
-        return VA_STATUS_ERROR_OPERATION_FAILED;
+        return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
     }
 
     VkCommandBufferBeginInfo begin_info{};
@@ -838,7 +843,7 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     result           = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
     if (!record_vk_result(runtime, result, "vkBeginCommandBuffer", "H.264 encode", reason, reason_size)) {
-        return VA_STATUS_ERROR_OPERATION_FAILED;
+        return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
     }
 
     std::vector<VkImageMemoryBarrier2> image_barriers;
@@ -930,10 +935,10 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
 
     result = vkEndCommandBuffer(runtime->command_buffer);
     if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "H.264 encode", reason, reason_size)) {
-        return VA_STATUS_ERROR_OPERATION_FAILED;
+        return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
     }
     if (!submit_command_buffer_and_wait_on_queue(runtime, runtime->encode_queue, reason, reason_size, "H.264 encode")) {
-        return VA_STATUS_ERROR_OPERATION_FAILED;
+        return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
     }
 
     struct EncodeFeedback {
@@ -943,14 +948,14 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
     } feedback{};
     result = vkGetQueryPoolResults(runtime->device, session->query_pool, 0, 1, sizeof(feedback), &feedback, sizeof(feedback), VK_QUERY_RESULT_WITH_STATUS_BIT_KHR);
     if (!record_vk_result(runtime, result, "vkGetQueryPoolResults", "H.264 encode feedback", reason, reason_size)) {
-        return VA_STATUS_ERROR_OPERATION_FAILED;
+        return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
     }
     if (feedback.status <= 0) {
         std::snprintf(reason, reason_size, "H.264 encode feedback reported status=%d bytes=%u", feedback.status, feedback.bytes_written);
-        return feedback.status == VK_QUERY_RESULT_STATUS_INSUFFICIENT_BITSTREAM_BUFFER_RANGE_KHR ? VA_STATUS_ERROR_NOT_ENOUGH_BUFFER : VA_STATUS_ERROR_OPERATION_FAILED;
+        return fail_coded(feedback.status == VK_QUERY_RESULT_STATUS_INSUFFICIENT_BITSTREAM_BUFFER_RANGE_KHR ? VA_STATUS_ERROR_NOT_ENOUGH_BUFFER : VA_STATUS_ERROR_OPERATION_FAILED);
     }
     if (!copy_encoded_output_to_coded_buffer(runtime, session, coded, feedback.offset, feedback.bytes_written, reason, reason_size)) {
-        return VA_STATUS_ERROR_OPERATION_FAILED;
+        return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
     }
 
     if (reconstructed_surface != nullptr) {
