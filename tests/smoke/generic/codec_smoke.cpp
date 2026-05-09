@@ -255,7 +255,7 @@ namespace {
         return ok;
     }
 
-    bool check_hevc_parser(const VkvvDecodeOps* hevc) {
+    bool check_hevc_parser(const VkvvDecodeOps* hevc, uint8_t bit_depth_minus8, const char* label) {
         void* state = hevc != nullptr ? hevc->state_create() : nullptr;
         if (!check(state != nullptr, "HEVC codec state allocation failed")) {
             return false;
@@ -264,28 +264,30 @@ namespace {
         hevc->begin_picture(state);
 
         VAPictureParameterBufferHEVC pic{};
-        pic.CurrPic.picture_id                                      = 7;
-        pic.pic_width_in_luma_samples                               = 128;
-        pic.pic_height_in_luma_samples                              = 72;
-        pic.pic_fields.bits.chroma_format_idc                       = 1;
-        pic.slice_parsing_fields.bits.RapPicFlag                    = 1;
-        pic.slice_parsing_fields.bits.IdrPicFlag                    = 1;
-        pic.slice_parsing_fields.bits.IntraPicFlag                  = 1;
-        pic.log2_min_luma_coding_block_size_minus3                  = 0;
-        pic.log2_diff_max_min_luma_coding_block_size                = 3;
-        pic.log2_min_transform_block_size_minus2                    = 0;
-        pic.log2_diff_max_min_transform_block_size                  = 3;
-        pic.log2_parallel_merge_level_minus2                        = 0;
+        pic.CurrPic.picture_id                       = 7;
+        pic.pic_width_in_luma_samples                = 128;
+        pic.pic_height_in_luma_samples               = 72;
+        pic.bit_depth_luma_minus8                    = bit_depth_minus8;
+        pic.bit_depth_chroma_minus8                  = bit_depth_minus8;
+        pic.pic_fields.bits.chroma_format_idc        = 1;
+        pic.slice_parsing_fields.bits.RapPicFlag     = 1;
+        pic.slice_parsing_fields.bits.IdrPicFlag     = 1;
+        pic.slice_parsing_fields.bits.IntraPicFlag   = 1;
+        pic.log2_min_luma_coding_block_size_minus3   = 0;
+        pic.log2_diff_max_min_luma_coding_block_size = 3;
+        pic.log2_min_transform_block_size_minus2     = 0;
+        pic.log2_diff_max_min_transform_block_size   = 3;
+        pic.log2_parallel_merge_level_minus2         = 0;
         for (VAPictureHEVC& ref : pic.ReferenceFrames) {
             ref.picture_id = VA_INVALID_ID;
             ref.flags      = VA_PICTURE_HEVC_INVALID;
         }
 
         VASliceParameterBufferHEVC first_slice{};
-        first_slice.slice_data_offset                     = 3;
-        first_slice.slice_data_size                       = 4;
-        first_slice.LongSliceFlags.fields.LastSliceOfPic  = 0;
-        first_slice.LongSliceFlags.fields.slice_type      = STD_VIDEO_H265_SLICE_TYPE_I;
+        first_slice.slice_data_offset                    = 3;
+        first_slice.slice_data_size                      = 4;
+        first_slice.LongSliceFlags.fields.LastSliceOfPic = 0;
+        first_slice.LongSliceFlags.fields.slice_type     = STD_VIDEO_H265_SLICE_TYPE_I;
 
         VASliceParameterBufferHEVC second_slice{};
         second_slice.slice_data_offset                    = 10;
@@ -335,6 +337,9 @@ namespace {
 
         VkvvHEVCDecodeInput input{};
         ok = check(vkvv_hevc_get_decode_input(state, &input) == VA_STATUS_SUCCESS, "HEVC decode input extraction failed") && ok;
+        ok = check(input.pic != nullptr && input.pic->bit_depth_luma_minus8 == bit_depth_minus8 && input.pic->bit_depth_chroma_minus8 == bit_depth_minus8,
+                   "HEVC parser did not preserve the expected bit depth") &&
+            ok;
         ok = check(input.slice_count == 2, "HEVC parser returned the wrong slice count") && ok;
         ok = check(input.bitstream_size == 13 && input.slice_offsets[0] == 0 && input.slice_offsets[1] == 7, "HEVC parser returned wrong slice offsets or size") && ok;
         ok = check(input.bitstream[0] == 0x00 && input.bitstream[1] == 0x00 && input.bitstream[2] == 0x01 && input.bitstream[3] == 0x26,
@@ -345,6 +350,7 @@ namespace {
             ok;
 
         hevc->state_destroy(state);
+        std::printf("%s parser passed\n", label);
         return ok;
     }
 
@@ -374,10 +380,16 @@ int main(void) {
 
     ok = check(vkvv_decode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointEncSlice) == nullptr, "H.264 encode entrypoint must not resolve decode ops") && ok;
     const VkvvDecodeOps* hevc_main = vkvv_decode_ops_for_profile_entrypoint(VAProfileHEVCMain, VAEntrypointVLD);
-    ok                              = check(ops_complete(hevc_main), "HEVC Main decode ops are incomplete") && ok;
+    ok                             = check(ops_complete(hevc_main), "HEVC Main decode ops are incomplete") && ok;
     if (hevc_main != nullptr) {
         ok = check(std::strcmp(hevc_main->name, "hevc-main") == 0, "HEVC Main decode ops used the wrong name") && ok;
-        ok = check_hevc_parser(hevc_main) && ok;
+        ok = check_hevc_parser(hevc_main, 0, "HEVC Main") && ok;
+    }
+    const VkvvDecodeOps* hevc_main10 = vkvv_decode_ops_for_profile_entrypoint(VAProfileHEVCMain10, VAEntrypointVLD);
+    ok                               = check(ops_complete(hevc_main10), "HEVC Main10 decode ops are incomplete") && ok;
+    if (hevc_main10 != nullptr) {
+        ok = check(std::strcmp(hevc_main10->name, "hevc-main10") == 0, "HEVC Main10 decode ops used the wrong name") && ok;
+        ok = check_hevc_parser(hevc_main10, 2, "HEVC Main10") && ok;
     }
     const VkvvDecodeOps* vp9 = vkvv_decode_ops_for_profile_entrypoint(VAProfileVP9Profile0, VAEntrypointVLD);
     ok                       = check(ops_complete(vp9), "VP9 decode ops are incomplete") && ok;
@@ -446,15 +458,24 @@ int main(void) {
     ok                                               = check(vp9_profile2_record == vp9_profile2_decode, "VP9 Profile2 advertised capability should match its full record") && ok;
 
     const VkvvProfileCapability* hevc_main_cap = vkvv_profile_capability_record(&drv, VAProfileHEVCMain, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
-    ok                                         = check(hevc_main_cap != nullptr && hevc_main_cap->hardware_supported && hevc_main_cap->runtime_wired &&
-                                                           hevc_main_cap->parser_wired && hevc_main_cap->advertise && hevc_main_cap->formats[0].fourcc == VA_FOURCC_NV12,
-                                                       "HEVC Main capability should advertise NV12 after decode wiring lands") &&
+    ok = check(hevc_main_cap != nullptr && hevc_main_cap->hardware_supported && hevc_main_cap->runtime_wired && hevc_main_cap->parser_wired && hevc_main_cap->advertise &&
+                   hevc_main_cap->formats[0].fourcc == VA_FOURCC_NV12,
+               "HEVC Main capability should advertise NV12 after decode wiring lands") &&
         ok;
 
     const VkvvProfileCapability* hevc_main10_cap = vkvv_profile_capability_record(&drv, VAProfileHEVCMain10, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
-    ok                                           = check(hevc_main10_cap != nullptr && !hevc_main10_cap->runtime_wired && !hevc_main10_cap->advertise,
-                                                         "HEVC Main10 should remain hidden until P010 decode/export is wired") &&
+    ok = check(hevc_main10_cap != nullptr && hevc_main10_cap->hardware_supported && hevc_main10_cap->runtime_wired && hevc_main10_cap->parser_wired && hevc_main10_cap->advertise &&
+                   hevc_main10_cap->formats[0].fourcc == VA_FOURCC_P010,
+               "HEVC Main10 capability should advertise P010 after decode wiring lands") &&
         ok;
+    VAConfigAttrib hevc_main10_rt{};
+    hevc_main10_rt.type = VAConfigAttribRTFormat;
+    vkvv_fill_config_attribute(hevc_main10_cap, &hevc_main10_rt);
+    ok = check((hevc_main10_rt.value & VA_RT_FORMAT_YUV420_10) != 0 && (hevc_main10_rt.value & VA_RT_FORMAT_YUV420) != 0,
+               "HEVC Main10 config RTFormat should include P010 plus the YUV420 config alias") &&
+        ok;
+    ok = check(vkvv_select_rt_format(hevc_main10_cap, VA_RT_FORMAT_YUV420) == VA_RT_FORMAT_YUV420_10, "HEVC Main10 YUV420 config request should resolve to P010") && ok;
+    ok = check(vkvv_profile_format_variant(hevc_main10_cap, VA_RT_FORMAT_YUV420, true) == nullptr, "HEVC Main10 should not expose an actual NV12 surface variant") && ok;
 
     const VkvvProfileCapability* av1_decode = vkvv_profile_capability_record(&drv, VAProfileAV1Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
     ok =

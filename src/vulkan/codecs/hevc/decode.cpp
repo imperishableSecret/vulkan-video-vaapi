@@ -65,8 +65,10 @@ VAStatus vkvv_vulkan_decode_hevc(void* runtime_ptr, void* session_ptr, VkvvDrive
         std::snprintf(reason, reason_size, "missing HEVC bitstream data");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
-    if (input->pic->bit_depth_luma_minus8 != 0 || input->pic->bit_depth_chroma_minus8 != 0) {
-        std::snprintf(reason, reason_size, "HEVC Vulkan path currently supports only Main 8-bit decode");
+    const uint8_t expected_bit_depth_minus8 = session->bit_depth > 8 ? static_cast<uint8_t>(session->bit_depth - 8U) : 0;
+    if (input->pic->bit_depth_luma_minus8 != expected_bit_depth_minus8 || input->pic->bit_depth_chroma_minus8 != expected_bit_depth_minus8) {
+        std::snprintf(reason, reason_size, "HEVC Vulkan bit-depth mismatch: luma_minus8=%u chroma_minus8=%u expected=%u profile=%d", input->pic->bit_depth_luma_minus8,
+                      input->pic->bit_depth_chroma_minus8, expected_bit_depth_minus8, profile);
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
     if (input->pic->pic_fields.bits.chroma_format_idc != 1) {
@@ -114,19 +116,19 @@ VAStatus vkvv_vulkan_decode_hevc(void* runtime_ptr, void* session_ptr, VkvvDrive
     bool used_slots[max_hevc_dpb_slots] = {};
 
     struct ReferenceRecord {
-        uint32_t                         ref_index = 0;
-        VkvvSurface*                     surface   = nullptr;
-        SurfaceResource*                 resource  = nullptr;
-        uint8_t                          slot      = STD_VIDEO_H265_NO_REFERENCE_PICTURE;
-        bool                             active    = false;
-        VkVideoPictureResourceInfoKHR    picture{};
-        StdVideoDecodeH265ReferenceInfo  std_ref{};
-        VkVideoDecodeH265DpbSlotInfoKHR  h265_slot{};
-        VkVideoReferenceSlotInfoKHR      slot_info{};
+        uint32_t                        ref_index = 0;
+        VkvvSurface*                    surface   = nullptr;
+        SurfaceResource*                resource  = nullptr;
+        uint8_t                         slot      = STD_VIDEO_H265_NO_REFERENCE_PICTURE;
+        bool                            active    = false;
+        VkVideoPictureResourceInfoKHR   picture{};
+        StdVideoDecodeH265ReferenceInfo std_ref{};
+        VkVideoDecodeH265DpbSlotInfoKHR h265_slot{};
+        VkVideoReferenceSlotInfoKHR     slot_info{};
     };
 
     std::array<ReferenceRecord, max_va_hevc_reference_frames> references{};
-    uint32_t                                                   reference_count = 0;
+    uint32_t                                                  reference_count = 0;
     for (uint32_t i = 0; i < max_va_hevc_reference_frames; i++) {
         const VAPictureHEVC& ref_pic = input->pic->ReferenceFrames[i];
         if (hevc_picture_is_invalid(ref_pic)) {
@@ -299,16 +301,16 @@ VAStatus vkvv_vulkan_decode_hevc(void* runtime_ptr, void* session_ptr, VkvvDrive
     runtime->cmd_begin_video_coding(runtime->command_buffer, &video_begin);
 
     StdVideoDecodeH265PictureInfo std_picture{};
-    std_picture.flags.IrapPicFlag                  = input->pic->slice_parsing_fields.bits.RapPicFlag;
-    std_picture.flags.IdrPicFlag                   = input->pic->slice_parsing_fields.bits.IdrPicFlag;
-    std_picture.flags.IsReference                  = 1;
+    std_picture.flags.IrapPicFlag                     = input->pic->slice_parsing_fields.bits.RapPicFlag;
+    std_picture.flags.IdrPicFlag                      = input->pic->slice_parsing_fields.bits.IdrPicFlag;
+    std_picture.flags.IsReference                     = 1;
     std_picture.flags.short_term_ref_pic_set_sps_flag = 0;
-    std_picture.sps_video_parameter_set_id         = 0;
-    std_picture.pps_seq_parameter_set_id           = 0;
-    std_picture.pps_pic_parameter_set_id           = 0;
-    std_picture.NumDeltaPocsOfRefRpsIdx            = 0;
-    std_picture.PicOrderCntVal                     = input->pic->CurrPic.pic_order_cnt;
-    std_picture.NumBitsForSTRefPicSetInSlice       = static_cast<uint16_t>(std::min<uint32_t>(input->pic->st_rps_bits, 0xffff));
+    std_picture.sps_video_parameter_set_id            = 0;
+    std_picture.pps_seq_parameter_set_id              = 0;
+    std_picture.pps_pic_parameter_set_id              = 0;
+    std_picture.NumDeltaPocsOfRefRpsIdx               = 0;
+    std_picture.PicOrderCntVal                        = input->pic->CurrPic.pic_order_cnt;
+    std_picture.NumBitsForSTRefPicSetInSlice          = static_cast<uint16_t>(std::min<uint32_t>(input->pic->st_rps_bits, 0xffff));
 
     std::array<HEVCDpbReference, max_va_hevc_reference_frames> rps_references{};
     uint32_t                                                   rps_reference_count = 0;
@@ -316,7 +318,7 @@ VAStatus vkvv_vulkan_decode_hevc(void* runtime_ptr, void* session_ptr, VkvvDrive
         const uint32_t       ref_index = references[i].ref_index;
         const VAPictureHEVC& ref_pic   = input->pic->ReferenceFrames[ref_index];
         if (hevc_picture_is_current_reference(ref_pic)) {
-            references[i].active = true;
+            references[i].active                  = true;
             rps_references[rps_reference_count++] = {
                 .slot          = references[i].slot,
                 .pic_order_cnt = ref_pic.pic_order_cnt,
@@ -324,7 +326,7 @@ VAStatus vkvv_vulkan_decode_hevc(void* runtime_ptr, void* session_ptr, VkvvDrive
             };
         }
     }
-    const HEVCRpsCounts rps_counts = fill_hevc_picture_rps(rps_references.data(), rps_reference_count, &std_picture);
+    const HEVCRpsCounts             rps_counts = fill_hevc_picture_rps(rps_references.data(), rps_reference_count, &std_picture);
 
     std::vector<uint32_t>           vulkan_slice_offsets(input->slice_offsets, input->slice_offsets + input->slice_count);
 
@@ -342,9 +344,9 @@ VAStatus vkvv_vulkan_decode_hevc(void* runtime_ptr, void* session_ptr, VkvvDrive
         h265_picture.pNext        = &inline_parameters;
     }
 
-    VkVideoPictureResourceInfoKHR                                dst_picture = make_picture_resource(target_resource, coded_extent);
+    VkVideoPictureResourceInfoKHR                                         dst_picture = make_picture_resource(target_resource, coded_extent);
     std::array<VkVideoReferenceSlotInfoKHR, max_va_hevc_reference_frames> decode_reference_slots{};
-    uint32_t                                                            decode_reference_count = 0;
+    uint32_t                                                              decode_reference_count = 0;
     for (uint32_t i = 0; i < reference_count; i++) {
         if (!references[i].active) {
             continue;
@@ -375,8 +377,9 @@ VAStatus vkvv_vulkan_decode_hevc(void* runtime_ptr, void* session_ptr, VkvvDrive
             record_vk_result(runtime, result, "vkEndCommandBuffer", "HEVC decode", reason, reason_size);
             return VA_STATUS_ERROR_OPERATION_FAILED;
         }
-            std::snprintf(reason, reason_size, "vkEndCommandBuffer for HEVC decode failed: %d profile=%d refs=%u active_refs=%u setup=%u slot=%d poc=%d slices=%u bytes=%zu",
-                      result, profile, reference_count, decode_reference_count, setup_slot_ptr != nullptr, target_dpb_slot, std_picture.PicOrderCntVal, input->slice_count, input->bitstream_size);
+        std::snprintf(reason, reason_size, "vkEndCommandBuffer for HEVC decode failed: %d profile=%d refs=%u active_refs=%u setup=%u slot=%d poc=%d slices=%u bytes=%zu", result,
+                      profile, reference_count, decode_reference_count, setup_slot_ptr != nullptr, target_dpb_slot, std_picture.PicOrderCntVal, input->slice_count,
+                      input->bitstream_size);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
@@ -394,7 +397,8 @@ VAStatus vkvv_vulkan_decode_hevc(void* runtime_ptr, void* session_ptr, VkvvDrive
                   "decode_mem=%llu upload_mem=%llu session_mem=%llu",
                   coded_extent.width, coded_extent.height, input->slice_count, input->bitstream_size, reference_count, decode_reference_count, target_dpb_slot,
                   std_picture.PicOrderCntVal, std_picture.flags.short_term_ref_pic_set_sps_flag, input->pic->st_rps_bits, rps_counts.st_curr_before, rps_counts.st_curr_after,
-                  rps_counts.lt_curr, rps_reference_count, active_slice_ref_count, active_l0_count, active_l1_count, static_cast<unsigned long long>(target_resource->allocation_size),
-                  static_cast<unsigned long long>(upload_allocation_size), static_cast<unsigned long long>(session->video.memory_bytes));
+                  rps_counts.lt_curr, rps_reference_count, active_slice_ref_count, active_l0_count, active_l1_count,
+                  static_cast<unsigned long long>(target_resource->allocation_size), static_cast<unsigned long long>(upload_allocation_size),
+                  static_cast<unsigned long long>(session->video.memory_bytes));
     return VA_STATUS_SUCCESS;
 }

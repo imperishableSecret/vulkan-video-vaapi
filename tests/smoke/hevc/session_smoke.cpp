@@ -1,4 +1,5 @@
 #include "vulkan/codecs/hevc/internal.h"
+#include "vulkan/codecs/hevc/api.h"
 
 #include <cstdio>
 
@@ -49,6 +50,40 @@ namespace {
         vkvv::fill_hevc_reference_info(pic, &info);
         ok = check(info.flags.unused_for_reference == 0 && info.flags.used_for_long_term_reference == 1, "HEVC long-term RPS picture flags were not preserved") && ok;
 
+        return ok;
+    }
+
+    bool check_hevc_session_profiles() {
+        void* main_session = vkvv_vulkan_hevc_session_create();
+        if (!check(main_session != nullptr, "HEVC Main session allocation failed")) {
+            return false;
+        }
+        auto* main = static_cast<const vkvv::HEVCVideoSession*>(main_session);
+        bool  ok   = check(main->va_profile == VAProfileHEVCMain && main->va_rt_format == VA_RT_FORMAT_YUV420 && main->va_fourcc == VA_FOURCC_NV12 && main->bit_depth == 8,
+                           "HEVC Main session did not select NV12/8-bit metadata");
+        ok         = check(main->profile_spec.bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR && main->profile_spec.std_profile == STD_VIDEO_H265_PROFILE_IDC_MAIN,
+                           "HEVC Main session did not select the Vulkan Main profile spec") &&
+            ok;
+        vkvv_vulkan_hevc_session_destroy(nullptr, main_session);
+
+        VkvvConfig main10_config{};
+        main10_config.profile   = VAProfileHEVCMain10;
+        main10_config.rt_format = VA_RT_FORMAT_YUV420_10;
+        main10_config.fourcc    = VA_FOURCC_P010;
+        main10_config.bit_depth = 10;
+
+        void* main10_session = vkvv_vulkan_hevc_session_create_for_config(&main10_config);
+        if (!check(main10_session != nullptr, "HEVC Main10 session allocation failed")) {
+            return false;
+        }
+        auto* main10 = static_cast<const vkvv::HEVCVideoSession*>(main10_session);
+        ok = check(main10->va_profile == VAProfileHEVCMain10 && main10->va_rt_format == VA_RT_FORMAT_YUV420_10 && main10->va_fourcc == VA_FOURCC_P010 && main10->bit_depth == 10,
+                   "HEVC Main10 session did not select P010/10-bit metadata") &&
+            ok;
+        ok = check(main10->profile_spec.bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR && main10->profile_spec.std_profile == STD_VIDEO_H265_PROFILE_IDC_MAIN_10,
+                   "HEVC Main10 session did not select the Vulkan Main10 profile spec") &&
+            ok;
+        vkvv_vulkan_hevc_session_destroy(nullptr, main10_session);
         return ok;
     }
 
@@ -113,6 +148,7 @@ namespace {
 int main(void) {
     bool ok = check_hevc_dpb_slots();
     ok      = check_hevc_reference_info() && ok;
+    ok      = check_hevc_session_profiles() && ok;
     ok      = check_hevc_rps_ordering() && ok;
     ok      = check_hevc_rps_capacity_and_uniqueness() && ok;
 

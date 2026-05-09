@@ -510,26 +510,26 @@ namespace vkvv {
             return true;
         }
 
-        resource->extent                  = extent;
-        resource->coded_extent            = extent;
-        resource->visible_extent          = {surface->width, surface->height};
-        resource->driver_instance_id      = surface->driver_instance_id;
-        resource->stream_id               = surface->stream_id;
-        resource->codec_operation         = static_cast<VkVideoCodecOperationFlagsKHR>(surface->codec_operation);
-        resource->surface_id              = surface->id;
-        resource->format                  = format->vk_format;
-        resource->va_rt_format            = surface->rt_format;
-        resource->va_fourcc               = surface->fourcc;
-        resource->decode_key              = {};
-        resource->allocation_size         = 0;
-        resource->plane_layouts[0]        = {};
-        resource->plane_layouts[1]        = {};
-        resource->plane_count             = 0;
-        resource->drm_format_modifier     = 0;
-        resource->exportable              = false;
-        resource->has_drm_format_modifier = false;
-        resource->import                  = surface->import;
-        resource->layout                  = VK_IMAGE_LAYOUT_UNDEFINED;
+        resource->extent                                 = extent;
+        resource->coded_extent                           = extent;
+        resource->visible_extent                         = {surface->width, surface->height};
+        resource->driver_instance_id                     = surface->driver_instance_id;
+        resource->stream_id                              = surface->stream_id;
+        resource->codec_operation                        = static_cast<VkVideoCodecOperationFlagsKHR>(surface->codec_operation);
+        resource->surface_id                             = surface->id;
+        resource->format                                 = format->vk_format;
+        resource->va_rt_format                           = surface->rt_format;
+        resource->va_fourcc                              = surface->fourcc;
+        resource->decode_key                             = {};
+        resource->allocation_size                        = 0;
+        resource->plane_layouts[0]                       = {};
+        resource->plane_layouts[1]                       = {};
+        resource->plane_count                            = 0;
+        resource->drm_format_modifier                    = 0;
+        resource->exportable                             = false;
+        resource->has_drm_format_modifier                = false;
+        resource->import                                 = surface->import;
+        resource->layout                                 = VK_IMAGE_LAYOUT_UNDEFINED;
         resource->last_nondisplay_skip_generation        = 0;
         resource->last_nondisplay_skip_shadow_generation = 0;
         resource->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
@@ -964,8 +964,8 @@ namespace vkvv {
         retag_predecode_export_to_source(source);
         if (source->export_resource.exported && !export_resource_matches_surface(source)) {
             vkvv_trace("export-owner-copy-detach-mismatch", "surface=%u driver=%llu stream=%llu codec=0x%x shadow_stream=%llu shadow_codec=0x%x shadow_mem=0x%llx",
-                       source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id),
-                       source->codec_operation, static_cast<unsigned long long>(source->export_resource.stream_id), source->export_resource.codec_operation,
+                       source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
+                       static_cast<unsigned long long>(source->export_resource.stream_id), source->export_resource.codec_operation,
                        vkvv_trace_handle(source->export_resource.memory));
             detach_export_resource(runtime, source);
         }
@@ -974,13 +974,12 @@ namespace vkvv {
         }
 
         std::unique_lock<std::mutex> export_lock(runtime->export_mutex);
-        const bool owner_export_current = source->content_generation != 0 && source->export_resource.content_generation == source->content_generation;
+        const bool                   owner_export_current = source->content_generation != 0 && source->export_resource.content_generation == source->content_generation;
         if (owner_export_current) {
             source->export_seed_generation = 0;
             unregister_export_seed_resource_locked(runtime, source);
-            vkvv_trace("export-owner-copy-skip-current",
-                       "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu seed_gen=%llu", source->surface_id,
-                       static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
+            vkvv_trace("export-owner-copy-skip-current", "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu seed_gen=%llu",
+                       source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
                        static_cast<unsigned long long>(source->content_generation), vkvv_trace_handle(source->export_resource.memory),
                        static_cast<unsigned long long>(source->export_resource.content_generation), static_cast<unsigned long long>(source->export_seed_generation));
             return true;
@@ -993,8 +992,9 @@ namespace vkvv {
         unregister_predecode_export_resource_locked(runtime, &source->export_resource);
         source->export_seed_generation = 0;
         unregister_export_seed_resource_locked(runtime, source);
-        vkvv_trace("export-owner-copy-done", "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u seeded=%u seed_gen=%llu",
-                   source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
+        vkvv_trace("export-owner-copy-done",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u seeded=%u seed_gen=%llu", source->surface_id,
+                   static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
                    static_cast<unsigned long long>(source->content_generation), vkvv_trace_handle(source->export_resource.memory),
                    static_cast<unsigned long long>(source->export_resource.content_generation), source->export_resource.predecode_exported ? 1U : 0U,
                    source->export_resource.predecode_seeded ? 1U : 0U, static_cast<unsigned long long>(source->export_seed_generation));

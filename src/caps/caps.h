@@ -16,6 +16,7 @@ bool                         vkvv_profile_supported(const VkvvDriver* drv, VAPro
 unsigned int                 vkvv_surface_fourcc_for_format(unsigned int rt_format);
 unsigned int                 vkvv_rt_format_bit_depth(unsigned int rt_format);
 unsigned int                 vkvv_select_rt_format(const VkvvProfileCapability* cap, unsigned int requested);
+unsigned int                 vkvv_config_rt_format_mask(const VkvvProfileCapability* cap);
 unsigned int                 vkvv_select_driver_rt_format(const VkvvDriver* drv, unsigned int requested);
 unsigned int                 vkvv_config_attribute_count(void);
 void                         vkvv_fill_config_attribute(const VkvvProfileCapability* cap, VAConfigAttrib* attrib);

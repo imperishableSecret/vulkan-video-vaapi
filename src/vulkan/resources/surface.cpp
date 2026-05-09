@@ -410,17 +410,17 @@ namespace vkvv {
             vkFreeMemory(runtime->device, resource->memory, nullptr);
             resource->memory = VK_NULL_HANDLE;
         }
-        resource->allocation_size         = 0;
-        resource->stream_id               = 0;
-        resource->codec_operation         = 0;
-        resource->plane_layouts[0]        = {};
-        resource->plane_layouts[1]        = {};
-        resource->plane_count             = 0;
-        resource->drm_format_modifier     = 0;
-        resource->exportable              = false;
-        resource->has_drm_format_modifier = false;
-        resource->decode_key              = {};
-        resource->layout                  = VK_IMAGE_LAYOUT_UNDEFINED;
+        resource->allocation_size                        = 0;
+        resource->stream_id                              = 0;
+        resource->codec_operation                        = 0;
+        resource->plane_layouts[0]                       = {};
+        resource->plane_layouts[1]                       = {};
+        resource->plane_count                            = 0;
+        resource->drm_format_modifier                    = 0;
+        resource->exportable                             = false;
+        resource->has_drm_format_modifier                = false;
+        resource->decode_key                             = {};
+        resource->layout                                 = VK_IMAGE_LAYOUT_UNDEFINED;
         resource->last_nondisplay_skip_generation        = 0;
         resource->last_nondisplay_skip_shadow_generation = 0;
         resource->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
@@ -471,8 +471,8 @@ namespace vkvv {
             if (existing->stream_id != stream_id || existing->codec_operation != codec_operation) {
                 unregister_export_seed_resource(runtime, existing);
                 detach_export_resource(runtime, existing);
-                existing->content_generation     = 0;
-                existing->export_seed_generation = 0;
+                existing->content_generation                     = 0;
+                existing->export_seed_generation                 = 0;
                 existing->last_nondisplay_skip_generation        = 0;
                 existing->last_nondisplay_skip_shadow_generation = 0;
                 existing->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
@@ -653,19 +653,19 @@ namespace vkvv {
             return false;
         }
 
-        resource->extent             = extent;
-        resource->coded_extent       = extent;
-        resource->visible_extent     = {surface->width, surface->height};
-        resource->driver_instance_id = surface->driver_instance_id;
-        resource->stream_id          = surface->stream_id;
-        resource->codec_operation    = static_cast<VkVideoCodecOperationFlagsKHR>(key.codec_operation);
-        resource->surface_id         = surface->id;
-        resource->format             = key.picture_format;
-        resource->va_rt_format       = key.va_rt_format;
-        resource->va_fourcc          = key.va_fourcc;
-        resource->decode_key         = key;
-        resource->allocation_size    = requirements.size;
-        resource->import             = surface->import;
+        resource->extent                                 = extent;
+        resource->coded_extent                           = extent;
+        resource->visible_extent                         = {surface->width, surface->height};
+        resource->driver_instance_id                     = surface->driver_instance_id;
+        resource->stream_id                              = surface->stream_id;
+        resource->codec_operation                        = static_cast<VkVideoCodecOperationFlagsKHR>(key.codec_operation);
+        resource->surface_id                             = surface->id;
+        resource->format                                 = key.picture_format;
+        resource->va_rt_format                           = key.va_rt_format;
+        resource->va_fourcc                              = key.va_fourcc;
+        resource->decode_key                             = key;
+        resource->allocation_size                        = requirements.size;
+        resource->import                                 = surface->import;
         resource->last_nondisplay_skip_generation        = 0;
         resource->last_nondisplay_skip_shadow_generation = 0;
         resource->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;

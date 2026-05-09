@@ -172,8 +172,7 @@ static VAStatus              vkvvDriverInit(VADriverContextP ctx) {
         drv->driver_instance_id = next_driver_instance_id.fetch_add(1, std::memory_order_relaxed);
     }
     vkvv_probe_vulkan_video(&drv->caps);
-    if (drv->caps.h264 || drv->caps.h265 || drv->caps.h265_10 || drv->caps.h265_12 || drv->caps.vp9 || drv->caps.vp9_10 || drv->caps.vp9_12 || drv->caps.av1 ||
-        drv->caps.av1_10) {
+    if (drv->caps.h264 || drv->caps.h265 || drv->caps.h265_10 || drv->caps.h265_12 || drv->caps.vp9 || drv->caps.vp9_10 || drv->caps.vp9_12 || drv->caps.av1 || drv->caps.av1_10) {
         char reason[512] = {};
         drv->vulkan      = vkvv_get_or_create_vulkan_runtime(reason, sizeof(reason));
         vkvv_log("%s", reason);

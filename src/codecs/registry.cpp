@@ -31,8 +31,7 @@ namespace {
     }
 
     void* hevc_session_create(const VkvvConfig* config) {
-        (void)config;
-        return vkvv_vulkan_hevc_session_create();
+        return vkvv_vulkan_hevc_session_create_for_config(config);
     }
 
     VAStatus noop_configure_session(void* runtime, void* session, const VkvvSurface* target, void* state, char* reason, size_t reason_size) {
@@ -80,6 +79,20 @@ namespace {
 
     const VkvvDecodeOps hevc_main_decode_ops = {
         "hevc-main",
+        vkvv_hevc_state_create,
+        vkvv_hevc_state_destroy,
+        hevc_session_create,
+        vkvv_vulkan_hevc_session_destroy,
+        vkvv_hevc_begin_picture,
+        vkvv_hevc_render_buffer,
+        vkvv_hevc_prepare_decode,
+        noop_configure_session,
+        vkvv_vulkan_ensure_hevc_session,
+        hevc_decode,
+    };
+
+    const VkvvDecodeOps hevc_main10_decode_ops = {
+        "hevc-main10",
         vkvv_hevc_state_create,
         vkvv_hevc_state_destroy,
         hevc_session_create,
@@ -179,6 +192,10 @@ namespace {
         return profile == VAProfileHEVCMain;
     }
 
+    bool hevc_main10_profile_matches(VAProfile profile) {
+        return profile == VAProfileHEVCMain10;
+    }
+
     bool vp9_profile2_matches(VAProfile profile) {
         return profile == VAProfileVP9Profile2;
     }
@@ -190,6 +207,7 @@ namespace {
     const DecodeRegistryEntry decode_registry[] = {
         {VAEntrypointVLD, h264_profile_matches, &h264_decode_ops},
         {VAEntrypointVLD, hevc_main_profile_matches, &hevc_main_decode_ops},
+        {VAEntrypointVLD, hevc_main10_profile_matches, &hevc_main10_decode_ops},
         {VAEntrypointVLD, vp9_profile_matches, &vp9_profile0_decode_ops},
         {VAEntrypointVLD, vp9_profile2_matches, &vp9_profile2_decode_ops},
         {VAEntrypointVLD, av1_profile0_matches, &av1_profile0_decode_ops},

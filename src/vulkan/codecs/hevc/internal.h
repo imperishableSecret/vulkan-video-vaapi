@@ -6,13 +6,19 @@
 
 namespace vkvv {
 
-    inline constexpr uint32_t max_va_hevc_reference_frames = 15;
-    inline constexpr uint32_t max_hevc_dpb_slots           = 16;
+    inline constexpr uint32_t         max_va_hevc_reference_frames = 15;
+    inline constexpr uint32_t         max_hevc_dpb_slots           = 16;
 
     inline constexpr VideoProfileSpec hevc_main_profile_spec{
         .operation   = VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
         .bit_depth   = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
         .std_profile = STD_VIDEO_H265_PROFILE_IDC_MAIN,
+    };
+
+    inline constexpr VideoProfileSpec hevc_main10_profile_spec{
+        .operation   = VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+        .bit_depth   = VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
+        .std_profile = STD_VIDEO_H265_PROFILE_IDC_MAIN_10,
     };
 
     struct HEVCSurfaceDpbSlot {
@@ -33,11 +39,11 @@ namespace vkvv {
     };
 
     struct HEVCVideoSession {
-        VAProfile                       va_profile        = VAProfileHEVCMain;
-        unsigned int                    va_rt_format      = VA_RT_FORMAT_YUV420;
-        unsigned int                    va_fourcc         = VA_FOURCC_NV12;
-        uint8_t                         bit_depth         = 8;
-        VideoProfileSpec                profile_spec      = hevc_main_profile_spec;
+        VAProfile                       va_profile   = VAProfileHEVCMain;
+        unsigned int                    va_rt_format = VA_RT_FORMAT_YUV420;
+        unsigned int                    va_fourcc    = VA_FOURCC_NV12;
+        uint8_t                         bit_depth    = 8;
+        VideoProfileSpec                profile_spec = hevc_main_profile_spec;
         VideoSession                    video;
         UploadBuffer                    upload;
         std::vector<HEVCSurfaceDpbSlot> surface_slots;
@@ -51,11 +57,11 @@ namespace vkvv {
     };
 
     struct HEVCStdParameters {
-        StdVideoH265ProfileTierLevel   ptl{};
-        StdVideoH265DecPicBufMgr       vps_dpb{};
-        StdVideoH265VideoParameterSet  vps{};
-        StdVideoH265ScalingLists       scaling{};
-        StdVideoH265DecPicBufMgr       sps_dpb{};
+        StdVideoH265ProfileTierLevel        ptl{};
+        StdVideoH265DecPicBufMgr            vps_dpb{};
+        StdVideoH265VideoParameterSet       vps{};
+        StdVideoH265ScalingLists            scaling{};
+        StdVideoH265DecPicBufMgr            sps_dpb{};
         StdVideoH265SequenceParameterSetVui sps_vui{};
         StdVideoH265SequenceParameterSet    sps{};
         StdVideoH265PictureParameterSet     pps{};

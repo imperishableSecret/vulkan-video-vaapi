@@ -9,6 +9,16 @@
 
 namespace vkvv {
 
+    HEVCVideoSession* create_hevc_session(VAProfile va_profile, unsigned int va_rt_format, unsigned int va_fourcc, uint8_t bit_depth, VideoProfileSpec profile_spec) {
+        auto* session         = new HEVCVideoSession();
+        session->va_profile   = va_profile;
+        session->va_rt_format = va_rt_format;
+        session->va_fourcc    = va_fourcc;
+        session->bit_depth    = bit_depth;
+        session->profile_spec = profile_spec;
+        return session;
+    }
+
     VkImageUsageFlags hevc_surface_image_usage() {
         return VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     }
@@ -93,8 +103,21 @@ using namespace vkvv;
 
 void* vkvv_vulkan_hevc_session_create(void) {
     try {
-        return new HEVCVideoSession();
+        return create_hevc_session(VAProfileHEVCMain, VA_RT_FORMAT_YUV420, VA_FOURCC_NV12, 8, hevc_main_profile_spec);
     } catch (const std::bad_alloc&) { return nullptr; }
+}
+
+void* vkvv_vulkan_hevc_main10_session_create(void) {
+    try {
+        return create_hevc_session(VAProfileHEVCMain10, VA_RT_FORMAT_YUV420_10, VA_FOURCC_P010, 10, hevc_main10_profile_spec);
+    } catch (const std::bad_alloc&) { return nullptr; }
+}
+
+void* vkvv_vulkan_hevc_session_create_for_config(const VkvvConfig* config) {
+    if (config != nullptr && config->profile == VAProfileHEVCMain10) {
+        return vkvv_vulkan_hevc_main10_session_create();
+    }
+    return vkvv_vulkan_hevc_session_create();
 }
 
 void vkvv_vulkan_hevc_session_destroy(void* runtime_ptr, void* session_ptr) {

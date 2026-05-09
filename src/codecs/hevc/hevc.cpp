@@ -8,14 +8,14 @@
 namespace {
 
     struct HEVCState {
-        bool                                    has_pic             = false;
-        bool                                    has_iq              = false;
-        bool                                    has_slice_params    = false;
-        bool                                    has_slice_data      = false;
-        bool                                    has_picture_ext     = false;
-        bool                                    has_slice_ext       = false;
-        uint32_t                                slice_count         = 0;
-        uint32_t                                reference_count     = 0;
+        bool                                    has_pic          = false;
+        bool                                    has_iq           = false;
+        bool                                    has_slice_params = false;
+        bool                                    has_slice_data   = false;
+        bool                                    has_picture_ext  = false;
+        bool                                    has_slice_ext    = false;
+        uint32_t                                slice_count      = 0;
+        uint32_t                                reference_count  = 0;
 
         VAPictureParameterBufferHEVC            pic{};
         VAIQMatrixBufferHEVC                    iq{};
@@ -50,6 +50,10 @@ namespace {
             }
         }
         return count;
+    }
+
+    bool hevc_supported_bit_depth_minus8(uint8_t luma_minus8, uint8_t chroma_minus8) {
+        return luma_minus8 == chroma_minus8 && (luma_minus8 == 0 || luma_minus8 == 2);
     }
 
 } // namespace
@@ -198,8 +202,8 @@ VAStatus vkvv_hevc_prepare_decode(void* state, unsigned int* width, unsigned int
         std::snprintf(reason, reason_size, "HEVC picture has empty dimensions");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
-    if (hevc->pic.bit_depth_luma_minus8 != 0 || hevc->pic.bit_depth_chroma_minus8 != 0) {
-        std::snprintf(reason, reason_size, "HEVC path currently supports only Main 8-bit decode");
+    if (!hevc_supported_bit_depth_minus8(hevc->pic.bit_depth_luma_minus8, hevc->pic.bit_depth_chroma_minus8)) {
+        std::snprintf(reason, reason_size, "HEVC path currently supports only Main 8-bit and Main10 10-bit 4:2:0 decode");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
     if (hevc->pic.pic_fields.bits.chroma_format_idc != 1) {
@@ -215,17 +219,17 @@ VAStatus vkvv_hevc_prepare_decode(void* state, unsigned int* width, unsigned int
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
 
-    *width  = hevc->pic.pic_width_in_luma_samples;
-    *height = hevc->pic.pic_height_in_luma_samples;
+    *width                                        = hevc->pic.pic_width_in_luma_samples;
+    *height                                       = hevc->pic.pic_height_in_luma_samples;
     const VASliceParameterBufferHEVC* first_slice = hevc->slices.empty() ? nullptr : &hevc->slices.front();
+    const unsigned int                bit_depth   = static_cast<unsigned int>(hevc->pic.bit_depth_luma_minus8) + 8U;
     std::snprintf(reason, reason_size,
-                  "captured HEVC picture: %ux%u slices=%zu bytes=%zu refs=%u iq=%u st_rps_bits=%u scaling=%u tiles=%u entropy_sync=%u weighted=%u/%u "
+                  "captured HEVC picture: %ux%u depth=%u slices=%zu bytes=%zu refs=%u iq=%u st_rps_bits=%u scaling=%u tiles=%u entropy_sync=%u weighted=%u/%u "
                   "lists_mod=%u range_pic_ext=%u range_slice_ext=%u slice_type=%u dep=%u saddr=%u slice_hdr_bytes=%u slice_data=%u+%u nal=%02x:%02x "
                   "refidx=%u/%u wdenom=%u/%d",
-                  *width, *height, hevc->slice_offsets.size(), hevc->bitstream.size(), hevc->reference_count, hevc->has_iq ? 1U : 0U, hevc->pic.st_rps_bits,
-                  hevc->pic.pic_fields.bits.scaling_list_enabled_flag, hevc->pic.pic_fields.bits.tiles_enabled_flag,
-                  hevc->pic.pic_fields.bits.entropy_coding_sync_enabled_flag, hevc->pic.pic_fields.bits.weighted_pred_flag,
-                  hevc->pic.pic_fields.bits.weighted_bipred_flag, hevc->pic.slice_parsing_fields.bits.lists_modification_present_flag,
+                  *width, *height, bit_depth, hevc->slice_offsets.size(), hevc->bitstream.size(), hevc->reference_count, hevc->has_iq ? 1U : 0U, hevc->pic.st_rps_bits,
+                  hevc->pic.pic_fields.bits.scaling_list_enabled_flag, hevc->pic.pic_fields.bits.tiles_enabled_flag, hevc->pic.pic_fields.bits.entropy_coding_sync_enabled_flag,
+                  hevc->pic.pic_fields.bits.weighted_pred_flag, hevc->pic.pic_fields.bits.weighted_bipred_flag, hevc->pic.slice_parsing_fields.bits.lists_modification_present_flag,
                   hevc->has_picture_ext ? 1U : 0U, hevc->has_slice_ext ? 1U : 0U, first_slice != nullptr ? first_slice->LongSliceFlags.fields.slice_type : 0U,
                   first_slice != nullptr ? first_slice->LongSliceFlags.fields.dependent_slice_segment_flag : 0U, first_slice != nullptr ? first_slice->slice_segment_address : 0U,
                   hevc->first_slice_data_byte_offset, hevc->first_slice_data_offset, hevc->first_slice_data_size, hevc->has_first_slice_nal ? hevc->first_slice_nal0 : 0U,
@@ -244,15 +248,15 @@ VAStatus vkvv_hevc_get_decode_input(void* state, VkvvHEVCDecodeInput* input) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
 
-    *input                = {};
-    input->pic            = &hevc->pic;
-    input->iq             = hevc->has_iq ? &hevc->iq : nullptr;
-    input->slices         = hevc->slices.data();
-    input->bitstream      = hevc->bitstream.data();
-    input->slice_offsets  = hevc->slice_offsets.data();
-    input->bitstream_size = hevc->bitstream.size();
-    input->slice_count    = static_cast<uint32_t>(hevc->slice_offsets.size());
+    *input                 = {};
+    input->pic             = &hevc->pic;
+    input->iq              = hevc->has_iq ? &hevc->iq : nullptr;
+    input->slices          = hevc->slices.data();
+    input->bitstream       = hevc->bitstream.data();
+    input->slice_offsets   = hevc->slice_offsets.data();
+    input->bitstream_size  = hevc->bitstream.size();
+    input->slice_count     = static_cast<uint32_t>(hevc->slice_offsets.size());
     input->reference_count = hevc->reference_count;
-    input->has_iq         = hevc->has_iq;
+    input->has_iq          = hevc->has_iq;
     return VA_STATUS_SUCCESS;
 }

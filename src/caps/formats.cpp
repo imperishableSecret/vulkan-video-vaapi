@@ -18,6 +18,12 @@ namespace {
         return false;
     }
 
+    bool profile_accepts_yuv420_config_alias(const VkvvProfileCapability* cap) {
+        // Config negotiation may use YUV420 as the baseline 4:2:0 bit; surface selection still resolves Main10 to P010.
+        return cap != NULL && cap->profile == VAProfileHEVCMain10 && cap->entrypoint == VAEntrypointVLD && cap->direction == VKVV_CODEC_DIRECTION_DECODE &&
+            vkvv_profile_format_variant(cap, VA_RT_FORMAT_YUV420_10, true) != NULL && vkvv_profile_format_variant(cap, VA_RT_FORMAT_YUV420, true) == NULL;
+    }
+
 } // namespace
 
 bool vkvv_profile_supported(const VkvvDriver* drv, VAProfile profile) {
@@ -66,6 +72,9 @@ unsigned int vkvv_select_rt_format(const VkvvProfileCapability* cap, unsigned in
         return 0;
     }
 
+    if ((requested & VA_RT_FORMAT_YUV420) != 0 && profile_accepts_yuv420_config_alias(cap)) {
+        return VA_RT_FORMAT_YUV420_10;
+    }
     if ((requested & VA_RT_FORMAT_YUV420) != 0 && vkvv_profile_format_variant(cap, VA_RT_FORMAT_YUV420, true) != NULL) {
         return VA_RT_FORMAT_YUV420;
     }
@@ -76,6 +85,18 @@ unsigned int vkvv_select_rt_format(const VkvvProfileCapability* cap, unsigned in
         return VA_RT_FORMAT_YUV420_12;
     }
     return 0;
+}
+
+unsigned int vkvv_config_rt_format_mask(const VkvvProfileCapability* cap) {
+    if (cap == NULL) {
+        return 0;
+    }
+
+    unsigned int rt_format = cap->rt_format;
+    if (profile_accepts_yuv420_config_alias(cap)) {
+        rt_format |= VA_RT_FORMAT_YUV420;
+    }
+    return rt_format;
 }
 
 unsigned int vkvv_select_driver_rt_format(const VkvvDriver* drv, unsigned int requested) {

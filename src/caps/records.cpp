@@ -147,7 +147,7 @@ void vkvv_init_profile_capabilities(VkvvDriver* drv) {
                               VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME, VA_RT_FORMAT_YUV420, drv->caps.h265_limits, drv->caps.h265, true, true, drv->caps.h265,
                               drv->caps.surface_export_nv12);
     add_single_format_profile(drv, VAProfileHEVCMain10, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE, VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
-                              VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME, VA_RT_FORMAT_YUV420_10, drv->caps.h265_10_limits, drv->caps.h265_10, false, false, drv->caps.h265_10,
+                              VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME, VA_RT_FORMAT_YUV420_10, drv->caps.h265_10_limits, drv->caps.h265_10, true, true, drv->caps.h265_10,
                               drv->caps.surface_export_p010);
     add_hevc_main12(drv);
     add_single_format_profile(drv, VAProfileVP9Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE, VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR,
@@ -215,7 +215,7 @@ void vkvv_fill_config_attribute(const VkvvProfileCapability* cap, VAConfigAttrib
     }
 
     switch (attrib->type) {
-        case VAConfigAttribRTFormat: attrib->value = cap->rt_format; break;
+        case VAConfigAttribRTFormat: attrib->value = vkvv_config_rt_format_mask(cap); break;
         case VAConfigAttribDecSliceMode: attrib->value = cap->direction == VKVV_CODEC_DIRECTION_DECODE ? VA_DEC_SLICE_MODE_NORMAL : VA_ATTRIB_NOT_SUPPORTED; break;
         case VAConfigAttribMaxPictureWidth: attrib->value = cap->max_width; break;
         case VAConfigAttribMaxPictureHeight: attrib->value = cap->max_height; break;
