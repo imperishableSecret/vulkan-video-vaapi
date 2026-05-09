@@ -7,6 +7,8 @@ namespace {
 
 constexpr unsigned int fourcc_nv12 = 0x3231564e;
 constexpr unsigned int fourcc_p010 = 0x30313050;
+constexpr VkVideoCodecOperationFlagsKHR codec_vp9 = VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR;
+constexpr VkVideoCodecOperationFlagsKHR codec_av1 = VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR;
 
 bool check(bool condition, const char *message) {
     if (!condition) {
@@ -38,6 +40,31 @@ VkvvExternalSurfaceImport make_import() {
     import.width = 1920;
     import.height = 1080;
     return import;
+}
+
+vkvv::TransitionRetentionWindow make_decode_window() {
+    vkvv::TransitionRetentionWindow window{};
+    window.active = true;
+    window.driver_instance_id = 2;
+    window.stream_id = 1;
+    window.codec_operation = codec_vp9;
+    window.format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+    window.va_fourcc = fourcc_nv12;
+    window.coded_extent = {3840, 2160};
+    return window;
+}
+
+vkvv::ExportResource make_window_seed(VkVideoCodecOperationFlagsKHR codec, uint64_t stream_id) {
+    vkvv::ExportResource seed{};
+    seed.driver_instance_id = 2;
+    seed.stream_id = stream_id;
+    seed.codec_operation = codec;
+    seed.owner_surface_id = 3;
+    seed.format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+    seed.va_fourcc = fourcc_nv12;
+    seed.extent = {3840, 2160};
+    seed.allocation_size = 12517376ull;
+    return seed;
 }
 
 bool expect_match(
@@ -91,6 +118,37 @@ bool check_dynamic_budget() {
     const vkvv::RetainedExportBudget capped =
         vkvv::retained_export_budget_from_expected(32, 512ull * mib, 256ull * mib);
     ok &= check(capped.target_bytes == 256ull * mib, "retained budget should clamp to device-derived cap");
+
+    constexpr VkDeviceSize four_k_export_bytes = 12517376ull;
+    const vkvv::RetainedExportBudget browser_switch =
+        vkvv::retained_export_budget_from_expected(20, 20 * four_k_export_bytes, 402456576ull);
+    ok &= check(browser_switch.headroom_count == 4, "browser switch budget should keep four headroom backings");
+    ok &= check(browser_switch.target_count == 24, "browser switch budget should retain the old decode pool");
+    ok &= check(browser_switch.target_bytes == 24 * four_k_export_bytes,
+                "browser switch budget should cover the retained 4K decode pool");
+    return ok;
+}
+
+bool check_window_policy() {
+    bool ok = true;
+    const vkvv::TransitionRetentionWindow decode_window = make_decode_window();
+
+    const vkvv::ExportResource same_stream_seed = make_window_seed(codec_vp9, 1);
+    ok &= check(vkvv::retained_export_matches_window(same_stream_seed, decode_window),
+                "same decode stream should match active retention window");
+    ok &= check(vkvv::retained_export_seed_can_replace_window(decode_window, same_stream_seed),
+                "same decode stream should refresh active retention window");
+
+    const vkvv::ExportResource placeholder_seed = make_window_seed(0, 0);
+    ok &= check(!vkvv::retained_export_matches_window(placeholder_seed, decode_window),
+                "placeholder seed should not match active decode window");
+    ok &= check(!vkvv::retained_export_seed_can_replace_window(decode_window, placeholder_seed),
+                "placeholder seed should not replace active decode window");
+
+    vkvv::ExportResource av1_seed = make_window_seed(codec_av1, 2);
+    av1_seed.driver_instance_id = 3;
+    ok &= check(vkvv::retained_export_seed_can_replace_window(decode_window, av1_seed),
+                "new decode stream should be allowed to replace active retention window");
     return ok;
 }
 
@@ -140,5 +198,6 @@ int main() {
     ok &= check(std::string_view(vkvv::retained_export_match_reason(vkvv::RetainedExportMatch::Match)) == "match",
                 "match reason text should be stable");
     ok &= check_dynamic_budget();
+    ok &= check_window_policy();
     return ok ? 0 : 1;
 }

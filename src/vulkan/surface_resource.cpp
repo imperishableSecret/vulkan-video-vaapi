@@ -187,19 +187,6 @@ void register_predecode_export_resource(VulkanRuntime *runtime, ExportResource *
     }
 }
 
-bool retained_export_matches_window(
-        const ExportResource &resource,
-        const TransitionRetentionWindow &window) {
-    return window.active &&
-           resource.driver_instance_id == window.driver_instance_id &&
-           resource.stream_id == window.stream_id &&
-           resource.codec_operation == window.codec_operation &&
-           resource.format == window.format &&
-           resource.va_fourcc == window.va_fourcc &&
-           resource.extent.width == window.coded_extent.width &&
-           resource.extent.height == window.coded_extent.height;
-}
-
 void close_transition_retention_window_locked(VulkanRuntime *runtime, const char *reason) {
     if (runtime == nullptr || !runtime->transition_retention.active) {
         return;
@@ -231,35 +218,39 @@ void refresh_transition_retention_window_locked(
     }
     if (seed != nullptr) {
         TransitionRetentionWindow &window = runtime->transition_retention;
-        const bool was_active = window.active;
-        const bool same_window =
-            was_active &&
-            window.driver_instance_id == seed->driver_instance_id &&
-            window.stream_id == seed->stream_id &&
-            window.codec_operation == seed->codec_operation &&
-            window.format == seed->format &&
-            window.va_fourcc == seed->va_fourcc &&
-            window.coded_extent.width == seed->extent.width &&
-            window.coded_extent.height == seed->extent.height;
+        const bool same_window = retained_export_matches_window(*seed, window);
         if (!same_window) {
-            window = {};
-            window.active = true;
-            window.driver_instance_id = seed->driver_instance_id;
-            window.stream_id = seed->stream_id;
-            window.codec_operation = seed->codec_operation;
-            window.format = seed->format;
-            window.va_fourcc = seed->va_fourcc;
-            window.coded_extent = seed->extent;
-            vkvv_trace("retained-export-window-open",
-                       "driver=%llu stream=%llu codec=0x%x fourcc=0x%x format=%d extent=%ux%u reason=%s",
-                       static_cast<unsigned long long>(window.driver_instance_id),
-                       static_cast<unsigned long long>(window.stream_id),
-                       window.codec_operation,
-                       window.va_fourcc,
-                       window.format,
-                       window.coded_extent.width,
-                       window.coded_extent.height,
-                       reason != nullptr ? reason : "unknown");
+            if (!retained_export_seed_can_replace_window(window, *seed)) {
+                vkvv_trace("retained-export-window-keep",
+                           "driver=%llu stream=%llu codec=0x%x seed_owner=%u seed_driver=%llu seed_stream=%llu seed_codec=0x%x reason=%s",
+                           static_cast<unsigned long long>(window.driver_instance_id),
+                           static_cast<unsigned long long>(window.stream_id),
+                           window.codec_operation,
+                           seed->owner_surface_id,
+                           static_cast<unsigned long long>(seed->driver_instance_id),
+                           static_cast<unsigned long long>(seed->stream_id),
+                           seed->codec_operation,
+                           reason != nullptr ? reason : "unknown");
+            } else {
+                window = {};
+                window.active = true;
+                window.driver_instance_id = seed->driver_instance_id;
+                window.stream_id = seed->stream_id;
+                window.codec_operation = seed->codec_operation;
+                window.format = seed->format;
+                window.va_fourcc = seed->va_fourcc;
+                window.coded_extent = seed->extent;
+                vkvv_trace("retained-export-window-open",
+                           "driver=%llu stream=%llu codec=0x%x fourcc=0x%x format=%d extent=%ux%u reason=%s",
+                           static_cast<unsigned long long>(window.driver_instance_id),
+                           static_cast<unsigned long long>(window.stream_id),
+                           window.codec_operation,
+                           window.va_fourcc,
+                           window.format,
+                           window.coded_extent.width,
+                           window.coded_extent.height,
+                           reason != nullptr ? reason : "unknown");
+            }
         }
     }
 
@@ -313,12 +304,24 @@ void prune_detached_export_resources_locked(VulkanRuntime *runtime) {
     while (!runtime->retained_exports.empty() &&
            (runtime->retained_exports.size() > runtime->retained_export_count_limit ||
             runtime->retained_export_memory_bytes > runtime->retained_export_memory_budget)) {
-        RetainedExportBacking &oldest_backing = runtime->retained_exports.front();
+        size_t victim_index = 0;
+        if (runtime->transition_retention.active) {
+            for (size_t i = 0; i < runtime->retained_exports.size(); i++) {
+                if (!retained_export_matches_window(runtime->retained_exports[i].resource,
+                                                    runtime->transition_retention)) {
+                    victim_index = i;
+                    break;
+                }
+            }
+        }
+        RetainedExportBacking &oldest_backing = runtime->retained_exports[victim_index];
         ExportResource &oldest = oldest_backing.resource;
         const VkDeviceSize bytes = oldest.allocation_size;
+        const bool window_match =
+            retained_export_matches_window(oldest, runtime->transition_retention);
         oldest_backing.state = RetainedExportState::Expired;
         vkvv_trace("retained-export-prune",
-                   "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx bytes=%llu fd_stat=%u fd_dev=%llu fd_ino=%llu retained=%zu retained_mem=%llu limit=%zu budget=%llu",
+                   "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx bytes=%llu fd_stat=%u fd_dev=%llu fd_ino=%llu retained=%zu retained_mem=%llu limit=%zu budget=%llu window_match=%u",
                    oldest.owner_surface_id,
                    static_cast<unsigned long long>(oldest.driver_instance_id),
                    static_cast<unsigned long long>(oldest.stream_id),
@@ -331,9 +334,11 @@ void prune_detached_export_resources_locked(VulkanRuntime *runtime) {
                    runtime->retained_exports.size(),
                    static_cast<unsigned long long>(runtime->retained_export_memory_bytes),
                    runtime->retained_export_count_limit,
-                   static_cast<unsigned long long>(runtime->retained_export_memory_budget));
+                   static_cast<unsigned long long>(runtime->retained_export_memory_budget),
+                   window_match ? 1U : 0U);
         destroy_export_resource(runtime, &oldest);
-        runtime->retained_exports.erase(runtime->retained_exports.begin());
+        runtime->retained_exports.erase(runtime->retained_exports.begin() +
+                                        static_cast<std::ptrdiff_t>(victim_index));
         runtime->retained_export_memory_bytes =
             runtime->retained_export_memory_bytes > bytes ?
                 runtime->retained_export_memory_bytes - bytes : 0;

@@ -294,6 +294,12 @@ RetainedExportMatch retained_export_match_import(
         VkFormat format,
         VkExtent2D coded_extent);
 const char *retained_export_match_reason(RetainedExportMatch match);
+bool retained_export_matches_window(
+        const ExportResource &resource,
+        const TransitionRetentionWindow &window);
+bool retained_export_seed_can_replace_window(
+        const TransitionRetentionWindow &window,
+        const ExportResource &seed);
 VkDeviceSize retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties &properties);
 RetainedExportBudget retained_export_budget_from_expected(
         size_t expected_count,

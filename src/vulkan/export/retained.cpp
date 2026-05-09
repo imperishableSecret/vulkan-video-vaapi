@@ -70,6 +70,31 @@ const char *retained_export_match_reason(RetainedExportMatch match) {
     return "unknown";
 }
 
+bool retained_export_matches_window(
+        const ExportResource &resource,
+        const TransitionRetentionWindow &window) {
+    return window.active &&
+           resource.driver_instance_id == window.driver_instance_id &&
+           resource.stream_id == window.stream_id &&
+           resource.codec_operation == window.codec_operation &&
+           resource.format == window.format &&
+           resource.va_fourcc == window.va_fourcc &&
+           resource.extent.width == window.coded_extent.width &&
+           resource.extent.height == window.coded_extent.height;
+}
+
+bool retained_export_seed_can_replace_window(
+        const TransitionRetentionWindow &window,
+        const ExportResource &seed) {
+    if (!window.active || retained_export_matches_window(seed, window)) {
+        return true;
+    }
+
+    const bool active_window_tracks_decode = window.codec_operation != 0;
+    const bool seed_tracks_decode = seed.codec_operation != 0;
+    return !active_window_tracks_decode || seed_tracks_decode;
+}
+
 VkDeviceSize retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties &properties) {
     VkDeviceSize largest_device_local_heap = 0;
     for (uint32_t i = 0; i < properties.memoryHeapCount; i++) {
