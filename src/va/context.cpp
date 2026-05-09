@@ -237,20 +237,31 @@ VAStatus vkvvRenderPicture(VADriverContextP ctx, VAContextID context, VABufferID
     VkvvDriver* drv  = vkvv_driver_from_ctx(ctx);
     auto*       vctx = static_cast<VkvvContext*>(vkvv_object_get(drv, context, VKVV_OBJECT_CONTEXT));
     if (vctx == NULL) {
+        vkvv_trace("va-render-context-missing", "driver=%llu ctx=%u buffers=%d", (unsigned long long)drv->driver_instance_id, context, num_buffers);
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
     VkvvLockGuard context_lock(&vctx->mutex);
     for (int i = 0; i < num_buffers; i++) {
         auto* buffer = static_cast<VkvvBuffer*>(vkvv_object_get(drv, buffers[i], VKVV_OBJECT_BUFFER));
         if (buffer == NULL) {
+            vkvv_trace("va-render-buffer-missing", "driver=%llu ctx=%u stream=%llu codec=0x%x index=%d buffer=%u target=%u", (unsigned long long)drv->driver_instance_id, context,
+                       (unsigned long long)vctx->stream_id, vctx->codec_operation, i, buffers[i], vctx->render_target);
             return VA_STATUS_ERROR_INVALID_BUFFER;
         }
+        vkvv_trace("va-render-buffer", "driver=%llu ctx=%u stream=%llu codec=0x%x index=%d buffer=%u type=%u size=%u elements=%u mapped=%u target=%u",
+                   (unsigned long long)drv->driver_instance_id, context, (unsigned long long)vctx->stream_id, vctx->codec_operation, i, buffers[i], buffer->type, buffer->size,
+                   buffer->num_elements, buffer->mapped ? 1U : 0U, vctx->render_target);
         if (vctx->mode == VKVV_CONTEXT_MODE_ENCODE) {
+            vkvv_trace("va-render-buffer-status", "driver=%llu ctx=%u stream=%llu codec=0x%x index=%d buffer=%u type=%u status=%d", (unsigned long long)drv->driver_instance_id,
+                       context, (unsigned long long)vctx->stream_id, vctx->codec_operation, i, buffers[i], buffer->type, VA_STATUS_ERROR_UNIMPLEMENTED);
             return VA_STATUS_ERROR_UNIMPLEMENTED;
         }
         if (vctx->decode_ops != NULL) {
             VAStatus status = vctx->decode_ops->render_buffer(vctx->decode_state, buffer);
             if (status != VA_STATUS_SUCCESS) {
+                vkvv_trace("va-render-buffer-status", "driver=%llu ctx=%u stream=%llu codec=0x%x index=%d buffer=%u type=%u size=%u elements=%u status=%d target=%u",
+                           (unsigned long long)drv->driver_instance_id, context, (unsigned long long)vctx->stream_id, vctx->codec_operation, i, buffers[i], buffer->type,
+                           buffer->size, buffer->num_elements, status, vctx->render_target);
                 return status;
             }
         }

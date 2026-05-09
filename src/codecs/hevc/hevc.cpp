@@ -1,4 +1,5 @@
 #include "hevc.h"
+#include "telemetry.h"
 
 #include <cstdio>
 #include <cstring>
@@ -22,6 +23,7 @@ namespace {
         std::vector<VASliceParameterBufferHEVC> slices;
         std::vector<uint8_t>                    bitstream;
         std::vector<uint32_t>                   slice_offsets;
+        size_t                                  next_slice_data_index        = 0;
         uint32_t                                first_slice_data_offset      = 0;
         uint32_t                                first_slice_data_size        = 0;
         uint32_t                                first_slice_data_byte_offset = 0;
@@ -56,6 +58,17 @@ namespace {
         return luma_minus8 == chroma_minus8 && (luma_minus8 == 0 || luma_minus8 == 2);
     }
 
+    VAStatus reject_hevc_buffer(const HEVCState* hevc, const VkvvBuffer* buffer, const char* reason) {
+        const unsigned int type     = buffer != nullptr ? static_cast<unsigned int>(buffer->type) : 0U;
+        const unsigned int size     = buffer != nullptr ? buffer->size : 0U;
+        const unsigned int elements = buffer != nullptr ? buffer->num_elements : 0U;
+        vkvv_trace("hevc-render-reject", "reason=%s type=%u size=%u elements=%u has_pic=%u has_iq=%u has_slice_params=%u has_slice_data=%u slices=%u bitstream=%zu",
+                   reason != nullptr ? reason : "unknown", type, size, elements, hevc != nullptr && hevc->has_pic ? 1U : 0U, hevc != nullptr && hevc->has_iq ? 1U : 0U,
+                   hevc != nullptr && hevc->has_slice_params ? 1U : 0U, hevc != nullptr && hevc->has_slice_data ? 1U : 0U, hevc != nullptr ? hevc->slice_count : 0U,
+                   hevc != nullptr ? hevc->bitstream.size() : 0U);
+        return VA_STATUS_ERROR_INVALID_BUFFER;
+    }
+
 } // namespace
 
 void* vkvv_hevc_state_create(void) {
@@ -87,6 +100,7 @@ void vkvv_hevc_begin_picture(void* state) {
     hevc->slices.clear();
     hevc->bitstream.clear();
     hevc->slice_offsets.clear();
+    hevc->next_slice_data_index        = 0;
     hevc->first_slice_data_offset      = 0;
     hevc->first_slice_data_size        = 0;
     hevc->first_slice_data_byte_offset = 0;
@@ -98,7 +112,7 @@ void vkvv_hevc_begin_picture(void* state) {
 VAStatus vkvv_hevc_render_buffer(void* state, const VkvvBuffer* buffer) {
     auto* hevc = static_cast<HEVCState*>(state);
     if (hevc == nullptr || buffer == nullptr) {
-        return VA_STATUS_ERROR_INVALID_BUFFER;
+        return reject_hevc_buffer(hevc, buffer, "missing-state-or-buffer");
     }
 
     switch (buffer->type) {
@@ -106,12 +120,12 @@ VAStatus vkvv_hevc_render_buffer(void* state, const VkvvBuffer* buffer) {
             if (buffer->size >= sizeof(VAPictureParameterBufferHEVCExtension)) {
                 VAPictureParameterBufferHEVCExtension pic_ext{};
                 if (!copy_first_element(buffer, &pic_ext, sizeof(pic_ext))) {
-                    return VA_STATUS_ERROR_INVALID_BUFFER;
+                    return reject_hevc_buffer(hevc, buffer, "bad-picture-extension-buffer");
                 }
                 hevc->pic             = pic_ext.base;
                 hevc->has_picture_ext = true;
             } else if (!copy_first_element(buffer, &hevc->pic, sizeof(hevc->pic))) {
-                return VA_STATUS_ERROR_INVALID_BUFFER;
+                return reject_hevc_buffer(hevc, buffer, "bad-picture-buffer");
             }
             hevc->reference_count = count_references(hevc->pic);
             hevc->has_pic         = true;
@@ -119,14 +133,14 @@ VAStatus vkvv_hevc_render_buffer(void* state, const VkvvBuffer* buffer) {
 
         case VAIQMatrixBufferType:
             if (!copy_first_element(buffer, &hevc->iq, sizeof(hevc->iq))) {
-                return VA_STATUS_ERROR_INVALID_BUFFER;
+                return reject_hevc_buffer(hevc, buffer, "bad-iq-buffer");
             }
             hevc->has_iq = true;
             return VA_STATUS_SUCCESS;
 
         case VASliceParameterBufferType: {
             if (buffer->data == nullptr || buffer->num_elements == 0 || buffer->size < sizeof(VASliceParameterBufferHEVC)) {
-                return VA_STATUS_ERROR_INVALID_BUFFER;
+                return reject_hevc_buffer(hevc, buffer, "bad-slice-parameter-buffer");
             }
             const auto* base = static_cast<const uint8_t*>(buffer->data);
             for (unsigned int i = 0; i < buffer->num_elements; i++) {
@@ -142,22 +156,27 @@ VAStatus vkvv_hevc_render_buffer(void* state, const VkvvBuffer* buffer) {
             }
             hevc->slice_count += buffer->num_elements;
             hevc->has_slice_params = !hevc->slices.empty();
-            return hevc->has_slice_params ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_INVALID_BUFFER;
+            return hevc->has_slice_params ? VA_STATUS_SUCCESS : reject_hevc_buffer(hevc, buffer, "empty-slice-parameter-state");
         }
 
         case VASliceDataBufferType: {
             if (!hevc->has_slice_params || buffer->data == nullptr) {
-                return VA_STATUS_ERROR_INVALID_BUFFER;
+                return reject_hevc_buffer(hevc, buffer, !hevc->has_slice_params ? "slice-data-before-slice-params" : "missing-slice-data");
             }
 
             const auto*  data       = static_cast<const uint8_t*>(buffer->data);
             const size_t total_size = static_cast<size_t>(buffer->size) * buffer->num_elements;
 
-            for (const VASliceParameterBufferHEVC& slice : hevc->slices) {
-                const size_t slice_offset = slice.slice_data_offset;
-                const size_t slice_size   = slice.slice_data_size;
+            if (hevc->next_slice_data_index >= hevc->slices.size()) {
+                return reject_hevc_buffer(hevc, buffer, "slice-data-without-unconsumed-slices");
+            }
+
+            for (size_t i = hevc->next_slice_data_index; i < hevc->slices.size(); i++) {
+                const VASliceParameterBufferHEVC& slice        = hevc->slices[i];
+                const size_t                      slice_offset = slice.slice_data_offset;
+                const size_t                      slice_size   = slice.slice_data_size;
                 if (slice_offset > total_size || slice_size == 0 || slice_size > total_size - slice_offset) {
-                    return VA_STATUS_ERROR_INVALID_BUFFER;
+                    return reject_hevc_buffer(hevc, buffer, "slice-data-window-out-of-range");
                 }
 
                 if (hevc->slice_offsets.empty()) {
@@ -172,8 +191,9 @@ VAStatus vkvv_hevc_render_buffer(void* state, const VkvvBuffer* buffer) {
                 hevc->bitstream.insert(hevc->bitstream.end(), {0x00, 0x00, 0x01});
                 hevc->bitstream.insert(hevc->bitstream.end(), data + slice_offset, data + slice_offset + slice_size);
             }
-            hevc->has_slice_data = !hevc->bitstream.empty();
-            return hevc->has_slice_data ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_INVALID_BUFFER;
+            hevc->next_slice_data_index = hevc->slices.size();
+            hevc->has_slice_data        = !hevc->bitstream.empty();
+            return hevc->has_slice_data ? VA_STATUS_SUCCESS : reject_hevc_buffer(hevc, buffer, "empty-slice-data-state");
         }
 
         default: return VA_STATUS_SUCCESS;

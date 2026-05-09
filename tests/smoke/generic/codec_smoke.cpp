@@ -349,6 +349,49 @@ namespace {
                    "HEVC parser did not prefix the second slice with an Annex-B start code") &&
             ok;
 
+        VASliceParameterBufferHEVC interleaved_second_slice = second_slice;
+        interleaved_second_slice.slice_data_offset          = 2;
+        interleaved_second_slice.slice_data_size            = 3;
+        std::vector<uint8_t> first_slice_data               = {0x00, 0x00, 0x01, 0x26, 0x01, 0xaa, 0xbb};
+        std::vector<uint8_t> second_slice_data              = {0x00, 0x00, 0x02, 0x01, 0xcc};
+
+        VkvvBuffer           single_slice_buffer{};
+        single_slice_buffer.type         = VASliceParameterBufferType;
+        single_slice_buffer.size         = sizeof(first_slice);
+        single_slice_buffer.num_elements = 1;
+        single_slice_buffer.data         = &first_slice;
+
+        VkvvBuffer single_data_buffer{};
+        single_data_buffer.type         = VASliceDataBufferType;
+        single_data_buffer.size         = static_cast<unsigned int>(first_slice_data.size());
+        single_data_buffer.num_elements = 1;
+        single_data_buffer.data         = first_slice_data.data();
+
+        hevc->begin_picture(state);
+        ok = check(hevc->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "HEVC interleaved picture buffer ingestion failed") && ok;
+        ok = check(hevc->render_buffer(state, &single_slice_buffer) == VA_STATUS_SUCCESS, "HEVC interleaved first slice parameter ingestion failed") && ok;
+        ok = check(hevc->render_buffer(state, &single_data_buffer) == VA_STATUS_SUCCESS, "HEVC interleaved first slice data ingestion failed") && ok;
+
+        single_slice_buffer.data = &interleaved_second_slice;
+        single_data_buffer.size  = static_cast<unsigned int>(second_slice_data.size());
+        single_data_buffer.data  = second_slice_data.data();
+        ok                       = check(hevc->render_buffer(state, &single_slice_buffer) == VA_STATUS_SUCCESS, "HEVC interleaved second slice parameter ingestion failed") && ok;
+        ok                       = check(hevc->render_buffer(state, &single_data_buffer) == VA_STATUS_SUCCESS, "HEVC interleaved second slice data ingestion failed") && ok;
+
+        width     = 0;
+        height    = 0;
+        reason[0] = '\0';
+        ok        = check(hevc->prepare_decode(state, &width, &height, reason, sizeof(reason)) == VA_STATUS_SUCCESS, "HEVC interleaved prepare_decode failed") && ok;
+        if (!ok) {
+            std::fprintf(stderr, "%s\n", reason);
+        }
+        VkvvHEVCDecodeInput interleaved_input{};
+        ok = check(vkvv_hevc_get_decode_input(state, &interleaved_input) == VA_STATUS_SUCCESS, "HEVC interleaved decode input extraction failed") && ok;
+        ok = check(interleaved_input.slice_count == 2 && interleaved_input.bitstream_size == 13 && interleaved_input.slice_offsets[0] == 0 &&
+                       interleaved_input.slice_offsets[1] == 7 && interleaved_input.bitstream[3] == 0x26 && interleaved_input.bitstream[10] == 0x02,
+                   "HEVC parser failed interleaved slice parameter/data ingestion") &&
+            ok;
+
         hevc->state_destroy(state);
         std::printf("%s parser passed\n", label);
         return ok;
