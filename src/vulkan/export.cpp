@@ -111,7 +111,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
     }
 
     auto* resource = static_cast<SurfaceResource*>(surface->vulkan);
-    if (displayable && resource->export_resource.image == VK_NULL_HANDLE && resource->import.external && resource->import.fd.valid) {
+    if (resource->export_resource.image == VK_NULL_HANDLE && resource->import.external && resource->import.fd.valid) {
         (void)attach_imported_export_resource_by_fd(runtime, resource);
     }
     if (resource->export_resource.image == VK_NULL_HANDLE) {

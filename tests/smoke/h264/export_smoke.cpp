@@ -440,7 +440,7 @@ namespace {
         return true;
     }
 
-    bool check_nondisplay_import_does_not_attach_retained_cross_codec_backing(vkvv::VulkanRuntime* runtime) {
+    bool check_nondisplay_import_attaches_and_refreshes_retained_backing(vkvv::VulkanRuntime* runtime) {
         char                        reason[512] = {};
         void*                       vp9_session = nullptr;
         void*                       h264_session = nullptr;
@@ -496,7 +496,8 @@ namespace {
         }
         status = vkvv_vulkan_export_surface(runtime, &vp9_decoded, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &descriptor, reason, sizeof(reason));
         std::printf("%s\n", reason);
-        const VkvvFdIdentity retained_fd = vkvv::retained_export_fd_identity(vp9_resource->export_resource);
+        const VkvvFdIdentity retained_fd     = vkvv::retained_export_fd_identity(vp9_resource->export_resource);
+        const VkDeviceMemory retained_memory = vp9_resource->export_resource.memory;
         if (status != VA_STATUS_SUCCESS || !retained_fd.valid) {
             std::fprintf(stderr, "VP9 source export did not produce a retained fd identity\n");
             cleanup();
@@ -541,18 +542,23 @@ namespace {
         if (reason[0] != '\0') {
             std::printf("%s\n", reason);
         }
-        if (status != VA_STATUS_SUCCESS || imported_resource->export_resource.image != VK_NULL_HANDLE || imported_resource->exported) {
-            std::fprintf(stderr, "non-display imported decode attached a retained cross-codec export backing\n");
+        if (status != VA_STATUS_SUCCESS || imported_resource->export_resource.image == VK_NULL_HANDLE ||
+            imported_resource->export_resource.memory != retained_memory || imported_resource->export_resource.content_generation != imported_resource->content_generation ||
+            imported_resource->export_resource.codec_operation != VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR || imported_resource->export_seed_generation != 0 ||
+            imported_resource->exported) {
+            std::fprintf(stderr, "non-display imported decode did not attach and refresh the retained backing without publishing it\n");
             cleanup();
             return false;
         }
 
+        const VkDeviceMemory attached_memory = imported_resource->export_resource.memory;
         imported_resource->content_generation++;
         status = vkvv_vulkan_refresh_surface_export(runtime, &imported_nondisplay, true, reason, sizeof(reason));
         if (reason[0] != '\0') {
             std::printf("%s\n", reason);
         }
         if (status != VA_STATUS_SUCCESS || imported_resource->export_resource.image == VK_NULL_HANDLE ||
+            imported_resource->export_resource.memory != attached_memory ||
             imported_resource->export_resource.content_generation != imported_resource->content_generation ||
             imported_resource->export_resource.codec_operation != VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) {
             std::fprintf(stderr, "displayable imported decode did not attach and refresh the retained backing\n");
@@ -904,7 +910,7 @@ int main(void) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
-    if (!check_nondisplay_import_does_not_attach_retained_cross_codec_backing(typed_runtime)) {
+    if (!check_nondisplay_import_attaches_and_refreshes_retained_backing(typed_runtime)) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
