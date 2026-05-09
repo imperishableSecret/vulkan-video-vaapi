@@ -58,10 +58,7 @@ static void release_owned_payloads(VkvvDriver* drv) {
             case VKVV_OBJECT_CONTEXT: vkvv_release_context_payload(drv, static_cast<VkvvContext*>(object->payload)); break;
             case VKVV_OBJECT_BUFFER: {
                 auto* buffer = static_cast<VkvvBuffer*>(object->payload);
-                if (buffer != NULL) {
-                    std::free(buffer->data);
-                    buffer->data = NULL;
-                }
+                vkvv_release_buffer_payload(buffer);
                 break;
             }
             case VKVV_OBJECT_SURFACE:
@@ -153,7 +150,7 @@ static struct VADriverVTable make_vtable(void) {
     vt.vaQueryProcessingRate      = unsupported_callback(vt.vaQueryProcessingRate);
     vt.vaExportSurfaceHandle      = vkvvExportSurfaceHandle;
     vt.vaSyncSurface2             = vkvvSyncSurface2;
-    vt.vaSyncBuffer               = unsupported_callback(vt.vaSyncBuffer);
+    vt.vaSyncBuffer               = vkvvSyncBuffer;
     vt.vaCopy                     = unsupported_callback(vt.vaCopy);
     vt.vaMapBuffer2               = vkvvMapBuffer2;
     return vt;

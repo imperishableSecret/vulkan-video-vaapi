@@ -143,6 +143,18 @@ codec_smoke = executable(
   install: false,
 )
 
+coded_buffer_smoke = executable(
+  'vkvv-coded-buffer-smoke',
+  files(
+    'tests/smoke/generic/coded_buffer_smoke.cpp',
+    'src/va/buffers.cpp',
+    'src/va/object.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [libva_dep, threads_dep],
+  install: false,
+)
+
 session_smoke = executable(
   'vkvv-session-smoke',
   files(
@@ -278,6 +290,7 @@ test('smoke-vp9-session', vp9_session_smoke, is_parallel: false, timeout: 30)
 test('smoke-av1-session', av1_session_smoke, is_parallel: false, timeout: 30)
 test('smoke-probe', probe_smoke, is_parallel: false, timeout: 30)
 test('smoke-codec', codec_smoke, is_parallel: false, timeout: 30)
+test('smoke-coded-buffer', coded_buffer_smoke, is_parallel: false, timeout: 30)
 test('smoke-export', export_smoke, is_parallel: false, timeout: 30)
 test('smoke-va-export', va_export_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-lifetime', lifetime_smoke, env: driver_test_env, is_parallel: false, timeout: 30)

@@ -1,7 +1,18 @@
 #include "va/private.h"
 
+#include <cstdlib>
 #include <mutex>
 #include <new>
+
+void vkvv_release_buffer_payload(VkvvBuffer* buffer) {
+    if (buffer == NULL) {
+        return;
+    }
+    std::free(buffer->data);
+    buffer->data = NULL;
+    delete buffer->coded_payload;
+    buffer->coded_payload = NULL;
+}
 
 namespace {
 
@@ -34,7 +45,12 @@ namespace {
                 break;
             }
             case VKVV_OBJECT_CONFIG: delete static_cast<VkvvConfig*>(object->payload); break;
-            case VKVV_OBJECT_BUFFER: delete static_cast<VkvvBuffer*>(object->payload); break;
+            case VKVV_OBJECT_BUFFER: {
+                auto* buffer = static_cast<VkvvBuffer*>(object->payload);
+                vkvv_release_buffer_payload(buffer);
+                delete buffer;
+                break;
+            }
             default: break;
         }
         object->payload = NULL;

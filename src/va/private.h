@@ -63,6 +63,9 @@ void     vkvv_driver_note_decode_domain_locked(VkvvDriver* drv, const VkvvContex
 void     vkvv_driver_note_decode_domain(VkvvDriver* drv, const VkvvContext* vctx, const VkvvSurface* surface);
 bool     vkvv_driver_apply_active_decode_domain(VkvvDriver* drv, VkvvSurface* surface);
 bool     vkvv_driver_apply_active_decode_domain_locked(VkvvDriver* drv, VkvvSurface* surface);
+void     vkvv_release_buffer_payload(VkvvBuffer* buffer);
+void     vkvv_coded_buffer_mark_pending(VkvvBuffer* buffer, uint64_t generation);
+VAStatus vkvv_coded_buffer_store(VkvvBuffer* buffer, const void* data, size_t data_size, uint32_t status_flags, uint64_t generation);
 
 VAStatus vkvvQueryConfigProfiles(VADriverContextP ctx, VAProfile* profile_list, int* num_profiles);
 VAStatus vkvvQueryConfigEntrypoints(VADriverContextP ctx, VAProfile profile, VAEntrypoint* entrypoint_list, int* num_entrypoints);
@@ -90,6 +93,7 @@ VAStatus vkvvUnmapBuffer(VADriverContextP ctx, VABufferID buf_id);
 VAStatus vkvvDestroyBuffer(VADriverContextP ctx, VABufferID buffer_id);
 VAStatus vkvvBufferInfo(VADriverContextP ctx, VABufferID buf_id, VABufferType* type, unsigned int* size, unsigned int* num_elements);
 VAStatus vkvvMapBuffer2(VADriverContextP ctx, VABufferID buf_id, void** pbuf, uint32_t flags);
+VAStatus vkvvSyncBuffer(VADriverContextP ctx, VABufferID buf_id, uint64_t timeout_ns);
 
 VAStatus vkvvCreateContext(VADriverContextP ctx, VAConfigID config_id, int picture_width, int picture_height, int flag, VASurfaceID* render_targets, int num_render_targets,
                            VAContextID* context);

@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <mutex>
+#include <vector>
 #include <va/va.h>
 #include <va/va_backend.h>
 
@@ -56,8 +57,6 @@ typedef enum {
     VKVV_SURFACE_ROLE_ENCODE_RECONSTRUCTED = 1u << 3,
     VKVV_SURFACE_ROLE_ENCODE_REFERENCE     = 1u << 4,
 } VkvvSurfaceRoleFlags;
-
-typedef struct VkvvCodedBufferPayload VkvvCodedBufferPayload;
 
 typedef struct {
     unsigned int min_width;
@@ -188,6 +187,17 @@ typedef struct VkvvSurface {
     bool                      destroying;
     bool                      decoded;
 } VkvvSurface;
+
+typedef struct VkvvCodedBufferPayload {
+    VACodedBufferSegment segment{};
+    std::vector<uint8_t> storage;
+    unsigned int         capacity    = 0;
+    unsigned int         bytes_used  = 0;
+    VAStatus             sync_status = VA_STATUS_SUCCESS;
+    uint64_t             generation  = 0;
+    bool                 ready       = true;
+    bool                 pending     = false;
+} VkvvCodedBufferPayload;
 
 typedef struct VkvvBuffer {
     VABufferType            type;
