@@ -472,6 +472,7 @@ int main(void) {
     drv.caps.vp9_12              = true;
     drv.caps.av1                 = true;
     drv.caps.av1_10              = true;
+    drv.caps.h264_encode         = true;
     drv.caps.surface_export      = true;
     drv.caps.surface_export_nv12 = true;
     drv.caps.surface_export_p010 = true;
@@ -540,6 +541,12 @@ int main(void) {
     ok = check(h264_encode != nullptr && h264_encode->hardware_supported && !h264_encode->parser_wired && !h264_encode->runtime_wired && !h264_encode->surface_wired &&
                    !h264_encode->advertise,
                "H.264 encode descriptor should be present but inert") &&
+        ok;
+    ok = check(h264_encode != nullptr && h264_encode->vulkan_codec_operation == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
+               "H.264 encode descriptor should carry the Vulkan H.264 encode operation") &&
+        ok;
+    ok = check(h264_encode != nullptr && std::strcmp(h264_encode->required_extension, VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME) == 0,
+               "H.264 encode descriptor should carry the Vulkan H.264 encode extension name") &&
         ok;
     ok = check(vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointEncSlice) == nullptr, "H.264 encode entrypoint must not be advertised") && ok;
 

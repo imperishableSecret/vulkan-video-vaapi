@@ -16,6 +16,7 @@ int main(void) {
     std::printf("vp9_12=%d\n", caps.vp9_12);
     std::printf("av1=%d\n", caps.av1);
     std::printf("av1_10=%d\n", caps.av1_10);
+    std::printf("h264_enc=%d\n", caps.h264_encode);
     std::printf("surface_export=%d\n", caps.surface_export);
     std::printf("surface_export_nv12=%d\n", caps.surface_export_nv12);
     std::printf("surface_export_p010=%d\n", caps.surface_export_p010);

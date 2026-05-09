@@ -156,11 +156,14 @@ void vkvv_init_profile_capabilities(VkvvDriver* drv) {
     add_vp9_profile2(drv);
     add_av1_profile0(drv);
     add_single_format_profile(drv, VAProfileH264High, VAEntrypointEncSlice, VKVV_CODEC_DIRECTION_ENCODE, VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
-                              VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME, VA_RT_FORMAT_YUV420, drv->caps.h264_limits, drv->caps.h264, false, false, drv->caps.h264, false);
+                              VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME, VA_RT_FORMAT_YUV420, drv->caps.h264_encode_limits, drv->caps.h264_encode, false, false,
+                              drv->caps.h264_encode, false);
     add_single_format_profile(drv, VAProfileH264High, VAEntrypointEncSliceLP, VKVV_CODEC_DIRECTION_ENCODE, VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
-                              VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME, VA_RT_FORMAT_YUV420, drv->caps.h264_limits, drv->caps.h264, false, false, drv->caps.h264, false);
+                              VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME, VA_RT_FORMAT_YUV420, drv->caps.h264_encode_limits, drv->caps.h264_encode, false, false,
+                              drv->caps.h264_encode, false);
     add_single_format_profile(drv, VAProfileH264High, VAEntrypointEncPicture, VKVV_CODEC_DIRECTION_ENCODE, VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
-                              VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME, VA_RT_FORMAT_YUV420, drv->caps.h264_limits, drv->caps.h264, false, false, drv->caps.h264, false);
+                              VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME, VA_RT_FORMAT_YUV420, drv->caps.h264_encode_limits, drv->caps.h264_encode, false, false,
+                              drv->caps.h264_encode, false);
 }
 
 const VkvvProfileCapability* vkvv_profile_capability(const VkvvDriver* drv, VAProfile profile) {

@@ -71,6 +71,20 @@ namespace {
         }
     };
 
+    struct VideoEncodeH264CapabilitiesChain {
+        VkVideoEncodeH264CapabilitiesKHR h264{};
+        VkVideoEncodeCapabilitiesKHR     encode{};
+        VkVideoCapabilitiesKHR           video{};
+
+        VideoEncodeH264CapabilitiesChain() {
+            h264.sType   = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_CAPABILITIES_KHR;
+            encode.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_CAPABILITIES_KHR;
+            encode.pNext = &h264;
+            video.sType  = VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR;
+            video.pNext  = &encode;
+        }
+    };
+
     bool env_enabled(const char* name) {
         const char* value = std::getenv(name);
         return value != nullptr && std::strcmp(value, "0") != 0;
@@ -99,6 +113,7 @@ namespace {
         caps->av1                 = true;
         caps->av1_10              = true;
         caps->av1_12              = true;
+        caps->h264_encode         = true;
         caps->surface_export      = true;
         caps->surface_export_nv12 = true;
         caps->surface_export_p010 = true;
@@ -113,7 +128,8 @@ namespace {
         caps->av1_limits          = fallback_limits;
         caps->av1_10_limits       = fallback_limits;
         caps->av1_12_limits       = fallback_limits;
-        std::snprintf(caps->summary, sizeof(caps->summary), "assuming H264/H265/H265Main10/H265Main12/VP9/VP9Profile2/AV1 support: %s", reason);
+        caps->h264_encode_limits  = fallback_limits;
+        std::snprintf(caps->summary, sizeof(caps->summary), "assuming H264/H265/H265Main10/H265Main12/VP9/VP9Profile2/AV1/H264Encode support: %s", reason);
     }
 
     bool device_has_required_extensions(VkPhysicalDevice device, const char* codec_extension) {
@@ -131,6 +147,24 @@ namespace {
         extensions.resize(extension_count);
 
         return extension_present(extensions, VK_KHR_VIDEO_QUEUE_EXTENSION_NAME) && extension_present(extensions, VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME) &&
+            extension_present(extensions, codec_extension);
+    }
+
+    bool device_has_required_encode_extensions(VkPhysicalDevice device, const char* codec_extension) {
+        uint32_t extension_count = 0;
+        VkResult result          = vkEnumerateDeviceExtensionProperties(device, nullptr, &extension_count, nullptr);
+        if (result != VK_SUCCESS || extension_count == 0) {
+            return false;
+        }
+
+        std::vector<VkExtensionProperties> extensions(extension_count);
+        result = vkEnumerateDeviceExtensionProperties(device, nullptr, &extension_count, extensions.data());
+        if (result != VK_SUCCESS) {
+            return false;
+        }
+        extensions.resize(extension_count);
+
+        return extension_present(extensions, VK_KHR_VIDEO_QUEUE_EXTENSION_NAME) && extension_present(extensions, VK_KHR_VIDEO_ENCODE_QUEUE_EXTENSION_NAME) &&
             extension_present(extensions, codec_extension);
     }
 
@@ -214,6 +248,34 @@ namespace {
         return false;
     }
 
+    bool device_has_encode_queue(PFN_vkGetPhysicalDeviceQueueFamilyProperties2 get_queue_family_properties2, VkPhysicalDevice device, VkVideoCodecOperationFlagBitsKHR operation) {
+        uint32_t queue_family_count = 0;
+        get_queue_family_properties2(device, &queue_family_count, nullptr);
+        if (queue_family_count == 0) {
+            return false;
+        }
+
+        std::vector<VkQueueFamilyProperties2>        queue_props(queue_family_count);
+        std::vector<VkQueueFamilyVideoPropertiesKHR> video_props(queue_family_count);
+        for (uint32_t i = 0; i < queue_family_count; i++) {
+            video_props[i].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_VIDEO_PROPERTIES_KHR;
+            queue_props[i].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2;
+            queue_props[i].pNext = &video_props[i];
+        }
+
+        get_queue_family_properties2(device, &queue_family_count, queue_props.data());
+
+        for (uint32_t i = 0; i < queue_family_count; i++) {
+            const bool queue_advertises_encode = (queue_props[i].queueFamilyProperties.queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) != 0;
+            const bool queue_supports_codec    = (video_props[i].videoCodecOperations & operation) != 0;
+            if (queue_advertises_encode && queue_supports_codec) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     bool device_supports_video_profile(PFN_vkGetPhysicalDeviceQueueFamilyProperties2 get_queue_family_properties2,
                                        PFN_vkGetPhysicalDeviceVideoCapabilitiesKHR get_video_capabilities, VkPhysicalDevice device, const VideoProbeProfile& probe,
                                        VkvvVideoProfileLimits* limits, char* reason, size_t reason_size) {
@@ -273,6 +335,57 @@ namespace {
         }
 
         return device_supports_video_profile(get_queue_family_properties2, get_video_capabilities, device, probe, limits, reason, reason_size);
+    }
+
+    bool device_supports_h264_encode_profile(PFN_vkGetPhysicalDeviceQueueFamilyProperties2 get_queue_family_properties2,
+                                             PFN_vkGetPhysicalDeviceVideoCapabilitiesKHR get_video_capabilities, VkPhysicalDevice device, VkvvVideoProfileLimits* limits,
+                                             char* reason, size_t reason_size) {
+        if (!device_has_required_encode_extensions(device, VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME)) {
+            std::snprintf(reason, reason_size, "missing-ext");
+            return false;
+        }
+
+        if (!device_has_encode_queue(get_queue_family_properties2, device, VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR)) {
+            std::snprintf(reason, reason_size, "no-encode-queue");
+            return false;
+        }
+
+        VkVideoEncodeH264ProfileInfoKHR h264_profile{};
+        h264_profile.sType         = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_PROFILE_INFO_KHR;
+        h264_profile.stdProfileIdc = STD_VIDEO_H264_PROFILE_IDC_HIGH;
+
+        VkVideoProfileInfoKHR profile{};
+        profile.sType               = VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR;
+        profile.pNext               = &h264_profile;
+        profile.videoCodecOperation = VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR;
+        profile.chromaSubsampling   = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR;
+        profile.lumaBitDepth        = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
+        profile.chromaBitDepth      = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
+
+        VideoEncodeH264CapabilitiesChain capabilities;
+        VkResult                         result = get_video_capabilities(device, &profile, &capabilities.video);
+        if (result != VK_SUCCESS) {
+            std::snprintf(reason, reason_size, "caps-result=%d", result);
+            return false;
+        }
+
+        if (capabilities.video.maxCodedExtent.width == 0 || capabilities.video.maxCodedExtent.height == 0 || capabilities.h264.maxSliceCount == 0) {
+            std::snprintf(reason, reason_size, "extent=%ux%u slices=%u", capabilities.video.maxCodedExtent.width, capabilities.video.maxCodedExtent.height,
+                          capabilities.h264.maxSliceCount);
+            return false;
+        }
+
+        if (limits != nullptr) {
+            limits->min_width             = capabilities.video.minCodedExtent.width;
+            limits->min_height            = capabilities.video.minCodedExtent.height;
+            limits->max_width             = capabilities.video.maxCodedExtent.width;
+            limits->max_height            = capabilities.video.maxCodedExtent.height;
+            limits->max_dpb_slots         = capabilities.video.maxDpbSlots;
+            limits->max_active_references = capabilities.video.maxActiveReferencePictures;
+        }
+
+        std::snprintf(reason, reason_size, "ok");
+        return true;
     }
 
     bool probe_impl(VkvvVideoCaps* caps) {
@@ -430,19 +543,24 @@ namespace {
             },
         }};
 
-        char                                   h264_reason[64]    = "not-probed";
-        char                                   h265_reason[64]    = "not-probed";
-        char                                   h265_10_reason[64] = "not-probed";
-        char                                   h265_12_reason[64] = "not-probed";
-        char                                   vp9_reason[64]     = "not-probed";
-        char                                   vp9_10_reason[64]  = "not-probed";
-        char                                   vp9_12_reason[64]  = "not-probed";
-        char                                   av1_reason[64]     = "not-probed";
-        char                                   av1_10_reason[64]  = "not-probed";
+        char                                   h264_reason[64]     = "not-probed";
+        char                                   h265_reason[64]     = "not-probed";
+        char                                   h265_10_reason[64]  = "not-probed";
+        char                                   h265_12_reason[64]  = "not-probed";
+        char                                   vp9_reason[64]      = "not-probed";
+        char                                   vp9_10_reason[64]   = "not-probed";
+        char                                   vp9_12_reason[64]   = "not-probed";
+        char                                   av1_reason[64]      = "not-probed";
+        char                                   av1_10_reason[64]   = "not-probed";
+        char                                   h264_enc_reason[64] = "not-probed";
 
         for (VkPhysicalDevice device : devices) {
             caps->h264 =
                 probe_one_profile(caps->h264, get_queue_family_properties2, get_video_capabilities, device, probes[0], &caps->h264_limits, h264_reason, sizeof(h264_reason));
+            if (!caps->h264_encode) {
+                caps->h264_encode = device_supports_h264_encode_profile(get_queue_family_properties2, get_video_capabilities, device, &caps->h264_encode_limits, h264_enc_reason,
+                                                                        sizeof(h264_enc_reason));
+            }
             caps->h265 =
                 probe_one_profile(caps->h265, get_queue_family_properties2, get_video_capabilities, device, probes[1], &caps->h265_limits, h265_reason, sizeof(h265_reason));
             caps->h265_10 = probe_one_profile(caps->h265_10, get_queue_family_properties2, get_video_capabilities, device, probes[2], &caps->h265_10_limits, h265_10_reason,
@@ -471,11 +589,12 @@ namespace {
 
         std::snprintf(caps->summary, sizeof(caps->summary),
                       "Vulkan Video profile caps: h264=%d(%s) h265=%d(%s) h265_10=%d(%s) h265_12=%d(%s) vp9=%d(%s) vp9_10=%d(%s) vp9_12=%d(%s) av1=%d(%s) av1_10=%d(%s) "
-                      "export_nv12=%d export_p010=%d",
+                      "h264_enc=%d(%s) export_nv12=%d export_p010=%d",
                       caps->h264, h264_reason, caps->h265, h265_reason, caps->h265_10, h265_10_reason, caps->h265_12, h265_12_reason, caps->vp9, vp9_reason, caps->vp9_10,
-                      vp9_10_reason, caps->vp9_12, vp9_12_reason, caps->av1, av1_reason, caps->av1_10, av1_10_reason, caps->surface_export_nv12, caps->surface_export_p010);
+                      vp9_10_reason, caps->vp9_12, vp9_12_reason, caps->av1, av1_reason, caps->av1_10, av1_10_reason, caps->h264_encode, h264_enc_reason, caps->surface_export_nv12,
+                      caps->surface_export_p010);
 
-        return caps->h264 || caps->h265 || caps->h265_10 || caps->h265_12 || caps->vp9 || caps->vp9_10 || caps->vp9_12 || caps->av1 || caps->av1_10;
+        return caps->h264 || caps->h265 || caps->h265_10 || caps->h265_12 || caps->vp9 || caps->vp9_10 || caps->vp9_12 || caps->av1 || caps->av1_10 || caps->h264_encode;
     }
 
 } // namespace

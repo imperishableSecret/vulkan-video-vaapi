@@ -79,6 +79,7 @@ typedef struct {
     bool                   av1;
     bool                   av1_10;
     bool                   av1_12;
+    bool                   h264_encode;
     bool                   surface_export;
     bool                   surface_export_nv12;
     bool                   surface_export_p010;
@@ -93,6 +94,7 @@ typedef struct {
     VkvvVideoProfileLimits av1_limits;
     VkvvVideoProfileLimits av1_10_limits;
     VkvvVideoProfileLimits av1_12_limits;
+    VkvvVideoProfileLimits h264_encode_limits;
     char                   summary[512];
 } VkvvVideoCaps;
 

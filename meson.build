@@ -114,6 +114,17 @@ executable(
   install: false,
 )
 
+probe_smoke = executable(
+  'vkvv-probe-smoke',
+  files(
+    'tests/smoke/generic/probe_smoke.cpp',
+    'src/vulkan/probe.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [libva_dep, vulkan_dep],
+  install: false,
+)
+
 codec_smoke = executable(
   'vkvv-codec-smoke',
   files(
@@ -253,6 +264,7 @@ test('smoke-session', session_smoke, is_parallel: false, timeout: 30)
 test('smoke-hevc-session', hevc_session_smoke, is_parallel: false, timeout: 30)
 test('smoke-vp9-session', vp9_session_smoke, is_parallel: false, timeout: 30)
 test('smoke-av1-session', av1_session_smoke, is_parallel: false, timeout: 30)
+test('smoke-probe', probe_smoke, is_parallel: false, timeout: 30)
 test('smoke-codec', codec_smoke, is_parallel: false, timeout: 30)
 test('smoke-export', export_smoke, is_parallel: false, timeout: 30)
 test('smoke-va-export', va_export_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
