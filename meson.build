@@ -22,8 +22,8 @@ src_inc = include_directories('src')
 
 vulkan_runtime_sources = files(
   'src/telemetry.cpp',
-  'src/surface_import.cpp',
-  'src/vulkan_runtime.cpp',
+  'src/va/surface_import.cpp',
+  'src/vulkan/runtime.cpp',
   'src/vulkan/common.cpp',
   'src/vulkan/command.cpp',
   'src/vulkan/export.cpp',
@@ -33,8 +33,8 @@ vulkan_runtime_sources = files(
   'src/vulkan/export/shadow_image.cpp',
   'src/vulkan/formats.cpp',
   'src/vulkan/session.cpp',
-  'src/vulkan/surface_resource.cpp',
-  'src/vulkan/upload.cpp',
+  'src/vulkan/resources/surface.cpp',
+  'src/vulkan/resources/upload.cpp',
   'src/vulkan/video_profile.cpp',
 )
 
@@ -61,17 +61,17 @@ driver_sources = files(
   'src/caps/records.cpp',
   'src/caps/formats.cpp',
   'src/codecs/registry.cpp',
-  'src/driver.cpp',
-  'src/driver_domain.cpp',
-  'src/va_buffers.cpp',
-  'src/va_config.cpp',
-  'src/va_context.cpp',
-  'src/va_surfaces.cpp',
+  'src/va/driver.cpp',
+  'src/va/domain.cpp',
+  'src/va/buffers.cpp',
+  'src/va/config.cpp',
+  'src/va/context.cpp',
+  'src/va/surfaces.cpp',
   'src/codecs/av1/av1.cpp',
   'src/codecs/h264/h264.cpp',
   'src/codecs/vp9/vp9.cpp',
-  'src/object.cpp',
-  'src/vulkan_probe.cpp',
+  'src/va/object.cpp',
+  'src/vulkan/probe.cpp',
 ) + vulkan_runtime_sources + h264_vulkan_sources + vp9_vulkan_sources + av1_vulkan_sources
 
 shared_module(
@@ -95,9 +95,10 @@ shared_module(
 executable(
   'vkvv-probe',
   files(
-    'src/probe_main.cpp',
-    'src/vulkan_probe.cpp',
+    'src/tools/probe_main.cpp',
+    'src/vulkan/probe.cpp',
   ),
+  include_directories: src_inc,
   dependencies: [libva_dep, vulkan_dep],
   install: false,
 )
@@ -112,7 +113,7 @@ codec_smoke = executable(
     'src/codecs/av1/av1.cpp',
     'src/codecs/h264/h264.cpp',
     'src/codecs/vp9/vp9.cpp',
-    'src/object.cpp',
+    'src/va/object.cpp',
   ) + vulkan_runtime_sources + h264_vulkan_sources + vp9_vulkan_sources + av1_vulkan_sources,
   include_directories: src_inc,
   dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep, gst_codecparsers_dep],
@@ -123,7 +124,7 @@ session_smoke = executable(
   'vkvv-session-smoke',
   files(
     'tests/smoke/h264/session_smoke.cpp',
-    'src/object.cpp',
+    'src/va/object.cpp',
   ) + vulkan_runtime_sources + h264_vulkan_sources + vp9_vulkan_sources + av1_vulkan_sources,
   include_directories: src_inc,
   dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
@@ -134,7 +135,7 @@ vp9_session_smoke = executable(
   'vkvv-vp9-session-smoke',
   files(
     'tests/smoke/vp9/session_smoke.cpp',
-    'src/object.cpp',
+    'src/va/object.cpp',
   ) + vulkan_runtime_sources + vp9_vulkan_sources,
   include_directories: src_inc,
   dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
@@ -145,7 +146,7 @@ av1_session_smoke = executable(
   'vkvv-av1-session-smoke',
   files(
     'tests/smoke/av1/session_smoke.cpp',
-    'src/object.cpp',
+    'src/va/object.cpp',
   ) + vulkan_runtime_sources + av1_vulkan_sources,
   include_directories: src_inc,
   dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
@@ -156,8 +157,8 @@ export_smoke = executable(
   'vkvv-export-smoke',
   files(
     'tests/smoke/h264/export_smoke.cpp',
-    'src/driver_domain.cpp',
-    'src/object.cpp',
+    'src/va/domain.cpp',
+    'src/va/object.cpp',
   ) + vulkan_runtime_sources + h264_vulkan_sources + vp9_vulkan_sources + av1_vulkan_sources,
   include_directories: src_inc,
   dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
@@ -203,7 +204,7 @@ surface_import_smoke = executable(
   'vkvv-surface-import-smoke',
   files(
     'tests/smoke/generic/surface_import_smoke.cpp',
-    'src/surface_import.cpp',
+    'src/va/surface_import.cpp',
   ),
   include_directories: src_inc,
   dependencies: [libva_dep],

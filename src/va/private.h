@@ -1,7 +1,7 @@
 #ifndef VKVV_VA_PRIVATE_H
 #define VKVV_VA_PRIVATE_H
 
-#include "driver.h"
+#include "va/driver.h"
 #include "caps/caps.h"
 #include "codecs/ops.h"
 

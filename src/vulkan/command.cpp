@@ -1,5 +1,5 @@
-#include "../vulkan_runtime_internal.h"
-#include "../telemetry.h"
+#include "vulkan/runtime_internal.h"
+#include "telemetry.h"
 
 #include <cstdio>
 #include <limits>

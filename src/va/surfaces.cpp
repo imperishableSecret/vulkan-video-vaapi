@@ -1,7 +1,7 @@
-#include "va_private.h"
-#include "surface_import.h"
+#include "va/private.h"
+#include "va/surface_import.h"
 #include "telemetry.h"
-#include "vulkan_runtime.h"
+#include "vulkan/runtime.h"
 
 #include <new>
 #include <va/va_drmcommon.h>

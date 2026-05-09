@@ -1,7 +1,7 @@
 #ifndef VKVV_CODECS_OPS_H
 #define VKVV_CODECS_OPS_H
 
-#include "../driver.h"
+#include "va/driver.h"
 
 #ifdef __cplusplus
 extern "C" {

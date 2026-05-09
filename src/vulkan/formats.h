@@ -1,7 +1,7 @@
 #ifndef VKVV_VULKAN_FORMATS_H
 #define VKVV_VULKAN_FORMATS_H
 
-#include "vulkan_runtime_internal.h"
+#include "vulkan/runtime_internal.h"
 
 namespace vkvv {
 

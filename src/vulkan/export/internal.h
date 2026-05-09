@@ -1,7 +1,7 @@
 #ifndef VKVV_VULKAN_EXPORT_INTERNAL_H
 #define VKVV_VULKAN_EXPORT_INTERNAL_H
 
-#include "vulkan_runtime_internal.h"
+#include "vulkan/runtime_internal.h"
 
 #include <cstddef>
 #include <cstdint>

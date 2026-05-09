@@ -1,6 +1,6 @@
-#include "va_private.h"
+#include "va/private.h"
 #include "telemetry.h"
-#include "vulkan_runtime.h"
+#include "vulkan/runtime.h"
 
 #include <new>
 #include <vulkan/vulkan.h>

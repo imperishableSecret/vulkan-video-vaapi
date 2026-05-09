@@ -1,5 +1,5 @@
-#include "va_private.h"
-#include "vulkan_runtime.h"
+#include "va/private.h"
+#include "vulkan/runtime.h"
 
 #include <atomic>
 #include <cstdarg>

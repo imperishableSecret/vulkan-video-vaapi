@@ -1,7 +1,7 @@
 #ifndef VKVV_VULKAN_RUNTIME_INTERNAL_H
 #define VKVV_VULKAN_RUNTIME_INTERNAL_H
 
-#include "vulkan_runtime.h"
+#include "vulkan/runtime.h"
 #include "vulkan/video_profile.h"
 
 #include <atomic>

@@ -1,4 +1,4 @@
-#include "va_private.h"
+#include "va/private.h"
 #include "codecs/av1/av1.h"
 #include "codecs/vp9/vp9.h"
 

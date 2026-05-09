@@ -1,7 +1,7 @@
 #ifndef VKVV_VULKAN_AV1_INTERNAL_H
 #define VKVV_VULKAN_AV1_INTERNAL_H
 
-#include "vulkan_runtime_internal.h"
+#include "vulkan/runtime_internal.h"
 #include "codecs/av1/av1.h"
 
 #include <array>

@@ -1,7 +1,7 @@
 #ifndef VKVV_SURFACE_IMPORT_H
 #define VKVV_SURFACE_IMPORT_H
 
-#include "driver.h"
+#include "va/driver.h"
 
 #include <va/va_drmcommon.h>
 

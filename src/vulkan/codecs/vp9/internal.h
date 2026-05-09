@@ -1,7 +1,7 @@
 #ifndef VKVV_VULKAN_VP9_INTERNAL_H
 #define VKVV_VULKAN_VP9_INTERNAL_H
 
-#include "vulkan_runtime_internal.h"
+#include "vulkan/runtime_internal.h"
 #include "codecs/vp9/vp9.h"
 
 namespace vkvv {

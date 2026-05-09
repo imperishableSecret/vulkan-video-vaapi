@@ -1,7 +1,7 @@
 #ifndef VKVV_CAPS_H
 #define VKVV_CAPS_H
 
-#include "../driver.h"
+#include "va/driver.h"
 
 #ifdef __cplusplus
 extern "C" {

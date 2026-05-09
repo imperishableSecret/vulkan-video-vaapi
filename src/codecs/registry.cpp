@@ -1,4 +1,4 @@
-#include "va_private.h"
+#include "va/private.h"
 #include "codecs/ops.h"
 #include "codecs/av1/av1.h"
 #include "codecs/h264/h264.h"

@@ -1,7 +1,7 @@
 #ifndef VKVV_VULKAN_H264_INTERNAL_H
 #define VKVV_VULKAN_H264_INTERNAL_H
 
-#include "vulkan_runtime_internal.h"
+#include "vulkan/runtime_internal.h"
 #include "codecs/h264/h264.h"
 
 namespace vkvv {
