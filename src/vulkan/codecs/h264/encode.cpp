@@ -470,6 +470,25 @@ namespace vkvv {
         header->disable_deblocking_filter_idc          = static_cast<StdVideoH264DisableDeblockingFilterIdc>(slice.disable_deblocking_filter_idc);
     }
 
+    void fill_h264_encode_rate_control(const VkvvH264EncodeInput* input, VkVideoEncodeH264RateControlInfoKHR* h264_rate_control, VkVideoEncodeRateControlInfoKHR* rate_control) {
+        const uint32_t gop_frames = input != nullptr && input->sequence != nullptr && input->sequence->intra_period > 0 ? input->sequence->intra_period : 1;
+        const uint32_t idr_period = input != nullptr && input->sequence != nullptr && input->sequence->intra_idr_period > 0 ? input->sequence->intra_idr_period : gop_frames;
+
+        *h264_rate_control                        = {};
+        h264_rate_control->sType                  = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_RATE_CONTROL_INFO_KHR;
+        h264_rate_control->gopFrameCount          = gop_frames;
+        h264_rate_control->idrPeriod              = idr_period;
+        h264_rate_control->consecutiveBFrameCount = 0;
+        h264_rate_control->temporalLayerCount     = 1;
+
+        *rate_control                 = {};
+        rate_control->sType           = VK_STRUCTURE_TYPE_VIDEO_ENCODE_RATE_CONTROL_INFO_KHR;
+        rate_control->pNext           = h264_rate_control;
+        rate_control->rateControlMode = VK_VIDEO_ENCODE_RATE_CONTROL_MODE_DISABLED_BIT_KHR;
+        rate_control->layerCount      = 0;
+        rate_control->pLayers         = nullptr;
+    }
+
     void fill_h264_encode_reference_info(const VkvvH264EncodeInput* input, StdVideoEncodeH264ReferenceInfo* reference) {
         *reference                     = {};
         reference->primary_pic_type    = h264_encode_picture_type(input);
@@ -771,6 +790,10 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &session->readback, "H.264 encoded readback", reason, reason_size)) {
         return fail_coded(VA_STATUS_ERROR_ALLOCATION_FAILED);
     }
+    if ((session->rate_control_modes & VK_VIDEO_ENCODE_RATE_CONTROL_MODE_DISABLED_BIT_KHR) == 0) {
+        std::snprintf(reason, reason_size, "H.264 encode CQP requires disabled Vulkan rate-control mode, supported=0x%x", session->rate_control_modes);
+        return fail_coded(VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT);
+    }
 
     StdVideoEncodeH264ReferenceListsInfo reference_lists{};
     fill_h264_encode_reference_lists(input, l0_reference_slot, &reference_lists);
@@ -824,6 +847,10 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
         l0_slot.pPictureResource       = &l0_picture;
     }
 
+    VkVideoEncodeH264RateControlInfoKHR h264_rate_control{};
+    VkVideoEncodeRateControlInfoKHR     rate_control{};
+    fill_h264_encode_rate_control(input, &h264_rate_control, &rate_control);
+
     std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
     if (!ensure_command_resources_for_queue(runtime, runtime->encode_queue_family, runtime->encode_queue, reason, reason_size)) {
         return fail_coded(VA_STATUS_ERROR_OPERATION_FAILED);
@@ -872,6 +899,12 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
     video_begin.referenceSlotCount     = has_l0_reference ? 1u : 0u;
     video_begin.pReferenceSlots        = has_l0_reference ? &l0_slot : nullptr;
     runtime->cmd_begin_video_coding(runtime->command_buffer, &video_begin);
+
+    VkVideoCodingControlInfoKHR rate_control_command{};
+    rate_control_command.sType = VK_STRUCTURE_TYPE_VIDEO_CODING_CONTROL_INFO_KHR;
+    rate_control_command.pNext = &rate_control;
+    rate_control_command.flags = VK_VIDEO_CODING_CONTROL_ENCODE_RATE_CONTROL_BIT_KHR;
+    runtime->cmd_control_video_coding(runtime->command_buffer, &rate_control_command);
 
     VkVideoPictureResourceInfoKHR src_picture = make_picture_resource(input_resource, coded_extent);
     VkVideoEncodeInfoKHR          encode_info{};
@@ -966,7 +999,7 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
             reconstructed_resource->content_generation++;
         }
     }
-    std::snprintf(reason, reason_size, "submitted H.264 Vulkan encode: %ux%u bytes=%u coded=%u input_mem=%llu recon_mem=%llu output_mem=%llu", coded_extent.width,
+    std::snprintf(reason, reason_size, "submitted H.264 Vulkan encode: %ux%u bytes=%u coded=%u rc=disabled input_mem=%llu recon_mem=%llu output_mem=%llu", coded_extent.width,
                   coded_extent.height, feedback.bytes_written, input->coded_buffer, static_cast<unsigned long long>(input_resource->allocation_size),
                   static_cast<unsigned long long>(reconstructed_resource != nullptr ? reconstructed_resource->allocation_size : 0),
                   static_cast<unsigned long long>(session->output.allocation_size));
