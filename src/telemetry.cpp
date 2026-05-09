@@ -9,13 +9,13 @@
 
 namespace {
 
-std::atomic<unsigned long long> trace_sequence{1};
-std::mutex trace_mutex;
+    std::atomic<unsigned long long> trace_sequence{1};
+    std::mutex                      trace_mutex;
 
-bool env_enabled(const char *name) {
-    const char *value = std::getenv(name);
-    return value != nullptr && std::strcmp(value, "0") != 0;
-}
+    bool                            env_enabled(const char* name) {
+        const char* value = std::getenv(name);
+        return value != nullptr && std::strcmp(value, "0") != 0;
+    }
 
 } // namespace
 
@@ -24,12 +24,12 @@ bool vkvv_trace_enabled(void) {
     return enabled;
 }
 
-void vkvv_trace(const char *event, const char *fmt, ...) {
+void vkvv_trace(const char* event, const char* fmt, ...) {
     if (!vkvv_trace_enabled()) {
         return;
     }
 
-    const unsigned long long seq = trace_sequence.fetch_add(1, std::memory_order_relaxed);
+    const unsigned long long    seq = trace_sequence.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lock(trace_mutex);
     std::fprintf(stderr, "nvidia-vulkan-vaapi: trace seq=%llu event=%s", seq, event != nullptr ? event : "unknown");
     if (fmt != nullptr && fmt[0] != '\0') {

@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 bool vkvv_trace_enabled(void);
-void vkvv_trace(const char *event, const char *fmt, ...);
+void vkvv_trace(const char* event, const char* fmt, ...);
 
 template <typename Handle>
 inline unsigned long long vkvv_trace_handle(Handle handle) {

@@ -7,360 +7,306 @@
 
 namespace {
 
-bool check(bool condition, const char *message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-    }
-    return condition;
-}
-
-bool ensure_session(
-        void *runtime,
-        void *session,
-        unsigned int width,
-        unsigned int height,
-        unsigned int min_expected_width,
-        unsigned int min_expected_height,
-        const char *label) {
-    char reason[512] = {};
-    VAStatus status = vkvv_vulkan_ensure_av1_session(
-        runtime, session, width, height, reason, sizeof(reason));
-    std::printf("%s\n", reason);
-    if (!check(status == VA_STATUS_SUCCESS, "vkvv_vulkan_ensure_av1_session failed")) {
-        return false;
+    bool check(bool condition, const char* message) {
+        if (!condition) {
+            std::fprintf(stderr, "%s\n", message);
+        }
+        return condition;
     }
 
-    const auto *typed_session = static_cast<const vkvv::AV1VideoSession *>(session);
-    const vkvv::VideoSession &video = typed_session->video;
-    if (!check(video.session != VK_NULL_HANDLE, "AV1 session handle was not created")) {
-        return false;
-    }
-    if (!check(video.key.codec_operation == VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR,
-               "AV1 session key did not record the codec operation")) {
-        return false;
-    }
-    if (!check(video.key.codec_profile == STD_VIDEO_AV1_PROFILE_MAIN,
-               "AV1 session key did not record the expected AV1 profile")) {
-        return false;
-    }
-    if (!check(video.key.picture_format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM &&
-               video.key.reference_picture_format == video.key.picture_format,
-               "AV1 session key did not record NV12 picture/reference formats")) {
-        return false;
-    }
-    if (!check(video.key.luma_bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR &&
-               video.key.chroma_bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-               "AV1 session key did not record 8-bit decode")) {
-        return false;
-    }
-    if (!check(video.key.max_coded_extent.width >= min_expected_width &&
-               video.key.max_coded_extent.height >= min_expected_height,
-               "AV1 session extent is smaller than the requested stream")) {
-        std::fprintf(stderr, "expected at least=%ux%u actual=%ux%u\n",
-                     min_expected_width, min_expected_height,
-                     video.key.max_coded_extent.width,
-                     video.key.max_coded_extent.height);
-        return false;
-    }
-    std::printf("%s profile=%u format=%d depth=0x%x\n",
-                label,
-                video.key.codec_profile,
-                video.key.picture_format,
-                video.key.luma_bit_depth);
-    return check(video.memory_bytes > 0, "AV1 session memory accounting stayed at zero");
-}
+    bool ensure_session(void* runtime, void* session, unsigned int width, unsigned int height, unsigned int min_expected_width, unsigned int min_expected_height,
+                        const char* label) {
+        char     reason[512] = {};
+        VAStatus status      = vkvv_vulkan_ensure_av1_session(runtime, session, width, height, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        if (!check(status == VA_STATUS_SUCCESS, "vkvv_vulkan_ensure_av1_session failed")) {
+            return false;
+        }
 
-bool ensure_upload(
-        vkvv::VulkanRuntime *runtime,
-        vkvv::AV1VideoSession *session,
-        const std::vector<uint8_t> &bytes) {
-    char reason[512] = {};
-    if (!check(vkvv::ensure_bitstream_upload_buffer(
-                   runtime,
-                   session->profile_spec,
-                   bytes.data(),
-                   bytes.size(),
-                   session->bitstream_size_alignment,
-                   VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR,
-                   &session->upload,
-                   "AV1 smoke bitstream",
-                   reason,
-                   sizeof(reason)),
-               "ensure_bitstream_upload_buffer failed")) {
-        std::fprintf(stderr, "%s\n", reason);
-        return false;
-    }
-    return check(session->upload.buffer != VK_NULL_HANDLE &&
-                 session->upload.memory != VK_NULL_HANDLE &&
-                 session->upload.size >= bytes.size() &&
-                 session->upload.capacity >= session->upload.size,
-                 "AV1 upload buffer was not populated correctly");
-}
-
-bool check_av1_dpb_slots() {
-    vkvv::AV1VideoSession session{};
-    bool used_slots[vkvv::max_av1_dpb_slots] = {};
-
-    const int first_slot = vkvv::allocate_av1_dpb_slot(&session, used_slots);
-    if (!check(first_slot == 0, "first AV1 DPB slot allocation did not start at zero")) {
-        return false;
+        const auto*               typed_session = static_cast<const vkvv::AV1VideoSession*>(session);
+        const vkvv::VideoSession& video         = typed_session->video;
+        if (!check(video.session != VK_NULL_HANDLE, "AV1 session handle was not created")) {
+            return false;
+        }
+        if (!check(video.key.codec_operation == VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR, "AV1 session key did not record the codec operation")) {
+            return false;
+        }
+        if (!check(video.key.codec_profile == STD_VIDEO_AV1_PROFILE_MAIN, "AV1 session key did not record the expected AV1 profile")) {
+            return false;
+        }
+        if (!check(video.key.picture_format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM && video.key.reference_picture_format == video.key.picture_format,
+                   "AV1 session key did not record NV12 picture/reference formats")) {
+            return false;
+        }
+        if (!check(video.key.luma_bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR && video.key.chroma_bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+                   "AV1 session key did not record 8-bit decode")) {
+            return false;
+        }
+        if (!check(video.key.max_coded_extent.width >= min_expected_width && video.key.max_coded_extent.height >= min_expected_height,
+                   "AV1 session extent is smaller than the requested stream")) {
+            std::fprintf(stderr, "expected at least=%ux%u actual=%ux%u\n", min_expected_width, min_expected_height, video.key.max_coded_extent.width,
+                         video.key.max_coded_extent.height);
+            return false;
+        }
+        std::printf("%s profile=%u format=%d depth=0x%x\n", label, video.key.codec_profile, video.key.picture_format, video.key.luma_bit_depth);
+        return check(video.memory_bytes > 0, "AV1 session memory accounting stayed at zero");
     }
 
-    StdVideoDecodeAV1ReferenceInfo info{};
-    info.OrderHint = 3;
-    vkvv::av1_set_reference_slot(&session, 0, 41, first_slot, info);
-    vkvv::av1_set_surface_slot(&session, 41, first_slot, info);
-    if (!check(vkvv::av1_dpb_slot_for_surface(&session, 41) == first_slot,
-               "AV1 surface lookup did not return the stored slot")) {
-        return false;
-    }
-    const vkvv::AV1ReferenceSlot *stored = vkvv::av1_reference_slot_for_surface(&session, 41);
-    if (!check(stored != nullptr && stored->info.OrderHint == 3,
-               "AV1 reference info was not stored with the slot")) {
-        return false;
-    }
-
-    used_slots[first_slot] = true;
-    const int second_slot = vkvv::allocate_av1_dpb_slot(&session, used_slots);
-    if (!check(second_slot == 1, "AV1 DPB allocation did not skip a used slot")) {
-        return false;
-    }
-    info.OrderHint = 7;
-    vkvv::av1_set_reference_slot(&session, 0, 41, second_slot, info);
-    vkvv::av1_set_surface_slot(&session, 41, second_slot, info);
-    stored = vkvv::av1_reference_slot_for_surface(&session, 41);
-    if (!check(stored != nullptr && stored->slot == second_slot && stored->info.OrderHint == 7,
-               "AV1 reference slot update did not replace the old slot")) {
-        return false;
+    bool ensure_upload(vkvv::VulkanRuntime* runtime, vkvv::AV1VideoSession* session, const std::vector<uint8_t>& bytes) {
+        char reason[512] = {};
+        if (!check(vkvv::ensure_bitstream_upload_buffer(runtime, session->profile_spec, bytes.data(), bytes.size(), session->bitstream_size_alignment,
+                                                        VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR, &session->upload, "AV1 smoke bitstream", reason, sizeof(reason)),
+                   "ensure_bitstream_upload_buffer failed")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        return check(session->upload.buffer != VK_NULL_HANDLE && session->upload.memory != VK_NULL_HANDLE && session->upload.size >= bytes.size() &&
+                         session->upload.capacity >= session->upload.size,
+                     "AV1 upload buffer was not populated correctly");
     }
 
-    for (bool &used : used_slots) {
-        used = false;
-    }
-    for (uint32_t i = 0; i < vkvv::max_av1_reference_slots; i++) {
-        used_slots[i] = true;
-    }
-    const int ninth_slot = vkvv::allocate_av1_dpb_slot(&session, used_slots);
-    if (!check(ninth_slot == static_cast<int>(vkvv::max_av1_reference_slots),
-               "AV1 DPB allocation did not allow a slot beyond the 8 VBI entries")) {
-        return false;
-    }
-    info.OrderHint = 11;
-    vkvv::av1_set_reference_slot(&session, 4, 42, ninth_slot, info);
-    vkvv::av1_set_surface_slot(&session, 42, ninth_slot, info);
-    stored = vkvv::av1_reference_slot_for_surface(&session, 42);
-    if (!check(stored != nullptr && stored->slot == ninth_slot && stored->info.OrderHint == 11,
-               "AV1 reference table did not store a DPB slot beyond the 8 VBI entries")) {
-        return false;
-    }
+    bool check_av1_dpb_slots() {
+        vkvv::AV1VideoSession session{};
+        bool                  used_slots[vkvv::max_av1_dpb_slots] = {};
 
-    vkvv::av1_clear_reference_slot(&session, second_slot);
-    return check(vkvv::av1_reference_slot_for_surface(&session, 41) == nullptr,
-                 "AV1 reference slot clear did not remove stale mapping");
-}
+        const int             first_slot = vkvv::allocate_av1_dpb_slot(&session, used_slots);
+        if (!check(first_slot == 0, "first AV1 DPB slot allocation did not start at zero")) {
+            return false;
+        }
 
-bool check_av1_refresh_retention() {
-    vkvv::AV1VideoSession session{};
-    StdVideoDecodeAV1ReferenceInfo info{};
-    info.OrderHint = 9;
-    vkvv::av1_set_reference_slot(&session, 3, 378, 6, info);
-    vkvv::av1_set_surface_slot(&session, 378, 6, info);
+        StdVideoDecodeAV1ReferenceInfo info{};
+        info.OrderHint = 3;
+        vkvv::av1_set_reference_slot(&session, 0, 41, first_slot, info);
+        vkvv::av1_set_surface_slot(&session, 41, first_slot, info);
+        if (!check(vkvv::av1_dpb_slot_for_surface(&session, 41) == first_slot, "AV1 surface lookup did not return the stored slot")) {
+            return false;
+        }
+        const vkvv::AV1ReferenceSlot* stored = vkvv::av1_reference_slot_for_surface(&session, 41);
+        if (!check(stored != nullptr && stored->info.OrderHint == 3, "AV1 reference info was not stored with the slot")) {
+            return false;
+        }
 
-    VADecPictureParameterBufferAV1 pic{};
-    for (VASurfaceID &surface : pic.ref_frame_map) {
-        surface = VA_INVALID_ID;
-    }
-    pic.ref_frame_map[3] = 378;
+        used_slots[first_slot] = true;
+        const int second_slot  = vkvv::allocate_av1_dpb_slot(&session, used_slots);
+        if (!check(second_slot == 1, "AV1 DPB allocation did not skip a used slot")) {
+            return false;
+        }
+        info.OrderHint = 7;
+        vkvv::av1_set_reference_slot(&session, 0, 41, second_slot, info);
+        vkvv::av1_set_surface_slot(&session, 41, second_slot, info);
+        stored = vkvv::av1_reference_slot_for_surface(&session, 41);
+        if (!check(stored != nullptr && stored->slot == second_slot && stored->info.OrderHint == 7, "AV1 reference slot update did not replace the old slot")) {
+            return false;
+        }
 
-    VkvvAV1DecodeInput input{};
-    input.pic = &pic;
-    input.header.refresh_frame_flags = 0x00;
+        for (bool& used : used_slots) {
+            used = false;
+        }
+        for (uint32_t i = 0; i < vkvv::max_av1_reference_slots; i++) {
+            used_slots[i] = true;
+        }
+        const int ninth_slot = vkvv::allocate_av1_dpb_slot(&session, used_slots);
+        if (!check(ninth_slot == static_cast<int>(vkvv::max_av1_reference_slots), "AV1 DPB allocation did not allow a slot beyond the 8 VBI entries")) {
+            return false;
+        }
+        info.OrderHint = 11;
+        vkvv::av1_set_reference_slot(&session, 4, 42, ninth_slot, info);
+        vkvv::av1_set_surface_slot(&session, 42, ninth_slot, info);
+        stored = vkvv::av1_reference_slot_for_surface(&session, 42);
+        if (!check(stored != nullptr && stored->slot == ninth_slot && stored->info.OrderHint == 11, "AV1 reference table did not store a DPB slot beyond the 8 VBI entries")) {
+            return false;
+        }
 
-    bool used_slots[vkvv::max_av1_dpb_slots] = {};
-    vkvv::av1_mark_retained_reference_slots(&session, &input, used_slots);
-    if (!check(used_slots[6], "AV1 refresh=0 frame did not retain an existing live reference slot")) {
-        return false;
-    }
-
-    vkvv::av1_update_reference_slots_from_refresh(&session, &input, 999, 4, info);
-    if (!check(vkvv::av1_reference_slot_for_index(&session, 3) != nullptr &&
-                   vkvv::av1_reference_slot_for_index(&session, 3)->surface_id == 378,
-               "AV1 refresh=0 frame incorrectly updated an existing reference")) {
-        return false;
-    }
-
-    input.header.refresh_frame_flags = 1U << 3;
-    for (bool &used : used_slots) {
-        used = false;
-    }
-    vkvv::av1_mark_retained_reference_slots(&session, &input, used_slots);
-    if (!check(!used_slots[6], "AV1 refreshed-away surface still blocked DPB slot reuse")) {
-        return false;
-    }
-    vkvv::av1_update_reference_slots_from_refresh(&session, &input, 999, 4, info);
-    if (!check(vkvv::av1_reference_slot_for_index(&session, 3) != nullptr &&
-                   vkvv::av1_reference_slot_for_index(&session, 3)->surface_id == 999 &&
-                   vkvv::av1_reference_slot_for_index(&session, 3)->slot == 4,
-               "AV1 refreshed reference index was not updated to the current surface")) {
-        return false;
+        vkvv::av1_clear_reference_slot(&session, second_slot);
+        return check(vkvv::av1_reference_slot_for_surface(&session, 41) == nullptr, "AV1 reference slot clear did not remove stale mapping");
     }
 
-    vkvv::av1_set_reference_slot(&session, 2, 378, 6, info);
-    vkvv::av1_set_reference_slot(&session, 3, 378, 6, info);
-    vkvv::av1_set_surface_slot(&session, 378, 6, info);
-    pic.ref_frame_map[2] = 378;
-    for (bool &used : used_slots) {
-        used = false;
-    }
-    vkvv::av1_mark_retained_reference_slots(&session, &input, used_slots);
-    if (!check(used_slots[6], "AV1 surface retained by another VBI index was not protected")) {
-        return false;
-    }
-    vkvv::av1_update_reference_slots_from_refresh(&session, &input, 999, 4, info);
-    return check(vkvv::av1_reference_slot_for_index(&session, 2) != nullptr &&
-                     vkvv::av1_reference_slot_for_index(&session, 2)->surface_id == 378 &&
-                     vkvv::av1_reference_slot_for_index(&session, 3) != nullptr &&
-                     vkvv::av1_reference_slot_for_index(&session, 3)->surface_id == 999,
-                 "AV1 refresh update touched the wrong VBI reference index");
-}
+    bool check_av1_refresh_retention() {
+        vkvv::AV1VideoSession          session{};
+        StdVideoDecodeAV1ReferenceInfo info{};
+        info.OrderHint = 9;
+        vkvv::av1_set_reference_slot(&session, 3, 378, 6, info);
+        vkvv::av1_set_surface_slot(&session, 378, 6, info);
 
-bool check_av1_surface_reconciliation() {
-    vkvv::AV1VideoSession session{};
-    StdVideoDecodeAV1ReferenceInfo info{};
-    info.OrderHint = 38;
-    vkvv::av1_set_surface_slot(&session, 38, 7, info);
+        VADecPictureParameterBufferAV1 pic{};
+        for (VASurfaceID& surface : pic.ref_frame_map) {
+            surface = VA_INVALID_ID;
+        }
+        pic.ref_frame_map[3] = 378;
 
-    VADecPictureParameterBufferAV1 pic{};
-    for (VASurfaceID &surface : pic.ref_frame_map) {
-        surface = VA_INVALID_ID;
-    }
-    pic.ref_frame_map[1] = 38;
+        VkvvAV1DecodeInput input{};
+        input.pic                        = &pic;
+        input.header.refresh_frame_flags = 0x00;
 
-    VkvvAV1DecodeInput input{};
-    input.pic = &pic;
-    input.header.refresh_frame_flags = 0x00;
+        bool used_slots[vkvv::max_av1_dpb_slots] = {};
+        vkvv::av1_mark_retained_reference_slots(&session, &input, used_slots);
+        if (!check(used_slots[6], "AV1 refresh=0 frame did not retain an existing live reference slot")) {
+            return false;
+        }
 
-    bool used_slots[vkvv::max_av1_dpb_slots] = {};
-    vkvv::av1_mark_retained_reference_slots(&session, &input, used_slots);
-    if (!check(used_slots[7],
-               "AV1 surface history did not protect a retained ref_frame_map surface with missing VBI entry")) {
-        return false;
-    }
+        vkvv::av1_update_reference_slots_from_refresh(&session, &input, 999, 4, info);
+        if (!check(vkvv::av1_reference_slot_for_index(&session, 3) != nullptr && vkvv::av1_reference_slot_for_index(&session, 3)->surface_id == 378,
+                   "AV1 refresh=0 frame incorrectly updated an existing reference")) {
+            return false;
+        }
 
-    const vkvv::AV1ReferenceSlot *slot = vkvv::av1_reconcile_reference_slot(&session, 1, 38);
-    if (!check(slot != nullptr && slot->surface_id == 38 && slot->slot == 7 && slot->info.OrderHint == 38,
-               "AV1 reference reconciliation did not recover a missing VBI entry from surface history")) {
-        return false;
-    }
+        input.header.refresh_frame_flags = 1U << 3;
+        for (bool& used : used_slots) {
+            used = false;
+        }
+        vkvv::av1_mark_retained_reference_slots(&session, &input, used_slots);
+        if (!check(!used_slots[6], "AV1 refreshed-away surface still blocked DPB slot reuse")) {
+            return false;
+        }
+        vkvv::av1_update_reference_slots_from_refresh(&session, &input, 999, 4, info);
+        if (!check(vkvv::av1_reference_slot_for_index(&session, 3) != nullptr && vkvv::av1_reference_slot_for_index(&session, 3)->surface_id == 999 &&
+                       vkvv::av1_reference_slot_for_index(&session, 3)->slot == 4,
+                   "AV1 refreshed reference index was not updated to the current surface")) {
+            return false;
+        }
 
-    slot = vkvv::av1_reference_slot_for_index(&session, 1);
-    return check(slot != nullptr && slot->surface_id == 38 && slot->slot == 7,
-                 "AV1 reference reconciliation did not persist the recovered VBI entry");
-}
-
-bool check_av1_target_slot_selection() {
-    vkvv::AV1VideoSession session{};
-    session.max_dpb_slots = vkvv::max_av1_dpb_slots;
-    bool used_slots[vkvv::max_av1_dpb_slots] = {};
-    for (bool &used : used_slots) {
-        used = true;
-    }
-
-    const int display_only_full_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false);
-    if (!check(display_only_full_slot == -1,
-               "display-only AV1 frame claimed a DPB setup slot")) {
-        return false;
+        vkvv::av1_set_reference_slot(&session, 2, 378, 6, info);
+        vkvv::av1_set_reference_slot(&session, 3, 378, 6, info);
+        vkvv::av1_set_surface_slot(&session, 378, 6, info);
+        pic.ref_frame_map[2] = 378;
+        for (bool& used : used_slots) {
+            used = false;
+        }
+        vkvv::av1_mark_retained_reference_slots(&session, &input, used_slots);
+        if (!check(used_slots[6], "AV1 surface retained by another VBI index was not protected")) {
+            return false;
+        }
+        vkvv::av1_update_reference_slots_from_refresh(&session, &input, 999, 4, info);
+        return check(vkvv::av1_reference_slot_for_index(&session, 2) != nullptr && vkvv::av1_reference_slot_for_index(&session, 2)->surface_id == 378 &&
+                         vkvv::av1_reference_slot_for_index(&session, 3) != nullptr && vkvv::av1_reference_slot_for_index(&session, 3)->surface_id == 999,
+                     "AV1 refresh update touched the wrong VBI reference index");
     }
 
-    const int full_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
-    if (!check(full_slot == -1,
-               "AV1 target selection claimed a DPB setup slot under full slot pressure")) {
-        return false;
+    bool check_av1_surface_reconciliation() {
+        vkvv::AV1VideoSession          session{};
+        StdVideoDecodeAV1ReferenceInfo info{};
+        info.OrderHint = 38;
+        vkvv::av1_set_surface_slot(&session, 38, 7, info);
+
+        VADecPictureParameterBufferAV1 pic{};
+        for (VASurfaceID& surface : pic.ref_frame_map) {
+            surface = VA_INVALID_ID;
+        }
+        pic.ref_frame_map[1] = 38;
+
+        VkvvAV1DecodeInput input{};
+        input.pic                        = &pic;
+        input.header.refresh_frame_flags = 0x00;
+
+        bool used_slots[vkvv::max_av1_dpb_slots] = {};
+        vkvv::av1_mark_retained_reference_slots(&session, &input, used_slots);
+        if (!check(used_slots[7], "AV1 surface history did not protect a retained ref_frame_map surface with missing VBI entry")) {
+            return false;
+        }
+
+        const vkvv::AV1ReferenceSlot* slot = vkvv::av1_reconcile_reference_slot(&session, 1, 38);
+        if (!check(slot != nullptr && slot->surface_id == 38 && slot->slot == 7 && slot->info.OrderHint == 38,
+                   "AV1 reference reconciliation did not recover a missing VBI entry from surface history")) {
+            return false;
+        }
+
+        slot = vkvv::av1_reference_slot_for_index(&session, 1);
+        return check(slot != nullptr && slot->surface_id == 38 && slot->slot == 7, "AV1 reference reconciliation did not persist the recovered VBI entry");
     }
 
-    used_slots[4] = false;
-    const int display_only_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false);
-    if (!check(display_only_slot == 4,
-               "display-only AV1 frame did not select an available scratch setup slot")) {
-        return false;
+    bool check_av1_target_slot_selection() {
+        vkvv::AV1VideoSession session{};
+        session.max_dpb_slots                    = vkvv::max_av1_dpb_slots;
+        bool used_slots[vkvv::max_av1_dpb_slots] = {};
+        for (bool& used : used_slots) {
+            used = true;
+        }
+
+        const int display_only_full_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false);
+        if (!check(display_only_full_slot == -1, "display-only AV1 frame claimed a DPB setup slot")) {
+            return false;
+        }
+
+        const int full_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
+        if (!check(full_slot == -1, "AV1 target selection claimed a DPB setup slot under full slot pressure")) {
+            return false;
+        }
+
+        used_slots[4]               = false;
+        const int display_only_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false);
+        if (!check(display_only_slot == 4, "display-only AV1 frame did not select an available scratch setup slot")) {
+            return false;
+        }
+
+        used_slots[display_only_slot] = true;
+        used_slots[5]                 = false;
+        const int reference_slot      = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
+        if (!check(reference_slot == 5, "reference AV1 frame did not select the available DPB setup slot")) {
+            return false;
+        }
+
+        vkvv::av1_set_surface_slot(&session, 77, reference_slot, {});
+        for (bool& used : used_slots) {
+            used = false;
+        }
+        used_slots[reference_slot] = true;
+        const int conflicting_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
+        return check(conflicting_slot != reference_slot, "AV1 target slot selection reused an already-used target slot");
     }
 
-    used_slots[display_only_slot] = true;
-    used_slots[5] = false;
-    const int reference_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
-    if (!check(reference_slot == 5,
-               "reference AV1 frame did not select the available DPB setup slot")) {
-        return false;
+    bool check_av1_target_layout_selection() {
+        bool ok = check(vkvv::av1_target_layout(false) == VK_IMAGE_LAYOUT_VIDEO_DECODE_DST_KHR, "AV1 frame without a setup slot did not use decode destination layout");
+        ok      = check(vkvv::av1_target_access(false) == VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR, "AV1 frame without a setup slot did not use write-only decode access") && ok;
+        ok      = check(vkvv::av1_target_layout(true) == VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR, "AV1 frame with a setup slot did not use DPB layout") && ok;
+        ok      = check(vkvv::av1_target_access(true) == (VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR | VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR),
+                        "AV1 frame with a setup slot did not use DPB read/write access") &&
+            ok;
+        return ok;
     }
-
-    vkvv::av1_set_surface_slot(&session, 77, reference_slot, {});
-    for (bool &used : used_slots) {
-        used = false;
-    }
-    used_slots[reference_slot] = true;
-    const int conflicting_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
-    return check(conflicting_slot != reference_slot,
-                 "AV1 target slot selection reused an already-used target slot");
-}
-
-bool check_av1_target_layout_selection() {
-    bool ok = check(vkvv::av1_target_layout(false) == VK_IMAGE_LAYOUT_VIDEO_DECODE_DST_KHR,
-                    "AV1 frame without a setup slot did not use decode destination layout");
-    ok = check(vkvv::av1_target_access(false) == VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR,
-               "AV1 frame without a setup slot did not use write-only decode access") && ok;
-    ok = check(vkvv::av1_target_layout(true) == VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR,
-               "AV1 frame with a setup slot did not use DPB layout") && ok;
-    ok = check(vkvv::av1_target_access(true) ==
-                   (VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR | VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR),
-               "AV1 frame with a setup slot did not use DPB read/write access") && ok;
-    return ok;
-}
 
 } // namespace
 
 int main(void) {
     bool ok = check_av1_dpb_slots();
-    ok = check_av1_refresh_retention() && ok;
-    ok = check_av1_surface_reconciliation() && ok;
-    ok = check_av1_target_slot_selection() && ok;
-    ok = check_av1_target_layout_selection() && ok;
+    ok      = check_av1_refresh_retention() && ok;
+    ok      = check_av1_surface_reconciliation() && ok;
+    ok      = check_av1_target_slot_selection() && ok;
+    ok      = check_av1_target_layout_selection() && ok;
 
-    char reason[512] = {};
-    void *runtime = vkvv_vulkan_runtime_create(reason, sizeof(reason));
+    char  reason[512] = {};
+    void* runtime     = vkvv_vulkan_runtime_create(reason, sizeof(reason));
     std::printf("%s\n", reason);
     if (runtime == nullptr) {
         return 1;
     }
-    auto *typed_runtime = static_cast<vkvv::VulkanRuntime *>(runtime);
-    ok = check(
-        (typed_runtime->enabled_decode_operations & VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR) != 0,
-        "runtime did not enable AV1 through codec-driven selection") && ok;
+    auto* typed_runtime = static_cast<vkvv::VulkanRuntime*>(runtime);
+    ok = check((typed_runtime->enabled_decode_operations & VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR) != 0, "runtime did not enable AV1 through codec-driven selection") && ok;
 
-    void *session = vkvv_vulkan_av1_session_create();
+    void* session = vkvv_vulkan_av1_session_create();
     if (session == nullptr) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
 
-    ok = ensure_session(runtime, session, 64, 64, 64, 64, "AV1 Profile0") && ok;
-    auto *typed_session = static_cast<vkvv::AV1VideoSession *>(session);
+    ok                                 = ensure_session(runtime, session, 64, 64, 64, 64, "AV1 Profile0") && ok;
+    auto*                typed_session = static_cast<vkvv::AV1VideoSession*>(session);
     std::vector<uint8_t> first_upload(256, 0x11);
-    ok = ensure_upload(typed_runtime, typed_session, first_upload) && ok;
-    const VkBuffer first_upload_buffer = typed_session->upload.buffer;
-    const VkDeviceMemory first_upload_memory = typed_session->upload.memory;
-    const VkDeviceSize first_upload_capacity = typed_session->upload.capacity;
+    ok                                         = ensure_upload(typed_runtime, typed_session, first_upload) && ok;
+    const VkBuffer       first_upload_buffer   = typed_session->upload.buffer;
+    const VkDeviceMemory first_upload_memory   = typed_session->upload.memory;
+    const VkDeviceSize   first_upload_capacity = typed_session->upload.capacity;
 
     std::vector<uint8_t> smaller_upload(128, 0x22);
     ok = ensure_upload(typed_runtime, typed_session, smaller_upload) && ok;
-    ok = check(typed_session->upload.buffer == first_upload_buffer &&
-               typed_session->upload.memory == first_upload_memory &&
-               typed_session->upload.capacity == first_upload_capacity,
-               "smaller AV1 upload did not reuse the existing buffer") && ok;
+    ok =
+        check(typed_session->upload.buffer == first_upload_buffer && typed_session->upload.memory == first_upload_memory && typed_session->upload.capacity == first_upload_capacity,
+              "smaller AV1 upload did not reuse the existing buffer") &&
+        ok;
 
-    ok = ensure_session(runtime, session, 640, 360, 640, 368, "AV1 Profile0") && ok;
+    ok                                    = ensure_session(runtime, session, 640, 360, 640, 368, "AV1 Profile0") && ok;
     const VkVideoSessionKHR grown_session = typed_session->video.session;
-    ok = ensure_session(runtime, session, 320, 180, 640, 368, "AV1 Profile0") && ok;
-    ok = check(typed_session->video.session == grown_session, "AV1 session unexpectedly shrank or recreated") && ok;
+    ok                                    = ensure_session(runtime, session, 320, 180, 640, 368, "AV1 Profile0") && ok;
+    ok                                    = check(typed_session->video.session == grown_session, "AV1 session unexpectedly shrank or recreated") && ok;
 
     vkvv_vulkan_av1_session_destroy(runtime, session);
     vkvv_vulkan_runtime_destroy(runtime);

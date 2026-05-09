@@ -4,7 +4,7 @@
 
 int main(void) {
     VkvvVideoCaps caps;
-    const bool ok = vkvv_probe_vulkan_video(&caps);
+    const bool    ok = vkvv_probe_vulkan_video(&caps);
 
     std::puts(caps.summary);
     std::printf("h264=%d\n", caps.h264);
