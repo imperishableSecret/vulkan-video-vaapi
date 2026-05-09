@@ -1,6 +1,7 @@
 #include "vulkan/codecs/h264/api.h"
 #include "vulkan/codecs/h264/internal.h"
 
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
@@ -167,7 +168,9 @@ namespace {
 } // namespace
 
 int main(void) {
-    bool  ok = check_h264_dpb_slots();
+    bool ok = check_h264_dpb_slots();
+
+    unsetenv("VKVV_ENABLE_ENCODE");
 
     char  reason[512] = {};
     void* runtime     = vkvv_vulkan_runtime_create(reason, sizeof(reason));
@@ -181,6 +184,9 @@ int main(void) {
     ok = check((typed_runtime->probed_decode_operations & VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) != 0, "runtime did not record probed H.264 decode support") && ok;
     ok = check(typed_runtime->enabled_encode_operations == 0 && typed_runtime->probed_encode_operations == 0,
                "runtime should keep encode operation sets empty before encode probing is wired") &&
+        ok;
+    ok = check(typed_runtime->encode_queue_family == vkvv::invalid_queue_family && typed_runtime->encode_queue == VK_NULL_HANDLE,
+               "runtime should not create an encode queue while encode is gated off") &&
         ok;
 
     void* session = vkvv_vulkan_h264_session_create();

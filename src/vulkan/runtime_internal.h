@@ -205,62 +205,67 @@ namespace vkvv {
       public:
         ~VulkanRuntime();
 
-        VkInstance                                      instance                  = VK_NULL_HANDLE;
-        VkPhysicalDevice                                physical_device           = VK_NULL_HANDLE;
-        VkDevice                                        device                    = VK_NULL_HANDLE;
-        VkQueue                                         decode_queue              = VK_NULL_HANDLE;
-        uint32_t                                        decode_queue_family       = invalid_queue_family;
-        VkVideoCodecOperationFlagsKHR                   probed_decode_operations  = 0;
-        VkVideoCodecOperationFlagsKHR                   enabled_decode_operations = 0;
-        VkVideoCodecOperationFlagsKHR                   probed_encode_operations  = 0;
-        VkVideoCodecOperationFlagsKHR                   enabled_encode_operations = 0;
-        VkPhysicalDeviceMemoryProperties                memory_properties{};
+        VkInstance                                                  instance                  = VK_NULL_HANDLE;
+        VkPhysicalDevice                                            physical_device           = VK_NULL_HANDLE;
+        VkDevice                                                    device                    = VK_NULL_HANDLE;
+        VkQueue                                                     decode_queue              = VK_NULL_HANDLE;
+        uint32_t                                                    decode_queue_family       = invalid_queue_family;
+        VkQueue                                                     encode_queue              = VK_NULL_HANDLE;
+        uint32_t                                                    encode_queue_family       = invalid_queue_family;
+        VkVideoCodecOperationFlagsKHR                               probed_decode_operations  = 0;
+        VkVideoCodecOperationFlagsKHR                               enabled_decode_operations = 0;
+        VkVideoCodecOperationFlagsKHR                               probed_encode_operations  = 0;
+        VkVideoCodecOperationFlagsKHR                               enabled_encode_operations = 0;
+        VkPhysicalDeviceMemoryProperties                            memory_properties{};
 
-        PFN_vkGetPhysicalDeviceQueueFamilyProperties2   get_queue_family_properties2             = nullptr;
-        PFN_vkGetPhysicalDeviceVideoCapabilitiesKHR     get_video_capabilities                   = nullptr;
-        PFN_vkGetPhysicalDeviceVideoFormatPropertiesKHR get_video_format_properties              = nullptr;
-        PFN_vkCreateVideoSessionKHR                     create_video_session                     = nullptr;
-        PFN_vkDestroyVideoSessionKHR                    destroy_video_session                    = nullptr;
-        PFN_vkGetVideoSessionMemoryRequirementsKHR      get_video_session_memory_requirements    = nullptr;
-        PFN_vkBindVideoSessionMemoryKHR                 bind_video_session_memory                = nullptr;
-        PFN_vkCreateVideoSessionParametersKHR           create_video_session_parameters          = nullptr;
-        PFN_vkDestroyVideoSessionParametersKHR          destroy_video_session_parameters         = nullptr;
-        PFN_vkCmdBeginVideoCodingKHR                    cmd_begin_video_coding                   = nullptr;
-        PFN_vkCmdEndVideoCodingKHR                      cmd_end_video_coding                     = nullptr;
-        PFN_vkCmdControlVideoCodingKHR                  cmd_control_video_coding                 = nullptr;
-        PFN_vkCmdDecodeVideoKHR                         cmd_decode_video                         = nullptr;
-        PFN_vkGetMemoryFdKHR                            get_memory_fd                            = nullptr;
-        PFN_vkGetImageDrmFormatModifierPropertiesEXT    get_image_drm_format_modifier_properties = nullptr;
+        PFN_vkGetPhysicalDeviceQueueFamilyProperties2               get_queue_family_properties2              = nullptr;
+        PFN_vkGetPhysicalDeviceVideoCapabilitiesKHR                 get_video_capabilities                    = nullptr;
+        PFN_vkGetPhysicalDeviceVideoFormatPropertiesKHR             get_video_format_properties               = nullptr;
+        PFN_vkCreateVideoSessionKHR                                 create_video_session                      = nullptr;
+        PFN_vkDestroyVideoSessionKHR                                destroy_video_session                     = nullptr;
+        PFN_vkGetVideoSessionMemoryRequirementsKHR                  get_video_session_memory_requirements     = nullptr;
+        PFN_vkBindVideoSessionMemoryKHR                             bind_video_session_memory                 = nullptr;
+        PFN_vkCreateVideoSessionParametersKHR                       create_video_session_parameters           = nullptr;
+        PFN_vkDestroyVideoSessionParametersKHR                      destroy_video_session_parameters          = nullptr;
+        PFN_vkCmdBeginVideoCodingKHR                                cmd_begin_video_coding                    = nullptr;
+        PFN_vkCmdEndVideoCodingKHR                                  cmd_end_video_coding                      = nullptr;
+        PFN_vkCmdControlVideoCodingKHR                              cmd_control_video_coding                  = nullptr;
+        PFN_vkCmdDecodeVideoKHR                                     cmd_decode_video                          = nullptr;
+        PFN_vkCmdEncodeVideoKHR                                     cmd_encode_video                          = nullptr;
+        PFN_vkGetEncodedVideoSessionParametersKHR                   get_encoded_video_session_parameters      = nullptr;
+        PFN_vkGetPhysicalDeviceVideoEncodeQualityLevelPropertiesKHR get_video_encode_quality_level_properties = nullptr;
+        PFN_vkGetMemoryFdKHR                                        get_memory_fd                             = nullptr;
+        PFN_vkGetImageDrmFormatModifierPropertiesEXT                get_image_drm_format_modifier_properties  = nullptr;
 
-        bool                                            external_memory_fd        = false;
-        bool                                            external_memory_dma_buf   = false;
-        bool                                            image_drm_format_modifier = false;
-        bool                                            surface_export            = false;
-        std::atomic_bool                                device_lost               = false;
+        bool                                                        external_memory_fd        = false;
+        bool                                                        external_memory_dma_buf   = false;
+        bool                                                        image_drm_format_modifier = false;
+        bool                                                        surface_export            = false;
+        std::atomic_bool                                            device_lost               = false;
 
-        bool                                            video_decode_vp9   = false;
-        bool                                            video_maintenance2 = false;
+        bool                                                        video_decode_vp9   = false;
+        bool                                                        video_maintenance2 = false;
 
-        VkCommandPool                                   command_pool                   = VK_NULL_HANDLE;
-        VkCommandBuffer                                 command_buffer                 = VK_NULL_HANDLE;
-        VkFence                                         fence                          = VK_NULL_HANDLE;
-        VkvvSurface*                                    pending_surface                = nullptr;
-        VkVideoSessionParametersKHR                     pending_parameters             = VK_NULL_HANDLE;
-        VkDeviceSize                                    pending_upload_allocation_size = 0;
-        bool                                            pending_displayable            = true;
-        char                                            pending_operation[64]{};
-        std::mutex                                      command_mutex;
-        std::mutex                                      export_mutex;
-        std::vector<ExportResource*>                    predecode_exports;
-        std::vector<RetainedExportBacking>              retained_exports;
-        std::vector<ExportSeedRecord>                   export_seed_records;
-        VkDeviceSize                                    retained_export_memory_bytes  = 0;
-        VkDeviceSize                                    retained_export_memory_budget = 64ull * 1024ull * 1024ull;
-        size_t                                          retained_export_count_limit   = 4;
-        uint64_t                                        retained_export_sequence      = 0;
-        TransitionRetentionWindow                       transition_retention{};
+        VkCommandPool                                               command_pool                   = VK_NULL_HANDLE;
+        VkCommandBuffer                                             command_buffer                 = VK_NULL_HANDLE;
+        VkFence                                                     fence                          = VK_NULL_HANDLE;
+        VkvvSurface*                                                pending_surface                = nullptr;
+        VkVideoSessionParametersKHR                                 pending_parameters             = VK_NULL_HANDLE;
+        VkDeviceSize                                                pending_upload_allocation_size = 0;
+        bool                                                        pending_displayable            = true;
+        char                                                        pending_operation[64]{};
+        std::mutex                                                  command_mutex;
+        std::mutex                                                  export_mutex;
+        std::vector<ExportResource*>                                predecode_exports;
+        std::vector<RetainedExportBacking>                          retained_exports;
+        std::vector<ExportSeedRecord>                               export_seed_records;
+        VkDeviceSize                                                retained_export_memory_bytes  = 0;
+        VkDeviceSize                                                retained_export_memory_budget = 64ull * 1024ull * 1024ull;
+        size_t                                                      retained_export_count_limit   = 4;
+        uint64_t                                                    retained_export_sequence      = 0;
+        TransitionRetentionWindow                                   transition_retention{};
 
-        void                                            destroy_command_resources() {
+        void                                                        destroy_command_resources() {
             if (fence != VK_NULL_HANDLE) {
                 vkDestroyFence(device, fence, nullptr);
                 fence = VK_NULL_HANDLE;

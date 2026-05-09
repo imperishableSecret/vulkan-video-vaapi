@@ -1,6 +1,7 @@
 #include "vulkan/runtime_internal.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <new>
 #include <string>
@@ -9,6 +10,12 @@
 namespace vkvv {
 
     struct RuntimeDecodeCodec {
+        const char*                      name;
+        VkVideoCodecOperationFlagBitsKHR operation;
+        const char*                      extension;
+    };
+
+    struct RuntimeEncodeCodec {
         const char*                      name;
         VkVideoCodecOperationFlagBitsKHR operation;
         const char*                      extension;
@@ -39,10 +46,23 @@ namespace vkvv {
         },
     };
 
-    struct DecodeQueueSelection {
+    constexpr RuntimeEncodeCodec wired_encode_codecs[] = {
+        {
+            "h264",
+            VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
+            VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME,
+        },
+    };
+
+    struct VideoQueueSelection {
         uint32_t                      family     = invalid_queue_family;
         VkVideoCodecOperationFlagsKHR operations = 0;
     };
+
+    bool runtime_encode_enabled() {
+        const char* value = std::getenv("VKVV_ENABLE_ENCODE");
+        return value != nullptr && std::strcmp(value, "0") != 0;
+    }
 
     bool extension_present(const std::vector<VkExtensionProperties>& extensions, const char* name) {
         for (const VkExtensionProperties& extension : extensions) {
@@ -75,6 +95,10 @@ namespace vkvv {
         return extension_present(extensions, VK_KHR_VIDEO_QUEUE_EXTENSION_NAME) && extension_present(extensions, VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME);
     }
 
+    bool has_video_encode_base_extensions(const std::vector<VkExtensionProperties>& extensions) {
+        return extension_present(extensions, VK_KHR_VIDEO_QUEUE_EXTENSION_NAME) && extension_present(extensions, VK_KHR_VIDEO_ENCODE_QUEUE_EXTENSION_NAME);
+    }
+
     VkVideoCodecOperationFlagsKHR device_wired_decode_operations(const std::vector<VkExtensionProperties>& extensions) {
         if (!has_video_decode_base_extensions(extensions)) {
             return 0;
@@ -89,9 +113,33 @@ namespace vkvv {
         return operations;
     }
 
+    VkVideoCodecOperationFlagsKHR device_wired_encode_operations(const std::vector<VkExtensionProperties>& extensions) {
+        if (!runtime_encode_enabled() || !has_video_encode_base_extensions(extensions)) {
+            return 0;
+        }
+
+        VkVideoCodecOperationFlagsKHR operations = 0;
+        for (const RuntimeEncodeCodec& codec : wired_encode_codecs) {
+            if (extension_present(extensions, codec.extension)) {
+                operations |= codec.operation;
+            }
+        }
+        return operations;
+    }
+
     uint32_t count_decode_operations(VkVideoCodecOperationFlagsKHR operations) {
         uint32_t count = 0;
         for (const RuntimeDecodeCodec& codec : wired_decode_codecs) {
+            if ((operations & codec.operation) != 0) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    uint32_t count_encode_operations(VkVideoCodecOperationFlagsKHR operations) {
+        uint32_t count = 0;
+        for (const RuntimeEncodeCodec& codec : wired_encode_codecs) {
             if ((operations & codec.operation) != 0) {
                 count++;
             }
@@ -113,6 +161,20 @@ namespace vkvv {
         return names.empty() ? "none" : names;
     }
 
+    std::string encode_operation_names(VkVideoCodecOperationFlagsKHR operations) {
+        std::string names;
+        for (const RuntimeEncodeCodec& codec : wired_encode_codecs) {
+            if ((operations & codec.operation) == 0) {
+                continue;
+            }
+            if (!names.empty()) {
+                names += ",";
+            }
+            names += codec.name;
+        }
+        return names.empty() ? "none" : names;
+    }
+
     void push_unique_extension(std::vector<const char*>* extensions, const char* extension) {
         for (const char* existing : *extensions) {
             if (std::strcmp(existing, extension) == 0) {
@@ -122,7 +184,7 @@ namespace vkvv {
         extensions->push_back(extension);
     }
 
-    DecodeQueueSelection find_decode_queue_family(VulkanRuntime* runtime, VkPhysicalDevice device, VkVideoCodecOperationFlagsKHR device_operations) {
+    VideoQueueSelection find_decode_queue_family(VulkanRuntime* runtime, VkPhysicalDevice device, VkVideoCodecOperationFlagsKHR device_operations) {
         uint32_t count = 0;
         runtime->get_queue_family_properties2(device, &count, nullptr);
         if (count == 0) {
@@ -138,8 +200,8 @@ namespace vkvv {
         }
         runtime->get_queue_family_properties2(device, &count, queue_props.data());
 
-        DecodeQueueSelection best{};
-        uint32_t             best_score = 0;
+        VideoQueueSelection best{};
+        uint32_t            best_score = 0;
         for (uint32_t i = 0; i < count; i++) {
             const bool has_decode_queue = (queue_props[i].queueFamilyProperties.queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR) != 0;
             if (!has_decode_queue) {
@@ -148,6 +210,45 @@ namespace vkvv {
 
             const VkVideoCodecOperationFlagsKHR queue_operations = video_props[i].videoCodecOperations & device_operations;
             const uint32_t                      score            = count_decode_operations(queue_operations);
+            if (score > best_score) {
+                best.family     = i;
+                best.operations = queue_operations;
+                best_score      = score;
+            }
+        }
+        return best;
+    }
+
+    VideoQueueSelection find_encode_queue_family(VulkanRuntime* runtime, VkPhysicalDevice device, VkVideoCodecOperationFlagsKHR device_operations) {
+        if (device_operations == 0) {
+            return {};
+        }
+
+        uint32_t count = 0;
+        runtime->get_queue_family_properties2(device, &count, nullptr);
+        if (count == 0) {
+            return {};
+        }
+
+        std::vector<VkQueueFamilyProperties2>        queue_props(count);
+        std::vector<VkQueueFamilyVideoPropertiesKHR> video_props(count);
+        for (uint32_t i = 0; i < count; i++) {
+            video_props[i].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_VIDEO_PROPERTIES_KHR;
+            queue_props[i].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2;
+            queue_props[i].pNext = &video_props[i];
+        }
+        runtime->get_queue_family_properties2(device, &count, queue_props.data());
+
+        VideoQueueSelection best{};
+        uint32_t            best_score = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            const bool has_encode_queue = (queue_props[i].queueFamilyProperties.queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) != 0;
+            if (!has_encode_queue) {
+                continue;
+            }
+
+            const VkVideoCodecOperationFlagsKHR queue_operations = video_props[i].videoCodecOperations & device_operations;
+            const uint32_t                      score            = count_encode_operations(queue_operations);
             if (score > best_score) {
                 best.family     = i;
                 best.operations = queue_operations;
@@ -174,15 +275,16 @@ namespace vkvv {
         devices.resize(count);
 
         struct DeviceCandidate {
-            VkPhysicalDevice     device = VK_NULL_HANDLE;
-            DecodeQueueSelection queue{};
-            bool                 video_maintenance2        = false;
-            bool                 external_memory_fd        = false;
-            bool                 external_memory_dma_buf   = false;
-            bool                 image_drm_format_modifier = false;
-            bool                 surface_export            = false;
-            bool                 video_decode_vp9          = false;
-            uint32_t             score                     = 0;
+            VkPhysicalDevice    device = VK_NULL_HANDLE;
+            VideoQueueSelection decode_queue{};
+            VideoQueueSelection encode_queue{};
+            bool                video_maintenance2        = false;
+            bool                external_memory_fd        = false;
+            bool                external_memory_dma_buf   = false;
+            bool                image_drm_format_modifier = false;
+            bool                surface_export            = false;
+            bool                video_decode_vp9          = false;
+            uint32_t            score                     = 0;
         };
 
         DeviceCandidate best{};
@@ -196,9 +298,13 @@ namespace vkvv {
                 continue;
             }
 
-            const DecodeQueueSelection queue = find_decode_queue_family(runtime, device, device_operations);
+            const VideoQueueSelection queue = find_decode_queue_family(runtime, device, device_operations);
             if (queue.family == invalid_queue_family || queue.operations == 0) {
                 continue;
+            }
+            VideoQueueSelection encode_queue{};
+            if (runtime_encode_enabled()) {
+                encode_queue = find_encode_queue_family(runtime, device, device_wired_encode_operations(extensions));
             }
 
             const bool                                has_video_maintenance2        = extension_present(extensions, VK_KHR_VIDEO_MAINTENANCE_2_EXTENSION_NAME);
@@ -225,16 +331,17 @@ namespace vkvv {
             }
 
             const bool     surface_export = has_external_memory_fd && has_external_memory_dma_buf && has_image_drm_format_modifier;
-            const uint32_t score          = count_decode_operations(queue_operations) * 10 + (surface_export ? 1 : 0);
+            const uint32_t score          = count_decode_operations(queue_operations) * 10 + count_encode_operations(encode_queue.operations) + (surface_export ? 1 : 0);
             if (score <= best.score) {
                 continue;
             }
 
-            best.device = device;
-            best.queue  = {
+            best.device       = device;
+            best.decode_queue = {
                 .family     = queue.family,
                 .operations = queue_operations,
             };
+            best.encode_queue              = encode_queue;
             best.video_maintenance2        = has_video_maintenance2 && maintenance2_features.videoMaintenance2;
             best.external_memory_fd        = has_external_memory_fd;
             best.external_memory_dma_buf   = has_external_memory_dma_buf;
@@ -250,11 +357,12 @@ namespace vkvv {
         }
 
         runtime->physical_device           = best.device;
-        runtime->decode_queue_family       = best.queue.family;
-        runtime->probed_decode_operations  = best.queue.operations;
-        runtime->enabled_decode_operations = best.queue.operations;
-        runtime->probed_encode_operations  = 0;
-        runtime->enabled_encode_operations = 0;
+        runtime->decode_queue_family       = best.decode_queue.family;
+        runtime->encode_queue_family       = best.encode_queue.family;
+        runtime->probed_decode_operations  = best.decode_queue.operations;
+        runtime->enabled_decode_operations = best.decode_queue.operations;
+        runtime->probed_encode_operations  = best.encode_queue.operations;
+        runtime->enabled_encode_operations = best.encode_queue.operations;
         runtime->video_maintenance2        = best.video_maintenance2;
         runtime->external_memory_fd        = best.external_memory_fd;
         runtime->external_memory_dma_buf   = best.external_memory_dma_buf;
@@ -267,11 +375,20 @@ namespace vkvv {
 
     bool create_device(VulkanRuntime* runtime, char* reason, size_t reason_size) {
         const float             priority = 1.0f;
-        VkDeviceQueueCreateInfo queue_info{};
-        queue_info.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queue_info.queueFamilyIndex = runtime->decode_queue_family;
-        queue_info.queueCount       = 1;
-        queue_info.pQueuePriorities = &priority;
+        VkDeviceQueueCreateInfo queue_infos[2]{};
+        queue_infos[0].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queue_infos[0].queueFamilyIndex = runtime->decode_queue_family;
+        queue_infos[0].queueCount       = 1;
+        queue_infos[0].pQueuePriorities = &priority;
+
+        uint32_t queue_info_count = 1;
+        if (runtime->enabled_encode_operations != 0 && runtime->encode_queue_family != invalid_queue_family && runtime->encode_queue_family != runtime->decode_queue_family) {
+            queue_infos[1].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queue_infos[1].queueFamilyIndex = runtime->encode_queue_family;
+            queue_infos[1].queueCount       = 1;
+            queue_infos[1].pQueuePriorities = &priority;
+            queue_info_count                = 2;
+        }
 
         std::vector<const char*> extensions;
         push_unique_extension(&extensions, VK_KHR_VIDEO_QUEUE_EXTENSION_NAME);
@@ -279,6 +396,14 @@ namespace vkvv {
         for (const RuntimeDecodeCodec& codec : wired_decode_codecs) {
             if ((runtime->enabled_decode_operations & codec.operation) != 0) {
                 push_unique_extension(&extensions, codec.extension);
+            }
+        }
+        if (runtime->enabled_encode_operations != 0) {
+            push_unique_extension(&extensions, VK_KHR_VIDEO_ENCODE_QUEUE_EXTENSION_NAME);
+            for (const RuntimeEncodeCodec& codec : wired_encode_codecs) {
+                if ((runtime->enabled_encode_operations & codec.operation) != 0) {
+                    push_unique_extension(&extensions, codec.extension);
+                }
             }
         }
         if (runtime->video_maintenance2) {
@@ -320,8 +445,8 @@ namespace vkvv {
         VkDeviceCreateInfo device_info{};
         device_info.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         device_info.pNext                   = &sync2;
-        device_info.queueCreateInfoCount    = 1;
-        device_info.pQueueCreateInfos       = &queue_info;
+        device_info.queueCreateInfoCount    = queue_info_count;
+        device_info.pQueueCreateInfos       = queue_infos;
         device_info.enabledExtensionCount   = static_cast<uint32_t>(extensions.size());
         device_info.ppEnabledExtensionNames = extensions.data();
 
@@ -331,6 +456,9 @@ namespace vkvv {
             return false;
         }
         vkGetDeviceQueue(runtime->device, runtime->decode_queue_family, 0, &runtime->decode_queue);
+        if (runtime->enabled_encode_operations != 0 && runtime->encode_queue_family != invalid_queue_family) {
+            vkGetDeviceQueue(runtime->device, runtime->encode_queue_family, 0, &runtime->encode_queue);
+        }
 
         runtime->create_video_session  = reinterpret_cast<PFN_vkCreateVideoSessionKHR>(vkGetDeviceProcAddr(runtime->device, "vkCreateVideoSessionKHR"));
         runtime->destroy_video_session = reinterpret_cast<PFN_vkDestroyVideoSessionKHR>(vkGetDeviceProcAddr(runtime->device, "vkDestroyVideoSessionKHR"));
@@ -358,6 +486,19 @@ namespace vkvv {
         }
         if (runtime->surface_export && (runtime->get_memory_fd == nullptr || runtime->get_image_drm_format_modifier_properties == nullptr)) {
             runtime->surface_export = false;
+        }
+        if (runtime->enabled_encode_operations != 0) {
+            runtime->cmd_encode_video = reinterpret_cast<PFN_vkCmdEncodeVideoKHR>(vkGetDeviceProcAddr(runtime->device, "vkCmdEncodeVideoKHR"));
+            runtime->get_encoded_video_session_parameters =
+                reinterpret_cast<PFN_vkGetEncodedVideoSessionParametersKHR>(vkGetDeviceProcAddr(runtime->device, "vkGetEncodedVideoSessionParametersKHR"));
+            if (runtime->cmd_encode_video == nullptr || runtime->get_encoded_video_session_parameters == nullptr || runtime->get_video_encode_quality_level_properties == nullptr ||
+                runtime->encode_queue == VK_NULL_HANDLE) {
+                runtime->enabled_encode_operations            = 0;
+                runtime->encode_queue_family                  = invalid_queue_family;
+                runtime->encode_queue                         = VK_NULL_HANDLE;
+                runtime->cmd_encode_video                     = nullptr;
+                runtime->get_encoded_video_session_parameters = nullptr;
+            }
         }
 
         return true;
@@ -396,6 +537,8 @@ void* vkvv_vulkan_runtime_create(char* reason, size_t reason_size) {
             reinterpret_cast<PFN_vkGetPhysicalDeviceVideoCapabilitiesKHR>(vkGetInstanceProcAddr(runtime->instance, "vkGetPhysicalDeviceVideoCapabilitiesKHR"));
         runtime->get_video_format_properties =
             reinterpret_cast<PFN_vkGetPhysicalDeviceVideoFormatPropertiesKHR>(vkGetInstanceProcAddr(runtime->instance, "vkGetPhysicalDeviceVideoFormatPropertiesKHR"));
+        runtime->get_video_encode_quality_level_properties = reinterpret_cast<PFN_vkGetPhysicalDeviceVideoEncodeQualityLevelPropertiesKHR>(
+            vkGetInstanceProcAddr(runtime->instance, "vkGetPhysicalDeviceVideoEncodeQualityLevelPropertiesKHR"));
         if (runtime->get_queue_family_properties2 == nullptr || runtime->get_video_capabilities == nullptr || runtime->get_video_format_properties == nullptr) {
             std::snprintf(reason, reason_size, "required Vulkan Video instance entrypoints unavailable");
             delete runtime;
@@ -412,7 +555,13 @@ void* vkvv_vulkan_runtime_create(char* reason, size_t reason_size) {
         }
 
         const std::string codec_names = codec_operation_names(runtime->enabled_decode_operations);
-        std::snprintf(reason, reason_size, "Vulkan Video runtime ready: queue_family=%u codecs=%s", runtime->decode_queue_family, codec_names.c_str());
+        if (runtime_encode_enabled()) {
+            const std::string encode_names = encode_operation_names(runtime->enabled_encode_operations);
+            std::snprintf(reason, reason_size, "Vulkan Video runtime ready: queue_family=%u codecs=%s encode_queue_family=%u encode_codecs=%s", runtime->decode_queue_family,
+                          codec_names.c_str(), runtime->encode_queue_family, encode_names.c_str());
+        } else {
+            std::snprintf(reason, reason_size, "Vulkan Video runtime ready: queue_family=%u codecs=%s", runtime->decode_queue_family, codec_names.c_str());
+        }
         return runtime;
     } catch (const std::bad_alloc&) {
         std::snprintf(reason, reason_size, "out of memory creating Vulkan runtime");
