@@ -15,7 +15,7 @@ extern "C" {
 
 #define VKVV_MAX_PROFILES           24
 #define VKVV_MAX_ENTRYPOINTS        4
-#define VKVV_MAX_ATTRIBUTES         5
+#define VKVV_MAX_ATTRIBUTES         12
 #define VKVV_MAX_IMAGE_FORMATS      3
 #define VKVV_MAX_FORMAT_VARIANTS    3
 #define VKVV_MAX_SUBPIC_FORMATS     1
@@ -110,6 +110,7 @@ typedef struct VkvvConfig {
     unsigned int       min_height;
     unsigned int       max_width;
     unsigned int       max_height;
+    unsigned int       rate_control;
     bool               exportable;
 } VkvvConfig;
 

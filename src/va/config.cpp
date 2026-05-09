@@ -13,6 +13,24 @@ namespace {
         return false;
     }
 
+    bool is_h264_encode_config(const VkvvProfileCapability* cap) {
+        return cap != NULL && cap->direction == VKVV_CODEC_DIRECTION_ENCODE && cap->profile == VAProfileH264High && cap->entrypoint == VAEntrypointEncSlice;
+    }
+
+    VAStatus validate_h264_encode_config_attrib(const VAConfigAttrib& attrib, unsigned int* rate_control) {
+        switch (attrib.type) {
+            case VAConfigAttribRateControl:
+                if (attrib.value == VA_RC_CQP) {
+                    *rate_control = attrib.value;
+                    return VA_STATUS_SUCCESS;
+                }
+                return VA_STATUS_ERROR_ATTR_NOT_SUPPORTED;
+            case VAConfigAttribEncPackedHeaders: return attrib.value == VA_ENC_PACKED_HEADER_NONE ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_ATTR_NOT_SUPPORTED;
+            case VAConfigAttribEncInterlaced: return attrib.value == VA_ENC_INTERLACED_NONE ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_ATTR_NOT_SUPPORTED;
+            default: return VA_STATUS_SUCCESS;
+        }
+    }
+
 } // namespace
 
 VAStatus vkvvQueryConfigProfiles(VADriverContextP ctx, VAProfile* profile_list, int* num_profiles) {
@@ -74,12 +92,20 @@ VAStatus vkvvCreateConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint 
         return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
     }
 
-    unsigned int rt_format = vkvv_select_rt_format(cap, cap->rt_format);
+    unsigned int rt_format    = vkvv_select_rt_format(cap, cap->rt_format);
+    unsigned int rate_control = cap->direction == VKVV_CODEC_DIRECTION_ENCODE ? VA_RC_CQP : 0;
     for (int i = 0; i < num_attribs; i++) {
         if (attrib_list[i].type == VAConfigAttribRTFormat && attrib_list[i].value != VA_ATTRIB_NOT_SUPPORTED) {
             rt_format = vkvv_select_rt_format(cap, attrib_list[i].value);
             if (rt_format == 0) {
                 return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
+            }
+            continue;
+        }
+        if (is_h264_encode_config(cap) && attrib_list[i].value != VA_ATTRIB_NOT_SUPPORTED) {
+            const VAStatus status = validate_h264_encode_config_attrib(attrib_list[i], &rate_control);
+            if (status != VA_STATUS_SUCCESS) {
+                return status;
             }
         }
     }
@@ -92,18 +118,19 @@ VAStatus vkvvCreateConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint 
     if (config == NULL) {
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
-    config->profile    = profile;
-    config->entrypoint = entrypoint;
-    config->direction  = cap->direction;
-    config->mode       = cap->direction == VKVV_CODEC_DIRECTION_ENCODE ? VKVV_CONTEXT_MODE_ENCODE : VKVV_CONTEXT_MODE_DECODE;
-    config->rt_format  = rt_format;
-    config->fourcc     = format->fourcc;
-    config->bit_depth  = format->bit_depth;
-    config->min_width  = cap->min_width;
-    config->min_height = cap->min_height;
-    config->max_width  = cap->max_width;
-    config->max_height = cap->max_height;
-    config->exportable = format->exportable;
+    config->profile      = profile;
+    config->entrypoint   = entrypoint;
+    config->direction    = cap->direction;
+    config->mode         = cap->direction == VKVV_CODEC_DIRECTION_ENCODE ? VKVV_CONTEXT_MODE_ENCODE : VKVV_CONTEXT_MODE_DECODE;
+    config->rt_format    = rt_format;
+    config->fourcc       = format->fourcc;
+    config->bit_depth    = format->bit_depth;
+    config->min_width    = cap->min_width;
+    config->min_height   = cap->min_height;
+    config->max_width    = cap->max_width;
+    config->max_height   = cap->max_height;
+    config->rate_control = rate_control;
+    config->exportable   = format->exportable;
 
     *config_id = vkvv_object_add(drv, VKVV_OBJECT_CONFIG, config);
     if (*config_id == VA_INVALID_ID) {

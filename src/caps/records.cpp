@@ -9,10 +9,12 @@ namespace {
 
     constexpr unsigned int   fallback_min_surface_dimension        = 1;
     constexpr unsigned int   fallback_max_decode_surface_dimension = 4096;
-    constexpr unsigned int   config_attribute_count                = 5;
+    constexpr unsigned int   config_attribute_count                = 12;
 
     const VAConfigAttribType config_attribute_types[config_attribute_count] = {
-        VAConfigAttribRTFormat, VAConfigAttribDecSliceMode, VAConfigAttribMaxPictureWidth, VAConfigAttribMaxPictureHeight, VAConfigAttribDecAV1Features,
+        VAConfigAttribRTFormat,        VAConfigAttribDecSliceMode, VAConfigAttribMaxPictureWidth,   VAConfigAttribMaxPictureHeight,
+        VAConfigAttribDecAV1Features,  VAConfigAttribRateControl,  VAConfigAttribEncPackedHeaders,  VAConfigAttribEncInterlaced,
+        VAConfigAttribEncMaxRefFrames, VAConfigAttribEncMaxSlices, VAConfigAttribEncSliceStructure, VAConfigAttribEncQualityRange,
     };
 
     VkvvVideoProfileLimits normalized_limits(VkvvVideoProfileLimits limits) {
@@ -111,6 +113,17 @@ namespace {
     bool encode_advertising_enabled(void) {
         const char* value = std::getenv("VKVV_ENABLE_ENCODE");
         return value != NULL && std::strcmp(value, "0") != 0;
+    }
+
+    bool is_h264_encode_capability(const VkvvProfileCapability* cap) {
+        return cap != NULL && cap->direction == VKVV_CODEC_DIRECTION_ENCODE && cap->profile == VAProfileH264High && cap->entrypoint == VAEntrypointEncSlice;
+    }
+
+    unsigned int h264_encode_max_ref_frames(const VkvvProfileCapability* cap) {
+        if (!is_h264_encode_capability(cap)) {
+            return 0;
+        }
+        return 1;
     }
 
     void add_av1_profile0(VkvvDriver* drv) {
@@ -230,6 +243,13 @@ void vkvv_fill_config_attribute(const VkvvProfileCapability* cap, VAConfigAttrib
         case VAConfigAttribDecSliceMode: attrib->value = cap->direction == VKVV_CODEC_DIRECTION_DECODE ? VA_DEC_SLICE_MODE_NORMAL : VA_ATTRIB_NOT_SUPPORTED; break;
         case VAConfigAttribMaxPictureWidth: attrib->value = cap->max_width; break;
         case VAConfigAttribMaxPictureHeight: attrib->value = cap->max_height; break;
+        case VAConfigAttribRateControl: attrib->value = is_h264_encode_capability(cap) ? VA_RC_CQP : VA_ATTRIB_NOT_SUPPORTED; break;
+        case VAConfigAttribEncPackedHeaders: attrib->value = is_h264_encode_capability(cap) ? VA_ENC_PACKED_HEADER_NONE : VA_ATTRIB_NOT_SUPPORTED; break;
+        case VAConfigAttribEncInterlaced: attrib->value = is_h264_encode_capability(cap) ? VA_ENC_INTERLACED_NONE : VA_ATTRIB_NOT_SUPPORTED; break;
+        case VAConfigAttribEncMaxRefFrames: attrib->value = is_h264_encode_capability(cap) ? h264_encode_max_ref_frames(cap) : VA_ATTRIB_NOT_SUPPORTED; break;
+        case VAConfigAttribEncMaxSlices: attrib->value = is_h264_encode_capability(cap) ? 1 : VA_ATTRIB_NOT_SUPPORTED; break;
+        case VAConfigAttribEncSliceStructure: attrib->value = is_h264_encode_capability(cap) ? VA_ENC_SLICE_STRUCTURE_ARBITRARY_MACROBLOCKS : VA_ATTRIB_NOT_SUPPORTED; break;
+        case VAConfigAttribEncQualityRange: attrib->value = is_h264_encode_capability(cap) ? 1 : VA_ATTRIB_NOT_SUPPORTED; break;
         case VAConfigAttribDecAV1Features:
             if (cap->direction == VKVV_CODEC_DIRECTION_DECODE && cap->profile == VAProfileAV1Profile0 && cap->entrypoint == VAEntrypointVLD) {
                 VAConfigAttribValDecAV1Features features = {};

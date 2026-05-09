@@ -574,6 +574,18 @@ int main(void) {
                    !h264_encode->formats[0].exportable,
                "H.264 EncSlice should expose one non-exportable NV12 encode format") &&
         ok;
+    VAConfigAttrib h264_rate_control{};
+    h264_rate_control.type = VAConfigAttribRateControl;
+    vkvv_fill_config_attribute(h264_encode, &h264_rate_control);
+    ok = check(h264_rate_control.value == VA_RC_CQP, "H.264 EncSlice should advertise CQP only") && ok;
+    VAConfigAttrib h264_max_slices{};
+    h264_max_slices.type = VAConfigAttribEncMaxSlices;
+    vkvv_fill_config_attribute(h264_encode, &h264_max_slices);
+    ok = check(h264_max_slices.value == 1, "H.264 EncSlice should advertise one slice") && ok;
+    VAConfigAttrib h264_packed_headers{};
+    h264_packed_headers.type = VAConfigAttribEncPackedHeaders;
+    vkvv_fill_config_attribute(h264_encode, &h264_packed_headers);
+    ok = check(h264_packed_headers.value == VA_ENC_PACKED_HEADER_NONE, "H.264 EncSlice should not advertise packed headers yet") && ok;
     ok = check(vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointEncSlice) == h264_encode, "H.264 EncSlice should be advertised") && ok;
     ok = check(vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointEncSliceLP) == nullptr, "H.264 EncSliceLP must remain hidden") && ok;
     ok = check(vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointEncPicture) == nullptr, "H.264 EncPicture must remain hidden") && ok;

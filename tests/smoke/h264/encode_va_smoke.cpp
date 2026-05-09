@@ -51,6 +51,14 @@ namespace {
         return false;
     }
 
+    bool expect_va(VAStatus status, VAStatus expected, const char* operation) {
+        if (status == expected) {
+            return true;
+        }
+        std::fprintf(stderr, "%s returned %s (%d), expected %s (%d)\n", operation, vaErrorStr(status), status, vaErrorStr(expected), expected);
+        return false;
+    }
+
     bool entrypoint_present(const VAEntrypoint* entrypoints, int count, VAEntrypoint expected) {
         for (int i = 0; i < count; i++) {
             if (entrypoints[i] == expected) {
@@ -158,11 +166,38 @@ int main(void) {
     ok             = check_va(vaGetConfigAttributes(display, VAProfileH264High, VAEntrypointEncSlice, &rt_attrib, 1), "vaGetConfigAttributes(H264 EncSlice)") && ok;
     ok             = check((rt_attrib.value & VA_RT_FORMAT_YUV420) != 0, "H.264 EncSlice did not expose YUV420 RTFormat") && ok;
 
-    VAConfigAttrib create_attrib{};
-    create_attrib.type  = VAConfigAttribRTFormat;
-    create_attrib.value = VA_RT_FORMAT_YUV420;
-    VAConfigID config   = VA_INVALID_ID;
-    ok                  = check_va(vaCreateConfig(display, VAProfileH264High, VAEntrypointEncSlice, &create_attrib, 1, &config), "vaCreateConfig(H264 EncSlice)") && ok;
+    VAConfigAttrib encode_attribs[6]{};
+    encode_attribs[0].type = VAConfigAttribRateControl;
+    encode_attribs[1].type = VAConfigAttribEncMaxRefFrames;
+    encode_attribs[2].type = VAConfigAttribEncMaxSlices;
+    encode_attribs[3].type = VAConfigAttribEncSliceStructure;
+    encode_attribs[4].type = VAConfigAttribEncQualityRange;
+    encode_attribs[5].type = VAConfigAttribEncPackedHeaders;
+    ok                     = check_va(vaGetConfigAttributes(display, VAProfileH264High, VAEntrypointEncSlice, encode_attribs, 6), "vaGetConfigAttributes(H264 encode attrs)") && ok;
+    ok                     = check(encode_attribs[0].value == VA_RC_CQP, "H.264 EncSlice should expose CQP only") && ok;
+    ok                     = check((encode_attribs[1].value & 0xffffu) >= 1, "H.264 EncSlice should expose at least one L0 reference") && ok;
+    ok                     = check(encode_attribs[2].value == 1, "H.264 EncSlice should expose one slice") && ok;
+    ok                     = check((encode_attribs[3].value & VA_ENC_SLICE_STRUCTURE_ARBITRARY_MACROBLOCKS) != 0, "H.264 EncSlice should expose macroblock slice structure") && ok;
+    ok                     = check(encode_attribs[4].value == 1, "H.264 EncSlice should expose one quality level") && ok;
+    ok                     = check(encode_attribs[5].value == VA_ENC_PACKED_HEADER_NONE, "H.264 EncSlice should not expose packed headers yet") && ok;
+
+    VAConfigAttrib cbr_attribs[2]{};
+    cbr_attribs[0].type   = VAConfigAttribRTFormat;
+    cbr_attribs[0].value  = VA_RT_FORMAT_YUV420;
+    cbr_attribs[1].type   = VAConfigAttribRateControl;
+    cbr_attribs[1].value  = VA_RC_CBR;
+    VAConfigID bad_config = VA_INVALID_ID;
+    ok                    = expect_va(vaCreateConfig(display, VAProfileH264High, VAEntrypointEncSlice, cbr_attribs, 2, &bad_config), VA_STATUS_ERROR_ATTR_NOT_SUPPORTED,
+                                      "vaCreateConfig(H264 EncSlice CBR)") &&
+        ok;
+
+    VAConfigAttrib create_attribs[2]{};
+    create_attribs[0].type  = VAConfigAttribRTFormat;
+    create_attribs[0].value = VA_RT_FORMAT_YUV420;
+    create_attribs[1].type  = VAConfigAttribRateControl;
+    create_attribs[1].value = VA_RC_CQP;
+    VAConfigID config       = VA_INVALID_ID;
+    ok                      = check_va(vaCreateConfig(display, VAProfileH264High, VAEntrypointEncSlice, create_attribs, 2, &config), "vaCreateConfig(H264 EncSlice CQP)") && ok;
 
     VASurfaceID surfaces[2] = {VA_INVALID_SURFACE, VA_INVALID_SURFACE};
     VAContextID context     = VA_INVALID_ID;
