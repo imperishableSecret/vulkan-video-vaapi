@@ -57,7 +57,8 @@ bool detached_memory_present(
         VkDeviceMemory memory,
         uint64_t driver_instance_id,
         VASurfaceID surface_id) {
-    for (const vkvv::ExportResource &resource : runtime->detached_exports) {
+    for (const vkvv::RetainedExportBacking &backing : runtime->retained_exports) {
+        const vkvv::ExportResource &resource = backing.resource;
         if (resource.memory == memory &&
             resource.driver_instance_id == driver_instance_id &&
             resource.owner_surface_id == surface_id) {
@@ -971,9 +972,9 @@ int main(void) {
     }
     const int refreshed_fd = refreshed_descriptor.objects[0].fd;
     vkvv_vulkan_surface_destroy(runtime, &surface);
-    if (typed_runtime->detached_exports.empty() ||
-        typed_runtime->detached_export_memory_bytes == 0 ||
-        typed_runtime->detached_exports.back().memory != first_export_memory) {
+    if (typed_runtime->retained_exports.empty() ||
+        typed_runtime->retained_export_memory_bytes == 0 ||
+        typed_runtime->retained_exports.back().resource.memory != first_export_memory) {
         std::fprintf(stderr, "destroying the VA surface should detach the exported shadow image into the runtime pool\n");
         if (first_fd >= 0) {
             close(first_fd);
@@ -999,8 +1000,8 @@ int main(void) {
         return 1;
     }
 
-    const VkDeviceSize detached_bytes_before_reattach = typed_runtime->detached_export_memory_bytes;
-    const size_t detached_count_before_reattach = typed_runtime->detached_exports.size();
+    const VkDeviceSize detached_bytes_before_reattach = typed_runtime->retained_export_memory_bytes;
+    const size_t detached_count_before_reattach = typed_runtime->retained_exports.size();
     VkvvSurface replacement{};
     replacement.id = surface.id;
     replacement.driver_instance_id = surface.driver_instance_id;
@@ -1020,9 +1021,9 @@ int main(void) {
         replacement_resource->export_resource.layout != VK_IMAGE_LAYOUT_GENERAL ||
         first_export_size == 0 ||
         detached_bytes_before_reattach < first_export_size ||
-        typed_runtime->detached_export_memory_bytes + first_export_size != detached_bytes_before_reattach ||
+        typed_runtime->retained_export_memory_bytes + first_export_size != detached_bytes_before_reattach ||
         detached_count_before_reattach == 0 ||
-        typed_runtime->detached_exports.size() + 1 != detached_count_before_reattach) {
+        typed_runtime->retained_exports.size() + 1 != detached_count_before_reattach) {
         std::fprintf(stderr, "replacement VA surface did not reattach its detached exported shadow image\n");
         if (first_fd >= 0) {
             close(first_fd);

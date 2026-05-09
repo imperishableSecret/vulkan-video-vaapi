@@ -130,7 +130,7 @@ size_t runtime_detached_export_count(VulkanRuntime *runtime) {
         return 0;
     }
     std::lock_guard<std::mutex> lock(runtime->export_mutex);
-    return runtime->detached_exports.size();
+    return runtime->retained_exports.size();
 }
 
 VkDeviceSize runtime_detached_export_memory_bytes(VulkanRuntime *runtime) {
@@ -138,18 +138,18 @@ VkDeviceSize runtime_detached_export_memory_bytes(VulkanRuntime *runtime) {
         return 0;
     }
     std::lock_guard<std::mutex> lock(runtime->export_mutex);
-    return runtime->detached_export_memory_bytes;
+    return runtime->retained_export_memory_bytes;
 }
 
 void VulkanRuntime::destroy_detached_export_resources() {
     std::lock_guard<std::mutex> lock(export_mutex);
     predecode_exports.clear();
     export_seed_records.clear();
-    for (ExportResource &resource : detached_exports) {
-        destroy_export_resource(this, &resource);
+    for (RetainedExportBacking &backing : retained_exports) {
+        destroy_export_resource(this, &backing.resource);
     }
-    detached_exports.clear();
-    detached_export_memory_bytes = 0;
+    retained_exports.clear();
+    retained_export_memory_bytes = 0;
 }
 
 void unregister_predecode_export_resource_locked(VulkanRuntime *runtime, ExportResource *resource) {
@@ -184,45 +184,48 @@ void prune_detached_export_resources_locked(VulkanRuntime *runtime) {
         return;
     }
 
-    while (!runtime->detached_exports.empty() &&
-           (runtime->detached_exports.size() > runtime->detached_export_count_limit ||
-            runtime->detached_export_memory_bytes > runtime->detached_export_memory_budget)) {
-        ExportResource &oldest = runtime->detached_exports.front();
+    while (!runtime->retained_exports.empty() &&
+           (runtime->retained_exports.size() > runtime->retained_export_count_limit ||
+            runtime->retained_export_memory_bytes > runtime->retained_export_memory_budget)) {
+        RetainedExportBacking &oldest_backing = runtime->retained_exports.front();
+        ExportResource &oldest = oldest_backing.resource;
         const VkDeviceSize bytes = oldest.allocation_size;
-        vkvv_trace("detached-export-prune",
-                   "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx bytes=%llu fd_stat=%u fd_dev=%llu fd_ino=%llu detached=%zu detached_mem=%llu limit=%zu budget=%llu",
+        oldest_backing.state = RetainedExportState::Expired;
+        vkvv_trace("retained-export-prune",
+                   "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx bytes=%llu fd_stat=%u fd_dev=%llu fd_ino=%llu retained=%zu retained_mem=%llu limit=%zu budget=%llu",
                    oldest.owner_surface_id,
                    static_cast<unsigned long long>(oldest.driver_instance_id),
                    static_cast<unsigned long long>(oldest.stream_id),
                    oldest.codec_operation,
                    vkvv_trace_handle(oldest.memory),
                    static_cast<unsigned long long>(bytes),
-                   oldest.fd_stat_valid ? 1U : 0U,
-                   static_cast<unsigned long long>(oldest.fd_dev),
-                   static_cast<unsigned long long>(oldest.fd_ino),
-                   runtime->detached_exports.size(),
-                   static_cast<unsigned long long>(runtime->detached_export_memory_bytes),
-                   runtime->detached_export_count_limit,
-                   static_cast<unsigned long long>(runtime->detached_export_memory_budget));
+                   oldest_backing.fd.valid ? 1U : 0U,
+                   static_cast<unsigned long long>(oldest_backing.fd.dev),
+                   static_cast<unsigned long long>(oldest_backing.fd.ino),
+                   runtime->retained_exports.size(),
+                   static_cast<unsigned long long>(runtime->retained_export_memory_bytes),
+                   runtime->retained_export_count_limit,
+                   static_cast<unsigned long long>(runtime->retained_export_memory_budget));
         destroy_export_resource(runtime, &oldest);
-        runtime->detached_exports.erase(runtime->detached_exports.begin());
-        runtime->detached_export_memory_bytes =
-            runtime->detached_export_memory_bytes > bytes ?
-                runtime->detached_export_memory_bytes - bytes : 0;
+        runtime->retained_exports.erase(runtime->retained_exports.begin());
+        runtime->retained_export_memory_bytes =
+            runtime->retained_export_memory_bytes > bytes ?
+                runtime->retained_export_memory_bytes - bytes : 0;
     }
 }
 
 bool detached_export_same_owner(
-        const ExportResource &resource,
+        const RetainedExportBacking &backing,
         uint64_t driver_instance_id,
         VASurfaceID surface_id) {
+    const ExportResource &resource = backing.resource;
     return driver_instance_id != 0 &&
            resource.driver_instance_id == driver_instance_id &&
            resource.owner_surface_id == surface_id;
 }
 
 bool detached_export_exact_match(
-        const ExportResource &resource,
+        const RetainedExportBacking &backing,
         uint64_t driver_instance_id,
         VASurfaceID surface_id,
         uint64_t stream_id,
@@ -230,8 +233,9 @@ bool detached_export_exact_match(
         unsigned int va_fourcc,
         VkFormat format,
         VkExtent2D coded_extent) {
+    const ExportResource &resource = backing.resource;
     return format != VK_FORMAT_UNDEFINED &&
-           detached_export_same_owner(resource, driver_instance_id, surface_id) &&
+           detached_export_same_owner(backing, driver_instance_id, surface_id) &&
            resource.stream_id == stream_id &&
            resource.codec_operation == codec_operation &&
            resource.va_fourcc == va_fourcc &&
@@ -241,13 +245,15 @@ bool detached_export_exact_match(
 }
 
 void remove_detached_export_locked(VulkanRuntime *runtime, size_t index) {
-    ExportResource &resource = runtime->detached_exports[index];
+    RetainedExportBacking &backing = runtime->retained_exports[index];
+    ExportResource &resource = backing.resource;
     const VkDeviceSize bytes = resource.allocation_size;
+    backing.state = RetainedExportState::Expired;
     destroy_export_resource(runtime, &resource);
-    runtime->detached_exports.erase(runtime->detached_exports.begin() + static_cast<std::ptrdiff_t>(index));
-    runtime->detached_export_memory_bytes =
-        runtime->detached_export_memory_bytes > bytes ?
-            runtime->detached_export_memory_bytes - bytes : 0;
+    runtime->retained_exports.erase(runtime->retained_exports.begin() + static_cast<std::ptrdiff_t>(index));
+    runtime->retained_export_memory_bytes =
+        runtime->retained_export_memory_bytes > bytes ?
+            runtime->retained_export_memory_bytes - bytes : 0;
 }
 
 void prune_detached_exports_for_surface(
@@ -264,10 +270,10 @@ void prune_detached_exports_for_surface(
     }
 
     std::lock_guard<std::mutex> lock(runtime->export_mutex);
-    for (size_t i = 0; i < runtime->detached_exports.size();) {
-        const ExportResource &resource = runtime->detached_exports[i];
-        if (detached_export_same_owner(resource, driver_instance_id, surface_id) &&
-            !detached_export_exact_match(resource, driver_instance_id, surface_id,
+    for (size_t i = 0; i < runtime->retained_exports.size();) {
+        const RetainedExportBacking &backing = runtime->retained_exports[i];
+        if (detached_export_same_owner(backing, driver_instance_id, surface_id) &&
+            !detached_export_exact_match(backing, driver_instance_id, surface_id,
                                          stream_id, codec_operation, va_fourcc, format, coded_extent)) {
             remove_detached_export_locked(runtime, i);
             continue;
@@ -282,8 +288,8 @@ void prune_detached_exports_for_driver(VulkanRuntime *runtime, uint64_t driver_i
     }
 
     std::lock_guard<std::mutex> lock(runtime->export_mutex);
-    for (size_t i = 0; i < runtime->detached_exports.size();) {
-        if (runtime->detached_exports[i].driver_instance_id == driver_instance_id) {
+    for (size_t i = 0; i < runtime->retained_exports.size();) {
+        if (runtime->retained_exports[i].resource.driver_instance_id == driver_instance_id) {
             remove_detached_export_locked(runtime, i);
             continue;
         }
@@ -298,7 +304,9 @@ void detach_export_resource(VulkanRuntime *runtime, SurfaceResource *resource) {
     }
 
     unregister_predecode_export_resource(runtime, &resource->export_resource);
-    ExportResource detached = resource->export_resource;
+    RetainedExportBacking backing{};
+    ExportResource &detached = backing.resource;
+    detached = resource->export_resource;
     resource->export_resource = {};
     detached.driver_instance_id = resource->driver_instance_id;
     detached.stream_id = resource->stream_id;
@@ -311,8 +319,8 @@ void detach_export_resource(VulkanRuntime *runtime, SurfaceResource *resource) {
 
     std::lock_guard<std::mutex> lock(runtime->export_mutex);
     try {
-        for (size_t i = 0; i < runtime->detached_exports.size();) {
-            if (detached_export_same_owner(runtime->detached_exports[i],
+        for (size_t i = 0; i < runtime->retained_exports.size();) {
+            if (detached_export_same_owner(runtime->retained_exports[i],
                                            detached.driver_instance_id,
                                            detached.owner_surface_id)) {
                 remove_detached_export_locked(runtime, i);
@@ -320,8 +328,25 @@ void detach_export_resource(VulkanRuntime *runtime, SurfaceResource *resource) {
             }
             i++;
         }
-        runtime->detached_exports.push_back(detached);
-        runtime->detached_export_memory_bytes += detached.allocation_size;
+        backing.fd = retained_export_fd_identity(detached);
+        backing.state = RetainedExportState::Detached;
+        backing.retained_sequence = ++runtime->retained_export_sequence;
+        runtime->retained_export_memory_bytes += detached.allocation_size;
+        vkvv_trace("retained-export-add",
+                   "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx bytes=%llu fd_stat=%u fd_dev=%llu fd_ino=%llu retained=%zu retained_mem=%llu seq=%llu",
+                   detached.owner_surface_id,
+                   static_cast<unsigned long long>(detached.driver_instance_id),
+                   static_cast<unsigned long long>(detached.stream_id),
+                   detached.codec_operation,
+                   vkvv_trace_handle(detached.memory),
+                   static_cast<unsigned long long>(detached.allocation_size),
+                   backing.fd.valid ? 1U : 0U,
+                   static_cast<unsigned long long>(backing.fd.dev),
+                   static_cast<unsigned long long>(backing.fd.ino),
+                   runtime->retained_exports.size() + 1,
+                   static_cast<unsigned long long>(runtime->retained_export_memory_bytes),
+                   static_cast<unsigned long long>(backing.retained_sequence));
+        runtime->retained_exports.push_back(std::move(backing));
         prune_detached_export_resources_locked(runtime);
     } catch (...) {
         destroy_export_resource(runtime, &detached);

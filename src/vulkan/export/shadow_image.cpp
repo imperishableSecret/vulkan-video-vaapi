@@ -452,25 +452,27 @@ bool ensure_export_resource(VulkanRuntime *runtime, SurfaceResource *source, cha
                                            source->coded_extent);
         {
             std::lock_guard<std::mutex> lock(runtime->export_mutex);
-            for (auto it = runtime->detached_exports.begin(); it != runtime->detached_exports.end(); ++it) {
-                if (it->driver_instance_id == source->driver_instance_id &&
-                    it->owner_surface_id == source->surface_id &&
-                    it->stream_id == source->stream_id &&
-                    it->codec_operation == source->codec_operation &&
-                    it->format == source->format &&
-                    it->va_fourcc == source->va_fourcc &&
-                    it->extent.width == source->coded_extent.width &&
-                    it->extent.height == source->coded_extent.height) {
-                    *resource = *it;
+            for (auto it = runtime->retained_exports.begin(); it != runtime->retained_exports.end(); ++it) {
+                ExportResource &retained = it->resource;
+                if (retained.driver_instance_id == source->driver_instance_id &&
+                    retained.owner_surface_id == source->surface_id &&
+                    retained.stream_id == source->stream_id &&
+                    retained.codec_operation == source->codec_operation &&
+                    retained.format == source->format &&
+                    retained.va_fourcc == source->va_fourcc &&
+                    retained.extent.width == source->coded_extent.width &&
+                    retained.extent.height == source->coded_extent.height) {
+                    *resource = retained;
                     resource->driver_instance_id = source->driver_instance_id;
                     resource->stream_id = source->stream_id;
                     resource->codec_operation = source->codec_operation;
                     resource->owner_surface_id = source->surface_id;
                     resource->content_generation = 0;
-                    runtime->detached_export_memory_bytes =
-                        runtime->detached_export_memory_bytes > resource->allocation_size ?
-                            runtime->detached_export_memory_bytes - resource->allocation_size : 0;
-                    runtime->detached_exports.erase(it);
+                    it->state = RetainedExportState::Attached;
+                    runtime->retained_export_memory_bytes =
+                        runtime->retained_export_memory_bytes > resource->allocation_size ?
+                            runtime->retained_export_memory_bytes - resource->allocation_size : 0;
+                    runtime->retained_exports.erase(it);
                     reattached = true;
                     break;
                 }
@@ -524,18 +526,25 @@ bool attach_imported_export_resource_by_fd(VulkanRuntime *runtime, SurfaceResour
     }
 
     std::lock_guard<std::mutex> lock(runtime->export_mutex);
-    for (auto it = runtime->detached_exports.begin(); it != runtime->detached_exports.end(); ++it) {
-        if (!it->fd_stat_valid ||
-            it->fd_dev != source->import.fd.dev ||
-            it->fd_ino != source->import.fd.ino ||
-            it->va_fourcc != source->va_fourcc ||
-            it->format != source->format ||
-            it->extent.width < source->coded_extent.width ||
-            it->extent.height < source->coded_extent.height) {
+    RetainedExportMatch best_miss = RetainedExportMatch::FdMismatch;
+    bool saw_backing = false;
+    for (auto it = runtime->retained_exports.begin(); it != runtime->retained_exports.end(); ++it) {
+        saw_backing = true;
+        const RetainedExportMatch match =
+            retained_export_match_import(*it,
+                                         source->import,
+                                         source->va_fourcc,
+                                         source->format,
+                                         source->coded_extent);
+        if (match != RetainedExportMatch::Match) {
+            if (match != RetainedExportMatch::FdMismatch) {
+                best_miss = match;
+            }
             continue;
         }
 
-        source->export_resource = *it;
+        ExportResource &retained = it->resource;
+        source->export_resource = retained;
         source->export_resource.driver_instance_id = source->driver_instance_id;
         source->export_resource.stream_id = source->stream_id;
         source->export_resource.codec_operation = source->codec_operation;
@@ -545,31 +554,33 @@ bool attach_imported_export_resource_by_fd(VulkanRuntime *runtime, SurfaceResour
         source->export_resource.black_placeholder = false;
         source->export_resource.seed_source_surface_id = VA_INVALID_ID;
         source->export_resource.seed_source_generation = 0;
-        runtime->detached_export_memory_bytes =
-            runtime->detached_export_memory_bytes > source->export_resource.allocation_size ?
-                runtime->detached_export_memory_bytes - source->export_resource.allocation_size : 0;
+        it->state = RetainedExportState::Attached;
+        runtime->retained_export_memory_bytes =
+            runtime->retained_export_memory_bytes > source->export_resource.allocation_size ?
+                runtime->retained_export_memory_bytes - source->export_resource.allocation_size : 0;
         vkvv_trace("export-import-attach",
-                   "surface=%u driver=%llu stream=%llu codec=0x%x import_fd_dev=%llu import_fd_ino=%llu old_owner=%u old_driver=%llu old_stream=%llu old_codec=0x%x shadow_mem=0x%llx shadow_gen=%llu detached=%zu detached_mem=%llu",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x import_fd_dev=%llu import_fd_ino=%llu old_owner=%u old_driver=%llu old_stream=%llu old_codec=0x%x shadow_mem=0x%llx shadow_gen=%llu retained=%zu retained_mem=%llu seq=%llu",
                    source->surface_id,
                    static_cast<unsigned long long>(source->driver_instance_id),
                    static_cast<unsigned long long>(source->stream_id),
                    source->codec_operation,
                    static_cast<unsigned long long>(source->import.fd.dev),
                    static_cast<unsigned long long>(source->import.fd.ino),
-                   it->owner_surface_id,
-                   static_cast<unsigned long long>(it->driver_instance_id),
-                   static_cast<unsigned long long>(it->stream_id),
-                   it->codec_operation,
+                   retained.owner_surface_id,
+                   static_cast<unsigned long long>(retained.driver_instance_id),
+                   static_cast<unsigned long long>(retained.stream_id),
+                   retained.codec_operation,
                    vkvv_trace_handle(source->export_resource.memory),
                    static_cast<unsigned long long>(source->export_resource.content_generation),
-                   runtime->detached_exports.size() - 1,
-                   static_cast<unsigned long long>(runtime->detached_export_memory_bytes));
-        runtime->detached_exports.erase(it);
+                   runtime->retained_exports.size() - 1,
+                   static_cast<unsigned long long>(runtime->retained_export_memory_bytes),
+                   static_cast<unsigned long long>(it->retained_sequence));
+        runtime->retained_exports.erase(it);
         return true;
     }
 
     vkvv_trace("export-import-attach-miss",
-               "surface=%u driver=%llu stream=%llu codec=0x%x import_fd_dev=%llu import_fd_ino=%llu format=%d fourcc=0x%x extent=%ux%u detached=%zu detached_mem=%llu",
+               "surface=%u driver=%llu stream=%llu codec=0x%x import_fd_dev=%llu import_fd_ino=%llu format=%d fourcc=0x%x extent=%ux%u retained=%zu retained_mem=%llu reason=%s",
                source->surface_id,
                static_cast<unsigned long long>(source->driver_instance_id),
                static_cast<unsigned long long>(source->stream_id),
@@ -580,8 +591,9 @@ bool attach_imported_export_resource_by_fd(VulkanRuntime *runtime, SurfaceResour
                source->va_fourcc,
                source->coded_extent.width,
                source->coded_extent.height,
-               runtime->detached_exports.size(),
-               static_cast<unsigned long long>(runtime->detached_export_memory_bytes));
+               runtime->retained_exports.size(),
+               static_cast<unsigned long long>(runtime->retained_export_memory_bytes),
+               saw_backing ? retained_export_match_reason(best_miss) : "no-retained-backing");
     return false;
 }
 
@@ -849,9 +861,9 @@ std::vector<ExportResource *> collect_predecode_seed_targets_locked(
             targets.push_back(resource);
         }
     }
-    for (ExportResource &resource : runtime->detached_exports) {
-        if (predecode_seed_target_matches(&resource, source)) {
-            targets.push_back(&resource);
+    for (RetainedExportBacking &backing : runtime->retained_exports) {
+        if (predecode_seed_target_matches(&backing.resource, source)) {
+            targets.push_back(&backing.resource);
         }
     }
     return targets;
@@ -878,9 +890,9 @@ std::vector<ExportResource *> collect_detached_transition_targets_locked(
     if (runtime == nullptr || source == nullptr || source->content_generation == 0) {
         return targets;
     }
-    for (ExportResource &resource : runtime->detached_exports) {
-        if (detached_transition_target_matches(&resource, source)) {
-            targets.push_back(&resource);
+    for (RetainedExportBacking &backing : runtime->retained_exports) {
+        if (detached_transition_target_matches(&backing.resource, source)) {
+            targets.push_back(&backing.resource);
         }
     }
     return targets;
@@ -1305,8 +1317,8 @@ bool copy_surface_to_detached_transition_exports(
                format->name,
                targets.size(),
                selected_index,
-               runtime->detached_exports.size(),
-               static_cast<unsigned long long>(runtime->detached_export_memory_bytes),
+               runtime->retained_exports.size(),
+               static_cast<unsigned long long>(runtime->retained_export_memory_bytes),
                candidates.c_str());
     if (targets.empty()) {
         return true;

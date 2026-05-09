@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <utility>
 #include <vector>
 #include <vulkan/vulkan.h>
 
@@ -41,6 +42,49 @@ struct ExportResource {
     uint64_t fd_dev = 0;
     uint64_t fd_ino = 0;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+};
+
+enum class RetainedExportState {
+    Detached,
+    Attached,
+    Expired,
+};
+
+struct RetainedExportBacking {
+    ExportResource resource{};
+    VkvvFdIdentity fd{};
+    RetainedExportState state = RetainedExportState::Detached;
+    uint64_t retained_sequence = 0;
+
+    RetainedExportBacking() = default;
+    RetainedExportBacking(const RetainedExportBacking &) = delete;
+    RetainedExportBacking &operator=(const RetainedExportBacking &) = delete;
+    RetainedExportBacking(RetainedExportBacking &&other) noexcept {
+        *this = std::move(other);
+    }
+    RetainedExportBacking &operator=(RetainedExportBacking &&other) noexcept {
+        if (this != &other) {
+            resource = other.resource;
+            fd = other.fd;
+            state = other.state;
+            retained_sequence = other.retained_sequence;
+            other.resource = {};
+            other.fd = {};
+            other.state = RetainedExportState::Expired;
+            other.retained_sequence = 0;
+        }
+        return *this;
+    }
+};
+
+enum class RetainedExportMatch {
+    Match,
+    MissingImport,
+    MissingFd,
+    FdMismatch,
+    FourccMismatch,
+    FormatMismatch,
+    ExtentMismatch,
 };
 
 struct DecodeImageKey {
@@ -180,11 +224,12 @@ class VulkanRuntime {
     std::mutex command_mutex;
     std::mutex export_mutex;
     std::vector<ExportResource *> predecode_exports;
-    std::vector<ExportResource> detached_exports;
+    std::vector<RetainedExportBacking> retained_exports;
     std::vector<ExportSeedRecord> export_seed_records;
-    VkDeviceSize detached_export_memory_bytes = 0;
-    VkDeviceSize detached_export_memory_budget = 384ull * 1024ull * 1024ull;
-    size_t detached_export_count_limit = 48;
+    VkDeviceSize retained_export_memory_bytes = 0;
+    VkDeviceSize retained_export_memory_budget = 384ull * 1024ull * 1024ull;
+    size_t retained_export_count_limit = 48;
+    uint64_t retained_export_sequence = 0;
     size_t transition_export_cursor = 0;
 
     void destroy_command_resources() {
@@ -219,6 +264,14 @@ bool record_vk_result(
         size_t reason_size);
 void destroy_export_resource(VulkanRuntime *runtime, ExportResource *resource);
 VkDeviceSize export_memory_bytes(const SurfaceResource *resource);
+VkvvFdIdentity retained_export_fd_identity(const ExportResource &resource);
+RetainedExportMatch retained_export_match_import(
+        const RetainedExportBacking &backing,
+        const VkvvExternalSurfaceImport &import,
+        unsigned int va_fourcc,
+        VkFormat format,
+        VkExtent2D coded_extent);
+const char *retained_export_match_reason(RetainedExportMatch match);
 size_t runtime_detached_export_count(VulkanRuntime *runtime);
 VkDeviceSize runtime_detached_export_memory_bytes(VulkanRuntime *runtime);
 void prune_detached_exports_for_surface(

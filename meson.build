@@ -29,6 +29,7 @@ vulkan_runtime_sources = files(
   'src/vulkan/export.cpp',
   'src/vulkan/export/descriptor.cpp',
   'src/vulkan/export/formats.cpp',
+  'src/vulkan/export/retained.cpp',
   'src/vulkan/export/shadow_image.cpp',
   'src/vulkan/formats.cpp',
   'src/vulkan/session.cpp',
@@ -209,6 +210,17 @@ surface_import_smoke = executable(
   install: false,
 )
 
+retained_export_smoke = executable(
+  'vkvv-retained-export-smoke',
+  files(
+    'tests/smoke/generic/retained_export_smoke.cpp',
+    'src/vulkan/export/retained.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [libva_dep, vulkan_dep],
+  install: false,
+)
+
 driver_test_env = environment()
 driver_test_env.set('LIBVA_DRIVER_NAME', 'nvidia_vulkan')
 driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
@@ -224,3 +236,4 @@ test('smoke-multi-context', multi_context_smoke, env: driver_test_env, is_parall
 test('smoke-sync', sync_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-capability', capability_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-surface-import', surface_import_smoke, is_parallel: false, timeout: 30)
+test('smoke-retained-export', retained_export_smoke, is_parallel: false, timeout: 30)
