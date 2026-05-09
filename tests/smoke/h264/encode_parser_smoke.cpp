@@ -92,19 +92,65 @@ namespace {
             ops->render_buffer(state, &slc_buffer) == VA_STATUS_SUCCESS;
     }
 
-    bool render_rate_control(const VkvvEncodeOps* ops, void* state) {
-        std::vector<uint8_t> misc(sizeof(VAEncMiscParameterBuffer) + sizeof(VAEncMiscParameterRateControl));
+    template <typename Payload>
+    bool render_misc_payload(const VkvvEncodeOps* ops, void* state, VAEncMiscParameterType type, const Payload& payload) {
+        std::vector<uint8_t> misc(sizeof(VAEncMiscParameterBuffer) + sizeof(Payload));
         auto*                header = reinterpret_cast<VAEncMiscParameterBuffer*>(misc.data());
-        header->type                = VAEncMiscParameterTypeRateControl;
-        auto* rc                    = reinterpret_cast<VAEncMiscParameterRateControl*>(header->data);
-        rc->bits_per_second         = 7000000;
-        rc->target_percentage       = 80;
-        rc->initial_qp              = 24;
-        rc->min_qp                  = 18;
-        rc->max_qp                  = 38;
+        header->type                = type;
+        std::memcpy(header->data, &payload, sizeof(payload));
 
         VkvvBuffer misc_buffer = buffer_for(VAEncMiscParameterBufferType, misc.data(), static_cast<unsigned int>(misc.size()));
         return ops->render_buffer(state, &misc_buffer) == VA_STATUS_SUCCESS;
+    }
+
+    bool render_common_misc_parameters(const VkvvEncodeOps* ops, void* state) {
+        VAEncMiscParameterFrameRate frame_rate{};
+        frame_rate.framerate = (1u << 16u) | 60u;
+        if (!render_misc_payload(ops, state, VAEncMiscParameterTypeFrameRate, frame_rate)) {
+            return false;
+        }
+
+        VAEncMiscParameterRateControl rate_control{};
+        rate_control.bits_per_second   = 7000000;
+        rate_control.target_percentage = 80;
+        rate_control.initial_qp        = 24;
+        rate_control.min_qp            = 18;
+        rate_control.max_qp            = 38;
+        if (!render_misc_payload(ops, state, VAEncMiscParameterTypeRateControl, rate_control)) {
+            return false;
+        }
+
+        VAEncMiscParameterHRD hrd{};
+        hrd.initial_buffer_fullness = 1000000;
+        hrd.buffer_size             = 2000000;
+        if (!render_misc_payload(ops, state, VAEncMiscParameterTypeHRD, hrd)) {
+            return false;
+        }
+
+        VAEncMiscParameterBufferQualityLevel quality{};
+        quality.quality_level = 1;
+        if (!render_misc_payload(ops, state, VAEncMiscParameterTypeQualityLevel, quality)) {
+            return false;
+        }
+
+        VAEncMiscParameterQuantization quantization{};
+        quantization.quantization_flags.bits.enable_trellis_I = 1;
+        return render_misc_payload(ops, state, VAEncMiscParameterTypeQuantization, quantization);
+    }
+
+    bool reject_bad_misc_parameters(const VkvvEncodeOps* ops, void* state) {
+        VAEncMiscParameterBuffer malformed{};
+        malformed.type              = VAEncMiscParameterTypeFrameRate;
+        VkvvBuffer malformed_buffer = buffer_for(VAEncMiscParameterBufferType, &malformed, sizeof(malformed));
+        if (ops->render_buffer(state, &malformed_buffer) != VA_STATUS_ERROR_INVALID_BUFFER) {
+            return false;
+        }
+
+        std::vector<uint8_t> unsupported(sizeof(VAEncMiscParameterBuffer) + sizeof(uint32_t));
+        auto*                header   = reinterpret_cast<VAEncMiscParameterBuffer*>(unsupported.data());
+        header->type                  = VAEncMiscParameterTypeROI;
+        VkvvBuffer unsupported_buffer = buffer_for(VAEncMiscParameterBufferType, unsupported.data(), static_cast<unsigned int>(unsupported.size()));
+        return ops->render_buffer(state, &unsupported_buffer) == VA_STATUS_ERROR_UNIMPLEMENTED;
     }
 
     bool reject_packed_headers(const VkvvEncodeOps* ops, void* state) {
@@ -159,7 +205,7 @@ int main(void) {
     if (state != nullptr) {
         ops.begin_picture(state);
         ok = check(render_minimal_h264(&ops, state, coded_buffer), "minimal H.264 encode buffers were rejected") && ok;
-        ok = check(render_rate_control(&ops, state), "H.264 rate-control misc buffer was rejected") && ok;
+        ok = check(render_common_misc_parameters(&ops, state), "H.264 common misc buffers were rejected") && ok;
 
         unsigned int width       = 0;
         unsigned int height      = 0;
@@ -171,8 +217,11 @@ int main(void) {
 
         VkvvH264EncodeInput input{};
         ok = check_va(vkvv_h264_encode_get_input(state, &drv, &vctx, &input, reason, sizeof(reason)), VA_STATUS_SUCCESS, "get H.264 encode input") && ok;
-        ok = check(input.frame_type == VKVV_H264_ENCODE_FRAME_IDR && input.has_rate_control && input.rate_control != nullptr && input.rate_control->bits_per_second == 7000000,
-                   "H.264 encode input did not preserve frame type or rate control") &&
+        ok = check(input.frame_type == VKVV_H264_ENCODE_FRAME_IDR && input.has_frame_rate && input.frame_rate != nullptr && input.frame_rate->framerate == ((1u << 16u) | 60u) &&
+                       input.has_rate_control && input.rate_control != nullptr && input.rate_control->bits_per_second == 7000000 && input.has_hrd && input.hrd != nullptr &&
+                       input.hrd->buffer_size == 2000000 && input.has_quality_level && input.quality_level != nullptr && input.quality_level->quality_level == 1 &&
+                       input.has_quantization && input.quantization != nullptr,
+                   "H.264 encode input did not preserve frame type or misc parameters") &&
             ok;
 
         ops.begin_picture(state);
@@ -199,6 +248,9 @@ int main(void) {
 
         ops.begin_picture(state);
         ok = check(reject_packed_headers(&ops, state), "H.264 packed headers were not rejected") && ok;
+
+        ops.begin_picture(state);
+        ok = check(reject_bad_misc_parameters(&ops, state), "H.264 malformed/unsupported misc buffers were not rejected") && ok;
 
         ops.state_destroy(state);
     }

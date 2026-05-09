@@ -15,12 +15,20 @@ namespace {
         bool                                       has_picture       = false;
         bool                                       has_slices        = false;
         bool                                       has_iq            = false;
+        bool                                       has_frame_rate    = false;
         bool                                       has_rate_control  = false;
+        bool                                       has_hrd           = false;
+        bool                                       has_quality_level = false;
+        bool                                       has_quantization  = false;
         bool                                       has_packed_header = false;
         VAEncSequenceParameterBufferH264           sequence{};
         VAEncPictureParameterBufferH264            picture{};
         VAIQMatrixBufferH264                       iq{};
+        VAEncMiscParameterFrameRate                frame_rate{};
         VAEncMiscParameterRateControl              rate_control{};
+        VAEncMiscParameterHRD                      hrd{};
+        VAEncMiscParameterBufferQualityLevel       quality_level{};
+        VAEncMiscParameterQuantization             quantization{};
         VAEncPackedHeaderParameterBuffer           packed_header{};
         std::vector<VAEncSliceParameterBufferH264> slices;
         std::vector<uint8_t>                       packed_header_data;
@@ -44,6 +52,19 @@ namespace {
         return h264->has_slices;
     }
 
+    template <typename Payload>
+    VAStatus copy_misc_payload(H264EncodeState* h264, const VAEncMiscParameterBuffer* misc, size_t total, Payload* dst, bool* present) {
+        if (h264 == nullptr || misc == nullptr || dst == nullptr || present == nullptr) {
+            return VA_STATUS_ERROR_INVALID_BUFFER;
+        }
+        if (total < sizeof(VAEncMiscParameterBuffer) + sizeof(Payload)) {
+            return VA_STATUS_ERROR_INVALID_BUFFER;
+        }
+        std::memcpy(dst, misc->data, sizeof(Payload));
+        *present = true;
+        return VA_STATUS_SUCCESS;
+    }
+
     VAStatus copy_misc_parameter(H264EncodeState* h264, const VkvvBuffer* buffer) {
         if (h264 == nullptr || buffer == nullptr || buffer->data == nullptr) {
             return VA_STATUS_ERROR_INVALID_BUFFER;
@@ -55,14 +76,12 @@ namespace {
 
         const auto* misc = static_cast<const VAEncMiscParameterBuffer*>(buffer->data);
         switch (misc->type) {
-            case VAEncMiscParameterTypeRateControl:
-                if (total < sizeof(VAEncMiscParameterBuffer) + sizeof(VAEncMiscParameterRateControl)) {
-                    return VA_STATUS_ERROR_INVALID_BUFFER;
-                }
-                std::memcpy(&h264->rate_control, misc->data, sizeof(h264->rate_control));
-                h264->has_rate_control = true;
-                return VA_STATUS_SUCCESS;
-            default: return VA_STATUS_SUCCESS;
+            case VAEncMiscParameterTypeFrameRate: return copy_misc_payload(h264, misc, total, &h264->frame_rate, &h264->has_frame_rate);
+            case VAEncMiscParameterTypeRateControl: return copy_misc_payload(h264, misc, total, &h264->rate_control, &h264->has_rate_control);
+            case VAEncMiscParameterTypeHRD: return copy_misc_payload(h264, misc, total, &h264->hrd, &h264->has_hrd);
+            case VAEncMiscParameterTypeQualityLevel: return copy_misc_payload(h264, misc, total, &h264->quality_level, &h264->has_quality_level);
+            case VAEncMiscParameterTypeQuantization: return copy_misc_payload(h264, misc, total, &h264->quantization, &h264->has_quantization);
+            default: return VA_STATUS_ERROR_UNIMPLEMENTED;
         }
     }
 
@@ -143,7 +162,11 @@ namespace {
         input->picture                 = &h264->picture;
         input->slices                  = h264->slices.data();
         input->iq                      = h264->has_iq ? &h264->iq : nullptr;
+        input->frame_rate              = h264->has_frame_rate ? &h264->frame_rate : nullptr;
         input->rate_control            = h264->has_rate_control ? &h264->rate_control : nullptr;
+        input->hrd                     = h264->has_hrd ? &h264->hrd : nullptr;
+        input->quality_level           = h264->has_quality_level ? &h264->quality_level : nullptr;
+        input->quantization            = h264->has_quantization ? &h264->quantization : nullptr;
         input->packed_header           = h264->has_packed_header ? &h264->packed_header : nullptr;
         input->packed_header_data      = h264->packed_header_data.empty() ? nullptr : h264->packed_header_data.data();
         input->packed_header_data_size = h264->packed_header_data.size();
@@ -155,10 +178,15 @@ namespace {
         input->coded_buffer            = h264->picture.coded_buf;
         input->frame_type              = frame_type_for_picture(h264);
         input->has_iq                  = h264->has_iq;
+        input->has_frame_rate          = h264->has_frame_rate;
         input->has_rate_control        = h264->has_rate_control;
+        input->has_hrd                 = h264->has_hrd;
+        input->has_quality_level       = h264->has_quality_level;
+        input->has_quantization        = h264->has_quantization;
         input->has_packed_header       = h264->has_packed_header;
-        std::snprintf(reason, reason_size, "captured H.264 encode picture: %ux%u slices=%u coded=%u frame=%u rc=%u packed=%u", input->width, input->height, input->slice_count,
-                      input->coded_buffer, input->frame_type, input->has_rate_control ? 1U : 0U, input->has_packed_header ? 1U : 0U);
+        std::snprintf(reason, reason_size, "captured H.264 encode picture: %ux%u slices=%u coded=%u frame=%u fr=%u rc=%u hrd=%u ql=%u quant=%u packed=%u", input->width,
+                      input->height, input->slice_count, input->coded_buffer, input->frame_type, input->has_frame_rate ? 1U : 0U, input->has_rate_control ? 1U : 0U,
+                      input->has_hrd ? 1U : 0U, input->has_quality_level ? 1U : 0U, input->has_quantization ? 1U : 0U, input->has_packed_header ? 1U : 0U);
         return VA_STATUS_SUCCESS;
     }
 
@@ -183,12 +211,20 @@ void vkvv_h264_encode_begin_picture(void* state) {
     h264->has_picture       = false;
     h264->has_slices        = false;
     h264->has_iq            = false;
+    h264->has_frame_rate    = false;
     h264->has_rate_control  = false;
+    h264->has_hrd           = false;
+    h264->has_quality_level = false;
+    h264->has_quantization  = false;
     h264->has_packed_header = false;
     h264->sequence          = {};
     h264->picture           = {};
     h264->iq                = {};
+    h264->frame_rate        = {};
     h264->rate_control      = {};
+    h264->hrd               = {};
+    h264->quality_level     = {};
+    h264->quantization      = {};
     h264->packed_header     = {};
     h264->slices.clear();
     h264->packed_header_data.clear();
