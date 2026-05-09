@@ -112,6 +112,9 @@ void destroy_export_resource(VulkanRuntime *runtime, ExportResource *resource) {
     resource->seed_source_surface_id = VA_INVALID_ID;
     resource->seed_source_generation = 0;
     resource->content_generation = 0;
+    resource->fd_stat_valid = false;
+    resource->fd_dev = 0;
+    resource->fd_ino = 0;
     resource->layout = VK_IMAGE_LAYOUT_UNDEFINED;
 }
 
@@ -186,6 +189,21 @@ void prune_detached_export_resources_locked(VulkanRuntime *runtime) {
             runtime->detached_export_memory_bytes > runtime->detached_export_memory_budget)) {
         ExportResource &oldest = runtime->detached_exports.front();
         const VkDeviceSize bytes = oldest.allocation_size;
+        vkvv_trace("detached-export-prune",
+                   "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx bytes=%llu fd_stat=%u fd_dev=%llu fd_ino=%llu detached=%zu detached_mem=%llu limit=%zu budget=%llu",
+                   oldest.owner_surface_id,
+                   static_cast<unsigned long long>(oldest.driver_instance_id),
+                   static_cast<unsigned long long>(oldest.stream_id),
+                   oldest.codec_operation,
+                   vkvv_trace_handle(oldest.memory),
+                   static_cast<unsigned long long>(bytes),
+                   oldest.fd_stat_valid ? 1U : 0U,
+                   static_cast<unsigned long long>(oldest.fd_dev),
+                   static_cast<unsigned long long>(oldest.fd_ino),
+                   runtime->detached_exports.size(),
+                   static_cast<unsigned long long>(runtime->detached_export_memory_bytes),
+                   runtime->detached_export_count_limit,
+                   static_cast<unsigned long long>(runtime->detached_export_memory_budget));
         destroy_export_resource(runtime, &oldest);
         runtime->detached_exports.erase(runtime->detached_exports.begin());
         runtime->detached_export_memory_bytes =
@@ -397,8 +415,13 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
         existing->codec_operation = codec_operation;
         existing->surface_id = surface->id;
         existing->visible_extent = {surface->width, surface->height};
+        existing->imported_external = surface->imported_external;
+        existing->import_memory_type = surface->import_memory_type;
+        existing->import_fd_stat_valid = surface->import_fd_stat_valid;
+        existing->import_fd_dev = surface->import_fd_dev;
+        existing->import_fd_ino = surface->import_fd_ino;
         vkvv_trace("surface-resource-reuse",
-                   "surface=%u driver=%llu stream=%llu surface_codec=0x%x key_codec=0x%x resource_codec=0x%x content_gen=%llu shadow_gen=%llu predecode=%u",
+                   "surface=%u driver=%llu stream=%llu surface_codec=0x%x key_codec=0x%x resource_codec=0x%x content_gen=%llu shadow_gen=%llu predecode=%u imported=%u import_fd_stat=%u import_fd_dev=%llu import_fd_ino=%llu",
                    surface->id,
                    static_cast<unsigned long long>(surface->driver_instance_id),
                    static_cast<unsigned long long>(stream_id),
@@ -407,7 +430,11 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
                    existing->codec_operation,
                    static_cast<unsigned long long>(existing->content_generation),
                    static_cast<unsigned long long>(existing->export_resource.content_generation),
-                   existing->export_resource.predecode_exported ? 1U : 0U);
+                   existing->export_resource.predecode_exported ? 1U : 0U,
+                   existing->imported_external ? 1U : 0U,
+                   existing->import_fd_stat_valid ? 1U : 0U,
+                   static_cast<unsigned long long>(existing->import_fd_dev),
+                   static_cast<unsigned long long>(existing->import_fd_ino));
         return true;
     }
     if (existing != nullptr && existing->image != VK_NULL_HANDLE && surface->decoded) {
@@ -592,6 +619,11 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
     resource->va_fourcc = key.va_fourcc;
     resource->decode_key = key;
     resource->allocation_size = requirements.size;
+    resource->imported_external = surface->imported_external;
+    resource->import_memory_type = surface->import_memory_type;
+    resource->import_fd_stat_valid = surface->import_fd_stat_valid;
+    resource->import_fd_dev = surface->import_fd_dev;
+    resource->import_fd_ino = surface->import_fd_ino;
     if (request_exportable) {
         VkImageSubresource plane0{};
         plane0.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT;
@@ -627,7 +659,7 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
         surface->vulkan = resource;
     }
     vkvv_trace("surface-resource-create",
-               "surface=%u driver=%llu stream=%llu surface_codec=0x%x key_codec=0x%x resource_codec=0x%x extent=%ux%u exportable=%u decode_mem=%llu shadow_mem=0x%llx",
+               "surface=%u driver=%llu stream=%llu surface_codec=0x%x key_codec=0x%x resource_codec=0x%x extent=%ux%u exportable=%u decode_mem=%llu shadow_mem=0x%llx imported=%u import_fd_stat=%u import_fd_dev=%llu import_fd_ino=%llu",
                surface->id,
                static_cast<unsigned long long>(surface->driver_instance_id),
                static_cast<unsigned long long>(surface->stream_id),
@@ -638,7 +670,11 @@ bool ensure_surface_resource(VulkanRuntime *runtime, VkvvSurface *surface, const
                extent.height,
                resource->exportable ? 1U : 0U,
                static_cast<unsigned long long>(resource->allocation_size),
-               vkvv_trace_handle(resource->export_resource.memory));
+               vkvv_trace_handle(resource->export_resource.memory),
+               resource->imported_external ? 1U : 0U,
+               resource->import_fd_stat_valid ? 1U : 0U,
+               static_cast<unsigned long long>(resource->import_fd_dev),
+               static_cast<unsigned long long>(resource->import_fd_ino));
     return true;
 }
 

@@ -113,7 +113,7 @@ bool check_export_preparation_drains_unrelated_pending_work(vkvv::VulkanRuntime 
             std::fprintf(stderr, "%s\n", reason);
             return false;
         }
-        vkvv::track_pending_decode(runtime, &pending_surface, VK_NULL_HANDLE, 0, "export pending-work smoke");
+        vkvv::track_pending_decode(runtime, &pending_surface, VK_NULL_HANDLE, 0, true, "export pending-work smoke");
     }
 
     VkvvSurface export_surface{};
@@ -226,7 +226,7 @@ bool check_predecode_backup_seeding(vkvv::VulkanRuntime *runtime) {
     auto *decoded_resource = static_cast<vkvv::SurfaceResource *>(decoded.vulkan);
     decoded.decoded = true;
     decoded_resource->content_generation++;
-    status = vkvv_vulkan_refresh_surface_export(runtime, &decoded, reason, sizeof(reason));
+    status = vkvv_vulkan_refresh_surface_export(runtime, &decoded, true, reason, sizeof(reason));
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
         cleanup();
@@ -293,7 +293,7 @@ bool check_export_time_last_good_seeding(vkvv::VulkanRuntime *runtime) {
     auto *decoded_resource = static_cast<vkvv::SurfaceResource *>(decoded.vulkan);
     decoded.decoded = true;
     decoded_resource->content_generation++;
-    status = vkvv_vulkan_refresh_surface_export(runtime, &decoded, reason, sizeof(reason));
+    status = vkvv_vulkan_refresh_surface_export(runtime, &decoded, true, reason, sizeof(reason));
     if (reason[0] != '\0') {
         std::printf("%s\n", reason);
     }
@@ -386,7 +386,7 @@ bool check_untagged_export_adopts_active_decode_domain(vkvv::VulkanRuntime *runt
     auto *decoded_resource = static_cast<vkvv::SurfaceResource *>(decoded.vulkan);
     decoded.decoded = true;
     decoded_resource->content_generation++;
-    status = vkvv_vulkan_refresh_surface_export(runtime, &decoded, reason, sizeof(reason));
+    status = vkvv_vulkan_refresh_surface_export(runtime, &decoded, true, reason, sizeof(reason));
     if (reason[0] != '\0') {
         std::printf("%s\n", reason);
     }
@@ -442,7 +442,7 @@ bool check_untagged_export_adopts_active_decode_domain(vkvv::VulkanRuntime *runt
     late_resource = static_cast<vkvv::SurfaceResource *>(late_export.vulkan);
     late_export.decoded = true;
     late_resource->content_generation++;
-    status = vkvv_vulkan_refresh_surface_export(runtime, &late_export, reason, sizeof(reason));
+    status = vkvv_vulkan_refresh_surface_export(runtime, &late_export, true, reason, sizeof(reason));
     if (reason[0] != '\0') {
         std::printf("%s\n", reason);
     }
@@ -456,7 +456,7 @@ bool check_untagged_export_adopts_active_decode_domain(vkvv::VulkanRuntime *runt
 
     const VkDeviceMemory first_decoded_export_memory = late_resource->export_resource.memory;
     late_resource->content_generation++;
-    status = vkvv_vulkan_refresh_surface_export(runtime, &late_export, reason, sizeof(reason));
+    status = vkvv_vulkan_refresh_surface_export(runtime, &late_export, true, reason, sizeof(reason));
     if (reason[0] != '\0') {
         std::printf("%s\n", reason);
     }
@@ -538,7 +538,7 @@ bool check_unknown_predecode_export_uses_first_decode_domain(vkvv::VulkanRuntime
     resource = static_cast<vkvv::SurfaceResource *>(surface.vulkan);
     surface.decoded = true;
     resource->content_generation++;
-    status = vkvv_vulkan_refresh_surface_export(runtime, &surface, reason, sizeof(reason));
+    status = vkvv_vulkan_refresh_surface_export(runtime, &surface, true, reason, sizeof(reason));
     if (reason[0] != '\0') {
         std::printf("%s\n", reason);
     }
@@ -636,7 +636,7 @@ bool check_predecode_seed_rejects_cross_codec(vkvv::VulkanRuntime *runtime) {
     auto *decoded_resource = static_cast<vkvv::SurfaceResource *>(vp9_decoded.vulkan);
     vp9_decoded.decoded = true;
     decoded_resource->content_generation++;
-    status = vkvv_vulkan_refresh_surface_export(runtime, &vp9_decoded, reason, sizeof(reason));
+    status = vkvv_vulkan_refresh_surface_export(runtime, &vp9_decoded, true, reason, sizeof(reason));
     if (reason[0] != '\0') {
         std::printf("%s\n", reason);
     }
@@ -930,7 +930,7 @@ int main(void) {
         return 1;
     }
 
-    status = vkvv_vulkan_refresh_surface_export(runtime, &surface, reason, sizeof(reason));
+    status = vkvv_vulkan_refresh_surface_export(runtime, &surface, true, reason, sizeof(reason));
     std::printf("%s\n", reason);
     if (status != VA_STATUS_SUCCESS) {
         if (first_fd >= 0) {

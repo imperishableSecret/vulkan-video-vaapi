@@ -376,7 +376,7 @@ VAStatus vkvv_vulkan_decode_h264(
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
-    track_pending_decode(runtime, target, parameters, upload_allocation_size, "H.264 decode");
+    track_pending_decode(runtime, target, parameters, upload_allocation_size, true, "H.264 decode");
     std::snprintf(reason, reason_size,
                   "submitted async H.264 Vulkan decode: %ux%u slices=%u bytes=%zu refs=%u slot=%d decode_mem=%llu upload_mem=%llu session_mem=%llu",
                   coded_extent.width, coded_extent.height, input->slice_count, input->bitstream_size,

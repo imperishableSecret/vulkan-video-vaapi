@@ -14,7 +14,12 @@ void vkvv_vulkan_runtime_destroy(void *runtime);
 bool vkvv_vulkan_supports_surface_export(void *runtime);
 bool vkvv_vulkan_surface_has_predecode_export(const VkvvSurface *surface);
 VAStatus vkvv_vulkan_prepare_surface_export(void *runtime, VkvvSurface *surface, char *reason, size_t reason_size);
-VAStatus vkvv_vulkan_refresh_surface_export(void *runtime, VkvvSurface *surface, char *reason, size_t reason_size);
+VAStatus vkvv_vulkan_refresh_surface_export(
+        void *runtime,
+        VkvvSurface *surface,
+        bool displayable,
+        char *reason,
+        size_t reason_size);
 VAStatus vkvv_vulkan_complete_surface_work(void *runtime, VkvvSurface *surface, uint64_t timeout_ns, char *reason, size_t reason_size);
 VAStatus vkvv_vulkan_drain_pending_work(void *runtime, char *reason, size_t reason_size);
 VAStatus vkvv_vulkan_export_surface(

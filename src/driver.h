@@ -165,6 +165,14 @@ typedef struct VkvvSurface {
     unsigned int fourcc;
     unsigned int role_flags;
     void *vulkan;
+    bool imported_external;
+    uint32_t import_memory_type;
+    bool import_fd_stat_valid;
+    uint64_t import_fd_dev;
+    uint64_t import_fd_ino;
+    unsigned int import_fourcc;
+    unsigned int import_width;
+    unsigned int import_height;
     VkvvSurfaceWorkState work_state;
     VAStatus sync_status;
     bool destroying;

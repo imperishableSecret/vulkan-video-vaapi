@@ -3,9 +3,35 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <sys/stat.h>
 #include <unistd.h>
 
 using namespace vkvv;
+
+namespace {
+
+struct TraceFdStat {
+    bool valid = false;
+    unsigned long long dev = 0;
+    unsigned long long ino = 0;
+};
+
+TraceFdStat trace_fd_stat(int fd) {
+    TraceFdStat out{};
+    if (fd < 0) {
+        return out;
+    }
+    struct stat st {};
+    if (fstat(fd, &st) != 0) {
+        return out;
+    }
+    out.valid = true;
+    out.dev = static_cast<unsigned long long>(st.st_dev);
+    out.ino = static_cast<unsigned long long>(st.st_ino);
+    return out;
+}
+
+} // namespace
 
 bool vkvv_vulkan_surface_has_predecode_export(const VkvvSurface *surface) {
     if (surface == nullptr || surface->vulkan == nullptr) {
@@ -114,6 +140,7 @@ VAStatus vkvv_vulkan_prepare_surface_export(
 VAStatus vkvv_vulkan_refresh_surface_export(
         void *runtime_ptr,
         VkvvSurface *surface,
+        bool displayable,
         char *reason,
         size_t reason_size) {
     auto *runtime = static_cast<VulkanRuntime *>(runtime_ptr);
@@ -135,9 +162,34 @@ VAStatus vkvv_vulkan_refresh_surface_export(
 
     auto *resource = static_cast<SurfaceResource *>(surface->vulkan);
     remember_export_seed_resource(runtime, resource);
+    if (resource->export_resource.image == VK_NULL_HANDLE &&
+        resource->imported_external &&
+        resource->import_fd_stat_valid) {
+        (void) attach_imported_export_resource_by_fd(runtime, resource);
+    }
     if (resource->export_resource.image == VK_NULL_HANDLE) {
+        uint32_t transition_exports = 0;
+        if (displayable &&
+            !copy_surface_to_detached_transition_exports(
+                runtime, resource, &transition_exports, reason, reason_size)) {
+            return VA_STATUS_ERROR_OPERATION_FAILED;
+        }
+        if (transition_exports != 0) {
+            std::snprintf(reason, reason_size,
+                          "published displayable decode to detached transition exports: driver=%llu surface=%u stream=%llu codec=0x%x detached_targets=%u detached=%zu detached_mem=%llu source_generation=%llu",
+                          static_cast<unsigned long long>(resource->driver_instance_id),
+                          surface->id,
+                          static_cast<unsigned long long>(resource->stream_id),
+                          resource->codec_operation,
+                          transition_exports,
+                          runtime_detached_export_count(runtime),
+                          static_cast<unsigned long long>(runtime_detached_export_memory_bytes(runtime)),
+                          static_cast<unsigned long long>(resource->content_generation));
+        }
         if (reason_size > 0) {
-            reason[0] = '\0';
+            if (transition_exports == 0) {
+                reason[0] = '\0';
+            }
         }
         return VA_STATUS_SUCCESS;
     }
@@ -324,15 +376,34 @@ VAStatus vkvv_vulkan_export_surface(
         if (!surface->decoded) {
             exported_shadow->predecode_exported = true;
             register_predecode_export_resource(runtime, exported_shadow);
+            vkvv_trace("export-predecode-register",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x shadow_mem=0x%llx shadow_gen=%llu seeded=%u placeholder=%u",
+                       surface->id,
+                       static_cast<unsigned long long>(resource->driver_instance_id),
+                       static_cast<unsigned long long>(resource->stream_id),
+                       resource->codec_operation,
+                       vkvv_trace_handle(exported_shadow->memory),
+                       static_cast<unsigned long long>(exported_shadow->content_generation),
+                       exported_shadow->predecode_seeded ? 1U : 0U,
+                       exported_shadow->black_placeholder ? 1U : 0U);
         }
     }
+    const TraceFdStat fd_stat = trace_fd_stat(fd);
+    if (exported_shadow != nullptr) {
+        exported_shadow->fd_stat_valid = fd_stat.valid;
+        exported_shadow->fd_dev = fd_stat.dev;
+        exported_shadow->fd_ino = fd_stat.ino;
+    }
     vkvv_trace("export-fd",
-               "surface=%u driver=%llu stream=%llu codec=0x%x fd=%d export_mem=0x%llx content_gen=%llu shadow_gen=%llu predecode=%u seeded=%u placeholder=%u seed_surface=%u seed_gen=%llu",
+               "surface=%u driver=%llu stream=%llu codec=0x%x fd=%d fd_stat=%u fd_dev=%llu fd_ino=%llu export_mem=0x%llx content_gen=%llu shadow_gen=%llu predecode=%u seeded=%u placeholder=%u seed_surface=%u seed_gen=%llu",
                surface->id,
                static_cast<unsigned long long>(resource->driver_instance_id),
                static_cast<unsigned long long>(resource->stream_id),
                resource->codec_operation,
                fd,
+               fd_stat.valid ? 1U : 0U,
+               fd_stat.dev,
+               fd_stat.ino,
                vkvv_trace_handle(export_memory),
                static_cast<unsigned long long>(resource->content_generation),
                static_cast<unsigned long long>(

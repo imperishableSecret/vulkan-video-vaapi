@@ -126,6 +126,18 @@ VAStatus vkvvCreateContext(
         delete vctx;
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
+    vkvv_trace("va-context-create",
+               "driver=%llu ctx=%u mode=%u profile=%d entrypoint=%d stream=%llu codec=0x%x size=%ux%u targets=%d",
+               (unsigned long long) drv->driver_instance_id,
+               *context,
+               vctx->mode,
+               vctx->profile,
+               vctx->entrypoint,
+               (unsigned long long) vctx->stream_id,
+               vctx->codec_operation,
+               vctx->width,
+               vctx->height,
+               num_render_targets);
     if (vctx->mode == VKVV_CONTEXT_MODE_DECODE) {
         for (int i = 0; i < num_render_targets; i++) {
             tag_surface_for_context(drv, vctx, render_targets != NULL ? render_targets[i] : VA_INVALID_ID);
@@ -140,6 +152,13 @@ VAStatus vkvvDestroyContext(VADriverContextP ctx, VAContextID context) {
     if (vctx == NULL) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
+    vkvv_trace("va-context-destroy",
+               "driver=%llu ctx=%u stream=%llu codec=0x%x target=%u",
+               (unsigned long long) drv->driver_instance_id,
+               context,
+               (unsigned long long) vctx->stream_id,
+               vctx->codec_operation,
+               vctx->render_target);
     {
         VkvvLockGuard state_lock(&drv->state_mutex);
         if (drv->active_decode_stream_id == vctx->stream_id &&
@@ -179,6 +198,10 @@ VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID
         VkvvLockGuard state_lock(&drv->state_mutex);
         auto *domain_surface = vkvv_surface_get_locked(drv, render_target);
         if (domain_surface != NULL) {
+            const bool surface_codec_transition =
+                domain_surface->stream_id != 0 &&
+                (domain_surface->stream_id != vctx->stream_id ||
+                 domain_surface->codec_operation != vctx->codec_operation);
             vkvv_trace("va-begin-domain",
                        "driver=%llu ctx=%u profile=%d target=%u ctx_stream=%llu ctx_codec=0x%x surface_stream=%llu surface_codec=0x%x decoded=%u pending=%u",
                        (unsigned long long) drv->driver_instance_id,
@@ -191,6 +214,20 @@ VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID
                        domain_surface->codec_operation,
                        domain_surface->decoded ? 1U : 0U,
                        vkvv_surface_has_pending_work(domain_surface) ? 1U : 0U);
+            if (surface_codec_transition) {
+                vkvv_trace("va-begin-surface-retag",
+                           "driver=%llu ctx=%u target=%u old_stream=%llu old_codec=0x%x new_stream=%llu new_codec=0x%x decoded=%u pending=%u predecode_export=%u",
+                           (unsigned long long) drv->driver_instance_id,
+                           context,
+                           render_target,
+                           (unsigned long long) domain_surface->stream_id,
+                           domain_surface->codec_operation,
+                           (unsigned long long) vctx->stream_id,
+                           vctx->codec_operation,
+                           domain_surface->decoded ? 1U : 0U,
+                           vkvv_surface_has_pending_work(domain_surface) ? 1U : 0U,
+                           vkvv_vulkan_surface_has_predecode_export(domain_surface) ? 1U : 0U);
+            }
             if (!domain_surface->destroying) {
                 vkvv_driver_note_decode_domain_locked(drv, vctx, domain_surface);
             }

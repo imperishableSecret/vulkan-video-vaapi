@@ -22,6 +22,12 @@ void note_decode_domain_locked(VkvvDriver *drv, const VkvvContext *vctx, const V
         surface->driver_instance_id != drv->driver_instance_id) {
         return;
     }
+    const uint64_t previous_stream = drv->active_decode_stream_id;
+    const unsigned int previous_codec = drv->active_decode_codec_operation;
+    const bool codec_transition =
+        previous_stream != 0 &&
+        (previous_stream != vctx->stream_id || previous_codec != vctx->codec_operation);
+
     drv->active_decode_stream_id = vctx->stream_id;
     drv->active_decode_codec_operation = vctx->codec_operation;
     drv->active_decode_width = surface != NULL && surface->width != 0 ? surface->width : vctx->width;
@@ -38,6 +44,20 @@ void note_decode_domain_locked(VkvvDriver *drv, const VkvvContext *vctx, const V
                drv->active_decode_rt_format,
                drv->active_decode_fourcc,
                surface != NULL ? surface->id : VA_INVALID_ID);
+    if (codec_transition) {
+        vkvv_trace("domain-codec-transition",
+                   "driver=%llu prev_stream=%llu prev_codec=0x%x new_stream=%llu new_codec=0x%x surface=%u width=%u height=%u rt=0x%x fourcc=0x%x",
+                   (unsigned long long) drv->driver_instance_id,
+                   (unsigned long long) previous_stream,
+                   previous_codec,
+                   (unsigned long long) drv->active_decode_stream_id,
+                   drv->active_decode_codec_operation,
+                   surface != NULL ? surface->id : VA_INVALID_ID,
+                   drv->active_decode_width,
+                   drv->active_decode_height,
+                   drv->active_decode_rt_format,
+                   drv->active_decode_fourcc);
+    }
 }
 
 bool surface_matches_active_decode_domain_locked(const VkvvDriver *drv, const VkvvSurface *surface) {

@@ -429,7 +429,8 @@ VAStatus vkvv_vulkan_decode_vp9(
         }
     }
 
-    track_pending_decode(runtime, target, VK_NULL_HANDLE, upload_allocation_size, "VP9 decode");
+    track_pending_decode(runtime, target, VK_NULL_HANDLE, upload_allocation_size,
+                         input->header.show_frame != 0, "VP9 decode");
     std::snprintf(reason, reason_size,
                   "submitted async VP9 Vulkan decode: %ux%u bytes=%zu refs=%u slot=%d refresh=0x%02x decode_mem=%llu upload_mem=%llu session_mem=%llu",
                   coded_extent.width, coded_extent.height, input->bitstream_size,

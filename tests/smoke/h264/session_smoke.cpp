@@ -131,7 +131,7 @@ bool check_async_completion(vkvv::VulkanRuntime *runtime) {
             std::fprintf(stderr, "%s\n", reason);
             return false;
         }
-        vkvv::track_pending_decode(runtime, &surface, VK_NULL_HANDLE, 0, "async smoke");
+        vkvv::track_pending_decode(runtime, &surface, VK_NULL_HANDLE, 0, true, "async smoke");
     }
 
     VAStatus status = vkvv_vulkan_complete_surface_work(

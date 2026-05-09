@@ -37,6 +37,9 @@ struct ExportResource {
     VASurfaceID seed_source_surface_id = VA_INVALID_ID;
     uint64_t seed_source_generation = 0;
     uint64_t content_generation = 0;
+    bool fd_stat_valid = false;
+    uint64_t fd_dev = 0;
+    uint64_t fd_ino = 0;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 };
 
@@ -77,6 +80,11 @@ struct SurfaceResource {
     uint64_t drm_format_modifier = 0;
     bool exportable = false;
     bool has_drm_format_modifier = false;
+    bool imported_external = false;
+    uint32_t import_memory_type = 0;
+    bool import_fd_stat_valid = false;
+    uint64_t import_fd_dev = 0;
+    uint64_t import_fd_ino = 0;
     ExportResource export_resource{};
     uint64_t content_generation = 0;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -171,6 +179,7 @@ class VulkanRuntime {
     VkvvSurface *pending_surface = nullptr;
     VkVideoSessionParametersKHR pending_parameters = VK_NULL_HANDLE;
     VkDeviceSize pending_upload_allocation_size = 0;
+    bool pending_displayable = true;
     char pending_operation[64]{};
     std::mutex command_mutex;
     std::mutex export_mutex;
@@ -178,8 +187,9 @@ class VulkanRuntime {
     std::vector<ExportResource> detached_exports;
     std::vector<ExportSeedRecord> export_seed_records;
     VkDeviceSize detached_export_memory_bytes = 0;
-    VkDeviceSize detached_export_memory_budget = 128ull * 1024ull * 1024ull;
-    size_t detached_export_count_limit = 32;
+    VkDeviceSize detached_export_memory_budget = 384ull * 1024ull * 1024ull;
+    size_t detached_export_count_limit = 48;
+    size_t transition_export_cursor = 0;
 
     void destroy_command_resources() {
         if (fence != VK_NULL_HANDLE) {
@@ -248,7 +258,7 @@ bool ensure_bitstream_upload_buffer(
 bool ensure_command_resources(VulkanRuntime *runtime, char *reason, size_t reason_size);
 bool submit_command_buffer(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation);
 bool submit_command_buffer_and_wait(VulkanRuntime *runtime, char *reason, size_t reason_size, const char *operation);
-void track_pending_decode(VulkanRuntime *runtime, VkvvSurface *surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, const char *operation);
+void track_pending_decode(VulkanRuntime *runtime, VkvvSurface *surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool displayable, const char *operation);
 VAStatus drain_pending_work_before_sync_command(VulkanRuntime *runtime, char *reason, size_t reason_size);
 void add_image_layout_barrier(std::vector<VkImageMemoryBarrier2> *barriers, SurfaceResource *resource, VkImageLayout new_layout, VkAccessFlags2 dst_access);
 VkVideoPictureResourceInfoKHR make_picture_resource(SurfaceResource *resource, VkExtent2D coded_extent);
