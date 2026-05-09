@@ -28,7 +28,9 @@ namespace vkvv {
         VkVideoDecodeH265ProfileInfoKHR h265{};
         VkVideoDecodeVP9ProfileInfoKHR  vp9{};
         VkVideoDecodeAV1ProfileInfoKHR  av1{};
-        VkVideoDecodeUsageInfoKHR       usage{};
+        VkVideoEncodeH264ProfileInfoKHR h264_encode{};
+        VkVideoDecodeUsageInfoKHR       decode_usage{};
+        VkVideoEncodeUsageInfoKHR       encode_usage{};
         VkVideoProfileInfoKHR           profile{};
 
         explicit VideoProfileChain(const VideoProfileSpec& spec);

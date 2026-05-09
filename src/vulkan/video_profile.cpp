@@ -43,21 +43,35 @@ namespace vkvv {
         av1.stdProfile       = spec.std_profile != UINT32_MAX ? static_cast<StdVideoAV1Profile>(spec.std_profile) : STD_VIDEO_AV1_PROFILE_MAIN;
         av1.filmGrainSupport = VK_FALSE;
 
+        h264_encode.sType         = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_PROFILE_INFO_KHR;
+        h264_encode.stdProfileIdc = spec.std_profile != UINT32_MAX ? static_cast<StdVideoH264ProfileIdc>(spec.std_profile) : STD_VIDEO_H264_PROFILE_IDC_HIGH;
+
         void* codec_profile = nullptr;
+        bool  encode        = false;
         switch (spec.operation) {
             case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR: codec_profile = &h264; break;
             case VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR: codec_profile = &h265; break;
             case VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR: codec_profile = &vp9; break;
             case VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR: codec_profile = &av1; break;
+            case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR:
+                codec_profile = &h264_encode;
+                encode        = true;
+                break;
             default: break;
         }
 
-        usage.sType           = VK_STRUCTURE_TYPE_VIDEO_DECODE_USAGE_INFO_KHR;
-        usage.pNext           = codec_profile;
-        usage.videoUsageHints = VK_VIDEO_DECODE_USAGE_STREAMING_BIT_KHR;
+        decode_usage.sType           = VK_STRUCTURE_TYPE_VIDEO_DECODE_USAGE_INFO_KHR;
+        decode_usage.pNext           = codec_profile;
+        decode_usage.videoUsageHints = VK_VIDEO_DECODE_USAGE_STREAMING_BIT_KHR;
+
+        encode_usage.sType             = VK_STRUCTURE_TYPE_VIDEO_ENCODE_USAGE_INFO_KHR;
+        encode_usage.pNext             = codec_profile;
+        encode_usage.videoUsageHints   = VK_VIDEO_ENCODE_USAGE_STREAMING_BIT_KHR;
+        encode_usage.videoContentHints = VK_VIDEO_ENCODE_CONTENT_DEFAULT_KHR;
+        encode_usage.tuningMode        = VK_VIDEO_ENCODE_TUNING_MODE_LOW_LATENCY_KHR;
 
         profile.sType               = VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR;
-        profile.pNext               = &usage;
+        profile.pNext               = encode ? static_cast<void*>(&encode_usage) : static_cast<void*>(&decode_usage);
         profile.videoCodecOperation = spec.operation;
         profile.chromaSubsampling   = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR;
         profile.lumaBitDepth        = spec.bit_depth;

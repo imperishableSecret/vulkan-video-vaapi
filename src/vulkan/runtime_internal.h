@@ -125,6 +125,21 @@ namespace vkvv {
         VkVideoComponentBitDepthFlagsKHR chroma_bit_depth   = 0;
     };
 
+    struct EncodeImageKey {
+        VkVideoCodecOperationFlagsKHR    codec_operation = 0;
+        uint32_t                         codec_profile   = 0;
+        VkFormat                         picture_format  = VK_FORMAT_UNDEFINED;
+        unsigned int                     va_rt_format    = 0;
+        unsigned int                     va_fourcc       = 0;
+        VkExtent2D                       coded_extent{};
+        VkImageUsageFlags                usage              = 0;
+        VkImageCreateFlags               create_flags       = 0;
+        VkImageTiling                    tiling             = VK_IMAGE_TILING_OPTIMAL;
+        VkVideoChromaSubsamplingFlagsKHR chroma_subsampling = 0;
+        VkVideoComponentBitDepthFlagsKHR luma_bit_depth     = 0;
+        VkVideoComponentBitDepthFlagsKHR chroma_bit_depth   = 0;
+    };
+
     struct SurfaceResource {
         VkImage                       image              = VK_NULL_HANDLE;
         VkImageView                   view               = VK_NULL_HANDLE;
@@ -148,6 +163,7 @@ namespace vkvv {
         bool                          has_drm_format_modifier = false;
         bool                          exported                = false;
         VkvvExternalSurfaceImport     import;
+        EncodeImageKey                encode_key{};
         uint64_t                      last_nondisplay_skip_generation        = 0;
         uint64_t                      last_nondisplay_skip_shadow_generation = 0;
         VkDeviceMemory                last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
@@ -315,6 +331,7 @@ namespace vkvv {
     void                 unregister_export_seed_resource(VulkanRuntime* runtime, SurfaceResource* resource);
     void                 destroy_surface_resource(VulkanRuntime* runtime, VkvvSurface* surface);
     bool                 ensure_surface_resource(VulkanRuntime* runtime, VkvvSurface* surface, const DecodeImageKey& key, char* reason, size_t reason_size);
+    bool                 ensure_encode_input_resource(VulkanRuntime* runtime, VkvvSurface* surface, const EncodeImageKey& key, char* reason, size_t reason_size);
     void                 destroy_upload_buffer(VulkanRuntime* runtime, UploadBuffer* upload);
     bool     ensure_bitstream_upload_buffer(VulkanRuntime* runtime, const VideoProfileSpec& profile_spec, const void* data, size_t data_size, VkDeviceSize size_alignment,
                                             VkBufferUsageFlags usage, UploadBuffer* upload, const char* label, char* reason, size_t reason_size);

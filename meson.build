@@ -192,6 +192,16 @@ encode_runtime_smoke = executable(
   install: false,
 )
 
+encode_surface_smoke = executable(
+  'vkvv-h264-encode-surface-smoke',
+  files(
+    'tests/smoke/h264/encode_surface_smoke.cpp',
+  ) + vulkan_runtime_sources,
+  include_directories: src_inc,
+  dependencies: [libva_dep, libdrm_dep, vulkan_dep, threads_dep],
+  install: false,
+)
+
 hevc_session_smoke = executable(
   'vkvv-hevc-session-smoke',
   files(
@@ -300,6 +310,7 @@ driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
 
 test('smoke-session', session_smoke, is_parallel: false, timeout: 30)
 test('smoke-encode-runtime', encode_runtime_smoke, is_parallel: false, timeout: 30)
+test('smoke-h264-encode-surface', encode_surface_smoke, is_parallel: false, timeout: 30)
 test('smoke-h264-encode-parser', encode_parser_smoke, is_parallel: false, timeout: 30)
 test('smoke-hevc-session', hevc_session_smoke, is_parallel: false, timeout: 30)
 test('smoke-vp9-session', vp9_session_smoke, is_parallel: false, timeout: 30)

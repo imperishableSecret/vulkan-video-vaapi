@@ -64,6 +64,14 @@ namespace vkvv {
             existing.chroma_bit_depth == requested.chroma_bit_depth;
     }
 
+    bool encode_image_key_matches(const EncodeImageKey& existing, const EncodeImageKey& requested) {
+        return existing.codec_operation == requested.codec_operation && existing.codec_profile == requested.codec_profile && existing.picture_format == requested.picture_format &&
+            existing.va_rt_format == requested.va_rt_format && existing.va_fourcc == requested.va_fourcc && existing.coded_extent.width >= requested.coded_extent.width &&
+            existing.coded_extent.height >= requested.coded_extent.height && existing.usage == requested.usage && existing.create_flags == requested.create_flags &&
+            existing.tiling == requested.tiling && existing.chroma_subsampling == requested.chroma_subsampling && existing.luma_bit_depth == requested.luma_bit_depth &&
+            existing.chroma_bit_depth == requested.chroma_bit_depth;
+    }
+
     void destroy_export_resource(VulkanRuntime* runtime, ExportResource* resource) {
         if (resource == nullptr) {
             return;
@@ -420,6 +428,7 @@ namespace vkvv {
         resource->exportable                             = false;
         resource->has_drm_format_modifier                = false;
         resource->decode_key                             = {};
+        resource->encode_key                             = {};
         resource->layout                                 = VK_IMAGE_LAYOUT_UNDEFINED;
         resource->last_nondisplay_skip_generation        = 0;
         resource->last_nondisplay_skip_shadow_generation = 0;
@@ -710,6 +719,150 @@ namespace vkvv {
                    key.codec_operation, resource->codec_operation, extent.width, extent.height, resource->exportable ? 1U : 0U,
                    static_cast<unsigned long long>(resource->allocation_size), vkvv_trace_handle(resource->export_resource.memory), resource->import.external ? 1U : 0U,
                    resource->import.fd.valid ? 1U : 0U, static_cast<unsigned long long>(resource->import.fd.dev), static_cast<unsigned long long>(resource->import.fd.ino));
+        return true;
+    }
+
+    bool ensure_encode_input_resource(VulkanRuntime* runtime, VkvvSurface* surface, const EncodeImageKey& key, char* reason, size_t reason_size) {
+        if (!ensure_runtime_usable(runtime, reason, reason_size, "encode input surface resource")) {
+            return false;
+        }
+        if (surface == nullptr) {
+            std::snprintf(reason, reason_size, "missing encode input surface");
+            return false;
+        }
+        if (key.codec_operation == 0 || key.picture_format == VK_FORMAT_UNDEFINED || key.coded_extent.width == 0 || key.coded_extent.height == 0 ||
+            (key.usage & VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR) == 0) {
+            std::snprintf(reason, reason_size, "invalid encode image key");
+            return false;
+        }
+        if ((runtime->enabled_encode_operations & key.codec_operation) == 0) {
+            std::snprintf(reason, reason_size, "Vulkan runtime did not enable encode operation 0x%x", key.codec_operation);
+            return false;
+        }
+
+        auto* existing = static_cast<SurfaceResource*>(surface->vulkan);
+        if (existing != nullptr && existing->image != VK_NULL_HANDLE && encode_image_key_matches(existing->encode_key, key)) {
+            existing->driver_instance_id = surface->driver_instance_id;
+            existing->stream_id          = surface->stream_id;
+            existing->codec_operation    = key.codec_operation;
+            existing->surface_id         = surface->id;
+            existing->visible_extent     = {surface->width, surface->height};
+            existing->import             = surface->import;
+            vkvv_trace("encode-input-resource-reuse", "surface=%u driver=%llu stream=%llu codec=0x%x extent=%ux%u mem=%llu", surface->id,
+                       static_cast<unsigned long long>(surface->driver_instance_id), static_cast<unsigned long long>(surface->stream_id), existing->codec_operation,
+                       existing->extent.width, existing->extent.height, static_cast<unsigned long long>(existing->allocation_size));
+            return true;
+        }
+        if (existing != nullptr && existing->image != VK_NULL_HANDLE) {
+            destroy_surface_resource(runtime, surface);
+            existing = nullptr;
+        }
+
+        const VideoProfileSpec profile_spec{
+            .operation   = static_cast<VkVideoCodecOperationFlagBitsKHR>(key.codec_operation),
+            .bit_depth   = key.luma_bit_depth,
+            .std_profile = key.codec_profile,
+        };
+        VideoProfileChain         profile_chain(profile_spec);
+        VkVideoProfileListInfoKHR profile_list{};
+        profile_list.sType        = VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR;
+        profile_list.profileCount = 1;
+        profile_list.pProfiles    = &profile_chain.profile;
+
+        VkImageCreateInfo image_info{};
+        image_info.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        image_info.pNext         = &profile_list;
+        image_info.flags         = key.create_flags;
+        image_info.imageType     = VK_IMAGE_TYPE_2D;
+        image_info.format        = key.picture_format;
+        image_info.extent        = {key.coded_extent.width, key.coded_extent.height, 1};
+        image_info.mipLevels     = 1;
+        image_info.arrayLayers   = 1;
+        image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
+        image_info.tiling        = key.tiling;
+        image_info.usage         = key.usage;
+        image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+        image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        auto* resource = new (std::nothrow) SurfaceResource();
+        if (resource == nullptr) {
+            std::snprintf(reason, reason_size, "out of memory creating encode input resource");
+            return false;
+        }
+
+        VkResult result = vkCreateImage(runtime->device, &image_info, nullptr, &resource->image);
+        if (result != VK_SUCCESS) {
+            destroy_surface_resource_raw(runtime, resource);
+            record_vk_result(runtime, result, "vkCreateImage", "encode input surface", reason, reason_size);
+            return false;
+        }
+
+        VkMemoryRequirements requirements{};
+        vkGetImageMemoryRequirements(runtime->device, resource->image, &requirements);
+
+        uint32_t memory_type_index = 0;
+        if (!find_memory_type(runtime->memory_properties, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &memory_type_index) &&
+            !find_memory_type(runtime->memory_properties, requirements.memoryTypeBits, 0, &memory_type_index)) {
+            destroy_surface_resource_raw(runtime, resource);
+            std::snprintf(reason, reason_size, "no memory type for encode input image");
+            return false;
+        }
+
+        VkMemoryAllocateInfo allocate_info{};
+        allocate_info.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate_info.allocationSize  = requirements.size;
+        allocate_info.memoryTypeIndex = memory_type_index;
+        result                        = vkAllocateMemory(runtime->device, &allocate_info, nullptr, &resource->memory);
+        if (result != VK_SUCCESS) {
+            destroy_surface_resource_raw(runtime, resource);
+            record_vk_result(runtime, result, "vkAllocateMemory", "encode input surface", reason, reason_size);
+            return false;
+        }
+
+        result = vkBindImageMemory(runtime->device, resource->image, resource->memory, 0);
+        if (result != VK_SUCCESS) {
+            destroy_surface_resource_raw(runtime, resource);
+            record_vk_result(runtime, result, "vkBindImageMemory", "encode input surface", reason, reason_size);
+            return false;
+        }
+
+        VkImageViewCreateInfo view_info{};
+        view_info.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_info.image                           = resource->image;
+        view_info.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format                          = key.picture_format;
+        view_info.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        view_info.subresourceRange.baseMipLevel   = 0;
+        view_info.subresourceRange.levelCount     = 1;
+        view_info.subresourceRange.baseArrayLayer = 0;
+        view_info.subresourceRange.layerCount     = 1;
+        result                                    = vkCreateImageView(runtime->device, &view_info, nullptr, &resource->view);
+        if (result != VK_SUCCESS) {
+            destroy_surface_resource_raw(runtime, resource);
+            record_vk_result(runtime, result, "vkCreateImageView", "encode input surface", reason, reason_size);
+            return false;
+        }
+
+        resource->extent             = key.coded_extent;
+        resource->coded_extent       = key.coded_extent;
+        resource->visible_extent     = {surface->width, surface->height};
+        resource->driver_instance_id = surface->driver_instance_id;
+        resource->stream_id          = surface->stream_id;
+        resource->codec_operation    = key.codec_operation;
+        resource->surface_id         = surface->id;
+        resource->format             = key.picture_format;
+        resource->va_rt_format       = key.va_rt_format;
+        resource->va_fourcc          = key.va_fourcc;
+        resource->encode_key         = key;
+        resource->allocation_size    = requirements.size;
+        resource->import             = surface->import;
+        resource->exportable         = false;
+        surface->vulkan              = resource;
+        surface->role_flags |= VKVV_SURFACE_ROLE_ENCODE_INPUT;
+
+        vkvv_trace("encode-input-resource-create", "surface=%u driver=%llu stream=%llu codec=0x%x extent=%ux%u format=%d fourcc=0x%x mem=%llu", surface->id,
+                   static_cast<unsigned long long>(surface->driver_instance_id), static_cast<unsigned long long>(surface->stream_id), resource->codec_operation,
+                   resource->extent.width, resource->extent.height, resource->format, resource->va_fourcc, static_cast<unsigned long long>(resource->allocation_size));
         return true;
     }
 
