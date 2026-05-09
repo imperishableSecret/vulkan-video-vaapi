@@ -16,6 +16,7 @@ VAStatus vkvv_vulkan_decode_h264(void* runtime, void* session, VkvvDriver* drv, 
 void*    vkvv_vulkan_h264_encode_session_create(void);
 void     vkvv_vulkan_h264_encode_session_destroy(void* runtime, void* session);
 VAStatus vkvv_vulkan_ensure_h264_encode_session(void* runtime, void* session, const VkvvH264EncodeInput* input, char* reason, size_t reason_size);
+VAStatus vkvv_vulkan_encode_h264(void* runtime, void* session, VkvvDriver* drv, VkvvContext* vctx, const VkvvH264EncodeInput* input, char* reason, size_t reason_size);
 
 #ifdef __cplusplus
 }

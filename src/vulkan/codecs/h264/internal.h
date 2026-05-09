@@ -29,10 +29,14 @@ namespace vkvv {
 
     struct H264EncodeSession {
         VideoSession                         video;
+        UploadBuffer                         output;
+        UploadBuffer                         readback;
+        VkQueryPool                          query_pool                    = VK_NULL_HANDLE;
         VkVideoSessionParametersKHR          parameters                    = VK_NULL_HANDLE;
         StdVideoH264LevelIdc                 max_level                     = STD_VIDEO_H264_LEVEL_IDC_5_2;
         VkVideoEncodeCapabilityFlagsKHR      encode_flags                  = 0;
         VkVideoEncodeRateControlModeFlagsKHR rate_control_modes            = 0;
+        VkVideoEncodeFeedbackFlagsKHR        feedback_flags                = 0;
         uint32_t                             max_quality_levels            = 0;
         uint32_t                             quality_level                 = 0;
         uint32_t                             max_dpb_slots                 = 0;
@@ -69,6 +73,7 @@ namespace vkvv {
     void                        destroy_h264_encode_session(VulkanRuntime* runtime, H264EncodeSession* session);
     VkImageUsageFlags           h264_surface_image_usage();
     VkImageUsageFlags           h264_encode_input_image_usage();
+    VkImageUsageFlags           h264_encode_dpb_image_usage();
     bool                        reset_h264_session(VulkanRuntime* runtime, H264VideoSession* session, VkVideoSessionParametersKHR parameters, char* reason, size_t reason_size);
     bool                        h264_picture_is_invalid(const VAPictureH264& picture);
     int                         h264_dpb_slot_for_surface(const H264VideoSession* session, VASurfaceID surface_id);

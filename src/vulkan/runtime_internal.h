@@ -265,6 +265,8 @@ namespace vkvv {
         VkCommandPool                                               command_pool                   = VK_NULL_HANDLE;
         VkCommandBuffer                                             command_buffer                 = VK_NULL_HANDLE;
         VkFence                                                     fence                          = VK_NULL_HANDLE;
+        VkQueue                                                     command_queue                  = VK_NULL_HANDLE;
+        uint32_t                                                    command_queue_family           = invalid_queue_family;
         VkvvSurface*                                                pending_surface                = nullptr;
         VkVideoSessionParametersKHR                                 pending_parameters             = VK_NULL_HANDLE;
         VkDeviceSize                                                pending_upload_allocation_size = 0;
@@ -288,8 +290,10 @@ namespace vkvv {
             }
             if (command_pool != VK_NULL_HANDLE) {
                 vkDestroyCommandPool(device, command_pool, nullptr);
-                command_pool   = VK_NULL_HANDLE;
-                command_buffer = VK_NULL_HANDLE;
+                command_pool         = VK_NULL_HANDLE;
+                command_buffer       = VK_NULL_HANDLE;
+                command_queue        = VK_NULL_HANDLE;
+                command_queue_family = invalid_queue_family;
             }
         }
         void destroy_detached_export_resources();
@@ -336,8 +340,11 @@ namespace vkvv {
     bool     ensure_bitstream_upload_buffer(VulkanRuntime* runtime, const VideoProfileSpec& profile_spec, const void* data, size_t data_size, VkDeviceSize size_alignment,
                                             VkBufferUsageFlags usage, UploadBuffer* upload, const char* label, char* reason, size_t reason_size);
     bool     ensure_command_resources(VulkanRuntime* runtime, char* reason, size_t reason_size);
+    bool     ensure_command_resources_for_queue(VulkanRuntime* runtime, uint32_t queue_family, VkQueue queue, char* reason, size_t reason_size);
     bool     submit_command_buffer(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation);
+    bool     submit_command_buffer_to_queue(VulkanRuntime* runtime, VkQueue queue, char* reason, size_t reason_size, const char* operation);
     bool     submit_command_buffer_and_wait(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation);
+    bool     submit_command_buffer_and_wait_on_queue(VulkanRuntime* runtime, VkQueue queue, char* reason, size_t reason_size, const char* operation);
     void     track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool displayable,
                                   const char* operation);
     VAStatus drain_pending_work_before_sync_command(VulkanRuntime* runtime, char* reason, size_t reason_size);

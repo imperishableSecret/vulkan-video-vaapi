@@ -1,9 +1,15 @@
 #include "internal.h"
 #include "api.h"
+#include "va/private.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
+#include <cstring>
+#include <limits>
+#include <mutex>
 #include <new>
+#include <vector>
 
 namespace vkvv {
 
@@ -11,10 +17,20 @@ namespace vkvv {
         return VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     }
 
+    VkImageUsageFlags h264_encode_dpb_image_usage() {
+        return VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    }
+
     void destroy_h264_encode_session(VulkanRuntime* runtime, H264EncodeSession* session) {
         if (session == nullptr) {
             return;
         }
+        if (runtime != nullptr && session->query_pool != VK_NULL_HANDLE) {
+            vkDestroyQueryPool(runtime->device, session->query_pool, nullptr);
+        }
+        session->query_pool = VK_NULL_HANDLE;
+        destroy_upload_buffer(runtime, &session->output);
+        destroy_upload_buffer(runtime, &session->readback);
         if (runtime != nullptr && session->parameters != VK_NULL_HANDLE && runtime->destroy_video_session_parameters != nullptr) {
             runtime->destroy_video_session_parameters(runtime->device, session->parameters, nullptr);
         }
@@ -23,6 +39,7 @@ namespace vkvv {
         session->max_level                     = STD_VIDEO_H264_LEVEL_IDC_5_2;
         session->encode_flags                  = 0;
         session->rate_control_modes            = 0;
+        session->feedback_flags                = 0;
         session->max_quality_levels            = 0;
         session->quality_level                 = 0;
         session->max_dpb_slots                 = 0;
@@ -180,6 +197,256 @@ namespace vkvv {
         return record_vk_result(runtime, result, "vkCreateVideoSessionParametersKHR", "H.264 encode parameters", reason, reason_size);
     }
 
+    EncodeImageKey h264_encode_reconstructed_key(const H264EncodeSession* session, VkExtent2D coded_extent, unsigned int rt_format, unsigned int fourcc) {
+        return {
+            .codec_operation    = VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
+            .codec_profile      = session->video.key.codec_profile,
+            .picture_format     = session->video.key.reference_picture_format,
+            .va_rt_format       = rt_format,
+            .va_fourcc          = fourcc,
+            .coded_extent       = coded_extent,
+            .usage              = h264_encode_dpb_image_usage(),
+            .create_flags       = 0,
+            .tiling             = VK_IMAGE_TILING_OPTIMAL,
+            .chroma_subsampling = session->video.key.chroma_subsampling,
+            .luma_bit_depth     = session->video.key.luma_bit_depth,
+            .chroma_bit_depth   = session->video.key.chroma_bit_depth,
+        };
+    }
+
+    bool ensure_buffer(VulkanRuntime* runtime, const VideoProfileSpec* profile_spec, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags preferred_memory,
+                       VkMemoryPropertyFlags fallback_memory, UploadBuffer* buffer, const char* label, char* reason, size_t reason_size) {
+        if (!ensure_runtime_usable(runtime, reason, reason_size, label) || buffer == nullptr || size == 0) {
+            return false;
+        }
+        buffer->size = size;
+        if (buffer->buffer != VK_NULL_HANDLE && buffer->capacity >= size) {
+            return true;
+        }
+
+        destroy_upload_buffer(runtime, buffer);
+        buffer->size = size;
+
+        VideoProfileChain         profile_chain(profile_spec != nullptr ? *profile_spec : h264_encode_profile_spec);
+        VkVideoProfileListInfoKHR profile_list{};
+        profile_list.sType        = VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR;
+        profile_list.profileCount = 1;
+        profile_list.pProfiles    = &profile_chain.profile;
+
+        VkBufferCreateInfo buffer_info{};
+        buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.pNext       = profile_spec != nullptr ? &profile_list : nullptr;
+        buffer_info.size        = size;
+        buffer_info.usage       = usage;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VkResult result = vkCreateBuffer(runtime->device, &buffer_info, nullptr, &buffer->buffer);
+        if (!record_vk_result(runtime, result, "vkCreateBuffer", label, reason, reason_size)) {
+            return false;
+        }
+
+        VkMemoryRequirements requirements{};
+        vkGetBufferMemoryRequirements(runtime->device, buffer->buffer, &requirements);
+        buffer->capacity        = size;
+        buffer->allocation_size = requirements.size;
+
+        uint32_t              memory_type_index = 0;
+        VkMemoryPropertyFlags selected_memory   = preferred_memory;
+        if (!find_memory_type(runtime->memory_properties, requirements.memoryTypeBits, preferred_memory, &memory_type_index)) {
+            selected_memory = fallback_memory;
+            if (!find_memory_type(runtime->memory_properties, requirements.memoryTypeBits, fallback_memory, &memory_type_index)) {
+                destroy_upload_buffer(runtime, buffer);
+                std::snprintf(reason, reason_size, "no memory type for %s", label);
+                return false;
+            }
+        }
+        buffer->coherent = (selected_memory & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+
+        VkMemoryAllocateInfo allocate_info{};
+        allocate_info.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate_info.allocationSize  = requirements.size;
+        allocate_info.memoryTypeIndex = memory_type_index;
+        result                        = vkAllocateMemory(runtime->device, &allocate_info, nullptr, &buffer->memory);
+        if (!record_vk_result(runtime, result, "vkAllocateMemory", label, reason, reason_size)) {
+            destroy_upload_buffer(runtime, buffer);
+            return false;
+        }
+
+        result = vkBindBufferMemory(runtime->device, buffer->buffer, buffer->memory, 0);
+        if (!record_vk_result(runtime, result, "vkBindBufferMemory", label, reason, reason_size)) {
+            destroy_upload_buffer(runtime, buffer);
+            return false;
+        }
+        return true;
+    }
+
+    bool ensure_h264_encode_query_pool(VulkanRuntime* runtime, H264EncodeSession* session, char* reason, size_t reason_size) {
+        constexpr VkVideoEncodeFeedbackFlagsKHR required_feedback =
+            VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BUFFER_OFFSET_BIT_KHR | VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BYTES_WRITTEN_BIT_KHR;
+        if ((session->feedback_flags & required_feedback) != required_feedback) {
+            std::snprintf(reason, reason_size, "H.264 encode feedback flags missing required bits: supported=0x%x", session->feedback_flags);
+            return false;
+        }
+        if (session->query_pool != VK_NULL_HANDLE) {
+            return true;
+        }
+
+        VideoProfileChain                           profile_chain(h264_encode_profile_spec);
+
+        VkQueryPoolVideoEncodeFeedbackCreateInfoKHR feedback_info{};
+        feedback_info.sType               = VK_STRUCTURE_TYPE_QUERY_POOL_VIDEO_ENCODE_FEEDBACK_CREATE_INFO_KHR;
+        feedback_info.pNext               = &profile_chain.profile;
+        feedback_info.encodeFeedbackFlags = required_feedback;
+
+        VkQueryPoolCreateInfo query_info{};
+        query_info.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        query_info.pNext      = &feedback_info;
+        query_info.queryType  = VK_QUERY_TYPE_VIDEO_ENCODE_FEEDBACK_KHR;
+        query_info.queryCount = 1;
+
+        VkResult result = vkCreateQueryPool(runtime->device, &query_info, nullptr, &session->query_pool);
+        return record_vk_result(runtime, result, "vkCreateQueryPool", "H.264 encode feedback", reason, reason_size);
+    }
+
+    bool reset_h264_encode_session(VulkanRuntime* runtime, H264EncodeSession* session, char* reason, size_t reason_size) {
+        std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+        if (!ensure_command_resources_for_queue(runtime, runtime->encode_queue_family, runtime->encode_queue, reason, reason_size)) {
+            return false;
+        }
+
+        VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
+        if (!record_vk_result(runtime, result, "vkResetFences", "H.264 encode session reset", reason, reason_size)) {
+            return false;
+        }
+        result = vkResetCommandBuffer(runtime->command_buffer, 0);
+        if (!record_vk_result(runtime, result, "vkResetCommandBuffer", "H.264 encode session reset", reason, reason_size)) {
+            return false;
+        }
+
+        VkCommandBufferBeginInfo begin_info{};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        result           = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
+        if (!record_vk_result(runtime, result, "vkBeginCommandBuffer", "H.264 encode session reset", reason, reason_size)) {
+            return false;
+        }
+
+        VkVideoBeginCodingInfoKHR video_begin{};
+        video_begin.sType                  = VK_STRUCTURE_TYPE_VIDEO_BEGIN_CODING_INFO_KHR;
+        video_begin.videoSession           = session->video.session;
+        video_begin.videoSessionParameters = session->parameters;
+        runtime->cmd_begin_video_coding(runtime->command_buffer, &video_begin);
+
+        VkVideoCodingControlInfoKHR control{};
+        control.sType = VK_STRUCTURE_TYPE_VIDEO_CODING_CONTROL_INFO_KHR;
+        control.flags = VK_VIDEO_CODING_CONTROL_RESET_BIT_KHR;
+        runtime->cmd_control_video_coding(runtime->command_buffer, &control);
+
+        VkVideoEndCodingInfoKHR video_end{};
+        video_end.sType = VK_STRUCTURE_TYPE_VIDEO_END_CODING_INFO_KHR;
+        runtime->cmd_end_video_coding(runtime->command_buffer, &video_end);
+
+        result = vkEndCommandBuffer(runtime->command_buffer);
+        if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "H.264 encode session reset", reason, reason_size)) {
+            return false;
+        }
+        if (!submit_command_buffer_and_wait_on_queue(runtime, runtime->encode_queue, reason, reason_size, "H.264 encode session reset")) {
+            return false;
+        }
+        session->video.initialized = true;
+        return true;
+    }
+
+    bool h264_encode_reference_requested(const VkvvH264EncodeInput* input) {
+        return input != nullptr && input->picture != nullptr && input->picture->pic_fields.bits.reference_pic_flag != 0;
+    }
+
+    void fill_h264_encode_reference_lists(const VkvvH264EncodeInput* input, StdVideoEncodeH264ReferenceListsInfo* lists) {
+        *lists                              = {};
+        lists->num_ref_idx_l0_active_minus1 = input->picture->num_ref_idx_l0_active_minus1;
+        lists->num_ref_idx_l1_active_minus1 = input->picture->num_ref_idx_l1_active_minus1;
+        lists->RefPicList0[0]               = STD_VIDEO_H264_NO_REFERENCE_PICTURE;
+        lists->RefPicList1[0]               = STD_VIDEO_H264_NO_REFERENCE_PICTURE;
+        for (uint32_t i = 1; i < STD_VIDEO_H264_MAX_NUM_LIST_REF; i++) {
+            lists->RefPicList0[i] = STD_VIDEO_H264_NO_REFERENCE_PICTURE;
+            lists->RefPicList1[i] = STD_VIDEO_H264_NO_REFERENCE_PICTURE;
+        }
+    }
+
+    void fill_h264_encode_picture_info(const VkvvH264EncodeInput* input, const StdVideoEncodeH264ReferenceListsInfo* lists, StdVideoEncodeH264PictureInfo* picture) {
+        *picture                      = {};
+        picture->flags.IdrPicFlag     = input->frame_type == VKVV_H264_ENCODE_FRAME_IDR;
+        picture->flags.is_reference   = h264_encode_reference_requested(input);
+        picture->seq_parameter_set_id = input->sequence->seq_parameter_set_id;
+        picture->pic_parameter_set_id = input->picture->pic_parameter_set_id;
+        picture->idr_pic_id           = input->slices[0].idr_pic_id;
+        picture->primary_pic_type     = h264_encode_picture_type(input);
+        picture->frame_num            = input->picture->frame_num;
+        picture->PicOrderCnt          = input->picture->CurrPic.TopFieldOrderCnt;
+        picture->temporal_id          = 0;
+        picture->pRefLists            = lists;
+    }
+
+    void fill_h264_encode_slice_header(const VkvvH264EncodeInput* input, StdVideoEncodeH264SliceHeader* header) {
+        const VAEncSliceParameterBufferH264& slice     = input->slices[0];
+        *header                                        = {};
+        header->flags.direct_spatial_mv_pred_flag      = slice.direct_spatial_mv_pred_flag;
+        header->flags.num_ref_idx_active_override_flag = slice.num_ref_idx_active_override_flag;
+        header->first_mb_in_slice                      = slice.macroblock_address;
+        header->slice_type                             = h264_encode_slice_type(slice);
+        header->slice_alpha_c0_offset_div2             = slice.slice_alpha_c0_offset_div2;
+        header->slice_beta_offset_div2                 = slice.slice_beta_offset_div2;
+        header->slice_qp_delta                         = slice.slice_qp_delta;
+        header->cabac_init_idc                         = static_cast<StdVideoH264CabacInitIdc>(slice.cabac_init_idc);
+        header->disable_deblocking_filter_idc          = static_cast<StdVideoH264DisableDeblockingFilterIdc>(slice.disable_deblocking_filter_idc);
+    }
+
+    void fill_h264_encode_reference_info(const VkvvH264EncodeInput* input, StdVideoEncodeH264ReferenceInfo* reference) {
+        *reference                     = {};
+        reference->primary_pic_type    = h264_encode_picture_type(input);
+        reference->FrameNum            = input->picture->frame_num;
+        reference->PicOrderCnt         = input->picture->CurrPic.TopFieldOrderCnt;
+        reference->long_term_pic_num   = 0;
+        reference->long_term_frame_idx = 0;
+        reference->temporal_id         = 0;
+    }
+
+    bool copy_encoded_output_to_coded_buffer(VulkanRuntime* runtime, H264EncodeSession* session, VkvvBuffer* coded, uint32_t offset, uint32_t bytes, char* reason,
+                                             size_t reason_size) {
+        if (coded == nullptr || coded->coded_payload == nullptr) {
+            std::snprintf(reason, reason_size, "missing H.264 coded output buffer");
+            return false;
+        }
+        if (bytes == 0 || static_cast<VkDeviceSize>(offset) + bytes > session->readback.size) {
+            std::snprintf(reason, reason_size, "invalid H.264 encoded byte range offset=%u bytes=%u capacity=%llu", offset, bytes,
+                          static_cast<unsigned long long>(session->readback.size));
+            return false;
+        }
+
+        void*    mapped = nullptr;
+        VkResult result = vkMapMemory(runtime->device, session->readback.memory, 0, session->readback.size, 0, &mapped);
+        if (!record_vk_result(runtime, result, "vkMapMemory", "H.264 encoded readback", reason, reason_size)) {
+            return false;
+        }
+        if (!session->readback.coherent) {
+            VkMappedMemoryRange range{};
+            range.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+            range.memory = session->readback.memory;
+            range.offset = 0;
+            range.size   = VK_WHOLE_SIZE;
+            vkInvalidateMappedMemoryRanges(runtime->device, 1, &range);
+        }
+
+        const uint64_t generation = coded->coded_payload->generation;
+        VAStatus       status     = vkvv_coded_buffer_store(coded, static_cast<uint8_t*>(mapped) + offset, bytes, 0, generation);
+        vkUnmapMemory(runtime->device, session->readback.memory);
+        if (status != VA_STATUS_SUCCESS) {
+            std::snprintf(reason, reason_size, "failed to store H.264 coded output: %s", vaErrorStr(status));
+            return false;
+        }
+        return true;
+    }
+
 } // namespace vkvv
 
 using namespace vkvv;
@@ -289,6 +556,7 @@ VAStatus vkvv_vulkan_ensure_h264_encode_session(void* runtime_ptr, void* session
         session->max_level                     = capabilities.h264_encode.maxLevelIdc;
         session->encode_flags                  = capabilities.h264_encode.flags;
         session->rate_control_modes            = capabilities.encode.rateControlModes;
+        session->feedback_flags                = capabilities.encode.supportedEncodeFeedbackFlags;
         session->max_quality_levels            = capabilities.encode.maxQualityLevels;
         session->quality_level                 = 0;
     }
@@ -303,5 +571,257 @@ VAStatus vkvv_vulkan_ensure_h264_encode_session(void* runtime_ptr, void* session
                   requested_extent.width, requested_extent.height, session->video.key.max_coded_extent.width, session->video.key.max_coded_extent.height,
                   session->video.key.picture_format, session->max_dpb_slots, session->max_active_reference_pictures, static_cast<unsigned long long>(session->video.memory_bytes),
                   input->slice_count, session->rate_control_modes);
+    return VA_STATUS_SUCCESS;
+}
+
+VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDriver* drv, VkvvContext* vctx, const VkvvH264EncodeInput* input, char* reason, size_t reason_size) {
+    auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
+    auto* session = static_cast<H264EncodeSession*>(session_ptr);
+    if (runtime == nullptr || session == nullptr || drv == nullptr || vctx == nullptr || input == nullptr || input->picture == nullptr || input->slices == nullptr) {
+        std::snprintf(reason, reason_size, "missing H.264 encode submission state");
+        return VA_STATUS_ERROR_INVALID_CONTEXT;
+    }
+    if (session->video.session == VK_NULL_HANDLE || session->parameters == VK_NULL_HANDLE) {
+        std::snprintf(reason, reason_size, "missing H.264 encode session");
+        return VA_STATUS_ERROR_INVALID_CONTEXT;
+    }
+    if (input->frame_type != VKVV_H264_ENCODE_FRAME_IDR && input->frame_type != VKVV_H264_ENCODE_FRAME_I) {
+        std::snprintf(reason, reason_size, "H.264 Vulkan encode initially supports only I/IDR pictures");
+        return VA_STATUS_ERROR_UNIMPLEMENTED;
+    }
+
+    auto* input_surface = static_cast<VkvvSurface*>(vkvv_object_get(drv, input->input_surface, VKVV_OBJECT_SURFACE));
+    if (input_surface == nullptr || input_surface->vulkan == nullptr) {
+        std::snprintf(reason, reason_size, "missing H.264 encode input surface %u", input->input_surface);
+        return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+    auto* input_resource = static_cast<SurfaceResource*>(input_surface->vulkan);
+    if (input_resource->image == VK_NULL_HANDLE || (input_resource->encode_key.usage & VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR) == 0 || input_resource->content_generation == 0) {
+        std::snprintf(reason, reason_size, "H.264 encode input surface %u has no uploaded input image", input->input_surface);
+        return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+
+    auto* coded = static_cast<VkvvBuffer*>(vkvv_object_get(drv, input->coded_buffer, VKVV_OBJECT_BUFFER));
+    if (coded == nullptr || coded->buffer_class != VKVV_BUFFER_CLASS_ENCODE_CODED_OUTPUT || coded->coded_payload == nullptr) {
+        std::snprintf(reason, reason_size, "invalid H.264 encode coded buffer %u", input->coded_buffer);
+        return VA_STATUS_ERROR_INVALID_BUFFER;
+    }
+    vkvv_coded_buffer_mark_pending(coded, coded->coded_payload->generation + 1);
+
+    const VkExtent2D coded_extent{
+        .width  = round_up_16(input->width),
+        .height = round_up_16(input->height),
+    };
+
+    VkvvSurface*     reconstructed_surface  = nullptr;
+    SurfaceResource* reconstructed_resource = nullptr;
+    if (h264_encode_reference_requested(input)) {
+        reconstructed_surface = static_cast<VkvvSurface*>(vkvv_object_get(drv, input->reconstructed_surface, VKVV_OBJECT_SURFACE));
+        if (reconstructed_surface == nullptr) {
+            std::snprintf(reason, reason_size, "missing H.264 encode reconstructed surface %u", input->reconstructed_surface);
+            return VA_STATUS_ERROR_INVALID_SURFACE;
+        }
+        reconstructed_surface->driver_instance_id = input_surface->driver_instance_id;
+        reconstructed_surface->stream_id          = vctx->stream_id;
+        reconstructed_surface->codec_operation    = VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR;
+        const EncodeImageKey reconstructed_key    = h264_encode_reconstructed_key(session, coded_extent, input_surface->rt_format, input_surface->fourcc);
+        if (!ensure_encode_input_resource(runtime, reconstructed_surface, reconstructed_key, reason, reason_size)) {
+            return VA_STATUS_ERROR_ALLOCATION_FAILED;
+        }
+        reconstructed_resource = static_cast<SurfaceResource*>(reconstructed_surface->vulkan);
+    }
+
+    if (!ensure_h264_encode_query_pool(runtime, session, reason, reason_size)) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    if (!session->video.initialized && !reset_h264_encode_session(runtime, session, reason, reason_size)) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+
+    const VkDeviceSize output_capacity = std::max<VkDeviceSize>(coded->coded_payload->capacity, 1);
+    if (!ensure_buffer(runtime, &h264_encode_profile_spec, output_capacity, VK_BUFFER_USAGE_VIDEO_ENCODE_DST_BIT_KHR | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, &session->output, "H.264 encoded output", reason, reason_size)) {
+        return VA_STATUS_ERROR_ALLOCATION_FAILED;
+    }
+    if (!ensure_buffer(runtime, nullptr, output_capacity, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &session->readback, "H.264 encoded readback", reason, reason_size)) {
+        return VA_STATUS_ERROR_ALLOCATION_FAILED;
+    }
+
+    StdVideoEncodeH264ReferenceListsInfo reference_lists{};
+    fill_h264_encode_reference_lists(input, &reference_lists);
+    StdVideoEncodeH264PictureInfo std_picture{};
+    fill_h264_encode_picture_info(input, &reference_lists, &std_picture);
+    StdVideoEncodeH264SliceHeader std_slice{};
+    fill_h264_encode_slice_header(input, &std_slice);
+
+    VkVideoEncodeH264NaluSliceInfoKHR nalu_slice{};
+    nalu_slice.sType           = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_NALU_SLICE_INFO_KHR;
+    nalu_slice.constantQp      = std::clamp<int32_t>(input->picture->pic_init_qp, 0, 51);
+    nalu_slice.pStdSliceHeader = &std_slice;
+
+    VkVideoEncodeH264PictureInfoKHR h264_picture{};
+    h264_picture.sType               = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_PICTURE_INFO_KHR;
+    h264_picture.naluSliceEntryCount = 1;
+    h264_picture.pNaluSliceEntries   = &nalu_slice;
+    h264_picture.pStdPictureInfo     = &std_picture;
+    h264_picture.generatePrefixNalu  = VK_FALSE;
+
+    StdVideoEncodeH264ReferenceInfo    setup_std_reference{};
+    VkVideoEncodeH264DpbSlotInfoKHR    setup_h264_slot{};
+    VkVideoReferenceSlotInfoKHR        setup_slot{};
+    VkVideoPictureResourceInfoKHR      setup_picture{};
+    const VkVideoReferenceSlotInfoKHR* setup_slot_ptr = nullptr;
+    if (reconstructed_resource != nullptr) {
+        fill_h264_encode_reference_info(input, &setup_std_reference);
+        setup_h264_slot.sType             = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_DPB_SLOT_INFO_KHR;
+        setup_h264_slot.pStdReferenceInfo = &setup_std_reference;
+        setup_picture                     = make_picture_resource(reconstructed_resource, coded_extent);
+        setup_slot.sType                  = VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR;
+        setup_slot.pNext                  = &setup_h264_slot;
+        setup_slot.slotIndex              = 0;
+        setup_slot.pPictureResource       = &setup_picture;
+        setup_slot_ptr                    = &setup_slot;
+    }
+
+    std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+    if (!ensure_command_resources_for_queue(runtime, runtime->encode_queue_family, runtime->encode_queue, reason, reason_size)) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+
+    VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
+    if (!record_vk_result(runtime, result, "vkResetFences", "H.264 encode", reason, reason_size)) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    result = vkResetCommandBuffer(runtime->command_buffer, 0);
+    if (!record_vk_result(runtime, result, "vkResetCommandBuffer", "H.264 encode", reason, reason_size)) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+
+    VkCommandBufferBeginInfo begin_info{};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    result           = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
+    if (!record_vk_result(runtime, result, "vkBeginCommandBuffer", "H.264 encode", reason, reason_size)) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+
+    std::vector<VkImageMemoryBarrier2> image_barriers;
+    add_image_layout_barrier(&image_barriers, input_resource, VK_IMAGE_LAYOUT_VIDEO_ENCODE_SRC_KHR, VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR);
+    if (reconstructed_resource != nullptr) {
+        add_image_layout_barrier(&image_barriers, reconstructed_resource, VK_IMAGE_LAYOUT_VIDEO_ENCODE_DPB_KHR,
+                                 VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR | VK_ACCESS_2_VIDEO_ENCODE_WRITE_BIT_KHR);
+    }
+    if (!image_barriers.empty()) {
+        VkDependencyInfo dependency{};
+        dependency.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.imageMemoryBarrierCount = static_cast<uint32_t>(image_barriers.size());
+        dependency.pImageMemoryBarriers    = image_barriers.data();
+        vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
+    }
+
+    vkCmdResetQueryPool(runtime->command_buffer, session->query_pool, 0, 1);
+
+    VkVideoBeginCodingInfoKHR video_begin{};
+    video_begin.sType                  = VK_STRUCTURE_TYPE_VIDEO_BEGIN_CODING_INFO_KHR;
+    video_begin.videoSession           = session->video.session;
+    video_begin.videoSessionParameters = session->parameters;
+    runtime->cmd_begin_video_coding(runtime->command_buffer, &video_begin);
+
+    VkVideoPictureResourceInfoKHR src_picture = make_picture_resource(input_resource, coded_extent);
+    VkVideoEncodeInfoKHR          encode_info{};
+    encode_info.sType               = VK_STRUCTURE_TYPE_VIDEO_ENCODE_INFO_KHR;
+    encode_info.pNext               = &h264_picture;
+    encode_info.dstBuffer           = session->output.buffer;
+    encode_info.dstBufferOffset     = 0;
+    encode_info.dstBufferRange      = session->output.size;
+    encode_info.srcPictureResource  = src_picture;
+    encode_info.pSetupReferenceSlot = setup_slot_ptr;
+
+    vkCmdBeginQuery(runtime->command_buffer, session->query_pool, 0, 0);
+    runtime->cmd_encode_video(runtime->command_buffer, &encode_info);
+    vkCmdEndQuery(runtime->command_buffer, session->query_pool, 0);
+
+    VkVideoEndCodingInfoKHR video_end{};
+    video_end.sType = VK_STRUCTURE_TYPE_VIDEO_END_CODING_INFO_KHR;
+    runtime->cmd_end_video_coding(runtime->command_buffer, &video_end);
+
+    VkBufferMemoryBarrier2 encoded_barrier{};
+    encoded_barrier.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+    encoded_barrier.srcStageMask        = VK_PIPELINE_STAGE_2_VIDEO_ENCODE_BIT_KHR;
+    encoded_barrier.srcAccessMask       = VK_ACCESS_2_VIDEO_ENCODE_WRITE_BIT_KHR;
+    encoded_barrier.dstStageMask        = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    encoded_barrier.dstAccessMask       = VK_ACCESS_2_TRANSFER_READ_BIT;
+    encoded_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    encoded_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    encoded_barrier.buffer              = session->output.buffer;
+    encoded_barrier.offset              = 0;
+    encoded_barrier.size                = session->output.size;
+
+    VkDependencyInfo encoded_dependency{};
+    encoded_dependency.sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    encoded_dependency.bufferMemoryBarrierCount = 1;
+    encoded_dependency.pBufferMemoryBarriers    = &encoded_barrier;
+    vkCmdPipelineBarrier2(runtime->command_buffer, &encoded_dependency);
+
+    VkBufferCopy copy_region{};
+    copy_region.size = session->output.size;
+    vkCmdCopyBuffer(runtime->command_buffer, session->output.buffer, session->readback.buffer, 1, &copy_region);
+
+    VkBufferMemoryBarrier2 readback_barrier{};
+    readback_barrier.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+    readback_barrier.srcStageMask        = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    readback_barrier.srcAccessMask       = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    readback_barrier.dstStageMask        = VK_PIPELINE_STAGE_2_HOST_BIT;
+    readback_barrier.dstAccessMask       = VK_ACCESS_2_HOST_READ_BIT;
+    readback_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    readback_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    readback_barrier.buffer              = session->readback.buffer;
+    readback_barrier.offset              = 0;
+    readback_barrier.size                = session->readback.size;
+
+    VkDependencyInfo readback_dependency{};
+    readback_dependency.sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    readback_dependency.bufferMemoryBarrierCount = 1;
+    readback_dependency.pBufferMemoryBarriers    = &readback_barrier;
+    vkCmdPipelineBarrier2(runtime->command_buffer, &readback_dependency);
+
+    result = vkEndCommandBuffer(runtime->command_buffer);
+    if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "H.264 encode", reason, reason_size)) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    if (!submit_command_buffer_and_wait_on_queue(runtime, runtime->encode_queue, reason, reason_size, "H.264 encode")) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+
+    struct EncodeFeedback {
+        uint32_t offset;
+        uint32_t bytes_written;
+        int32_t  status;
+    } feedback{};
+    result = vkGetQueryPoolResults(runtime->device, session->query_pool, 0, 1, sizeof(feedback), &feedback, sizeof(feedback), VK_QUERY_RESULT_WITH_STATUS_BIT_KHR);
+    if (!record_vk_result(runtime, result, "vkGetQueryPoolResults", "H.264 encode feedback", reason, reason_size)) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    if (feedback.status <= 0) {
+        std::snprintf(reason, reason_size, "H.264 encode feedback reported status=%d bytes=%u", feedback.status, feedback.bytes_written);
+        return feedback.status == VK_QUERY_RESULT_STATUS_INSUFFICIENT_BITSTREAM_BUFFER_RANGE_KHR ? VA_STATUS_ERROR_NOT_ENOUGH_BUFFER : VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    if (!copy_encoded_output_to_coded_buffer(runtime, session, coded, feedback.offset, feedback.bytes_written, reason, reason_size)) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+
+    if (reconstructed_surface != nullptr) {
+        reconstructed_surface->decoded     = true;
+        reconstructed_surface->sync_status = VA_STATUS_SUCCESS;
+        reconstructed_surface->work_state  = VKVV_SURFACE_WORK_READY;
+        if (reconstructed_resource != nullptr) {
+            reconstructed_resource->content_generation++;
+        }
+    }
+    std::snprintf(reason, reason_size, "submitted H.264 Vulkan encode: %ux%u bytes=%u coded=%u input_mem=%llu recon_mem=%llu output_mem=%llu", coded_extent.width,
+                  coded_extent.height, feedback.bytes_written, input->coded_buffer, static_cast<unsigned long long>(input_resource->allocation_size),
+                  static_cast<unsigned long long>(reconstructed_resource != nullptr ? reconstructed_resource->allocation_size : 0),
+                  static_cast<unsigned long long>(session->output.allocation_size));
     return VA_STATUS_SUCCESS;
 }

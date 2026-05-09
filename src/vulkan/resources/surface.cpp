@@ -917,7 +917,7 @@ namespace vkvv {
             return false;
         }
         if (key.codec_operation == 0 || key.picture_format == VK_FORMAT_UNDEFINED || key.coded_extent.width == 0 || key.coded_extent.height == 0 ||
-            (key.usage & VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR) == 0) {
+            (key.usage & (VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR | VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR)) == 0) {
             std::snprintf(reason, reason_size, "invalid encode image key");
             return false;
         }
@@ -934,6 +934,12 @@ namespace vkvv {
             existing->surface_id         = surface->id;
             existing->visible_extent     = {surface->width, surface->height};
             existing->import             = surface->import;
+            if ((key.usage & VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR) != 0) {
+                surface->role_flags |= VKVV_SURFACE_ROLE_ENCODE_INPUT;
+            }
+            if ((key.usage & VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR) != 0) {
+                surface->role_flags |= VKVV_SURFACE_ROLE_ENCODE_RECONSTRUCTED | VKVV_SURFACE_ROLE_ENCODE_REFERENCE;
+            }
             vkvv_trace("encode-input-resource-reuse", "surface=%u driver=%llu stream=%llu codec=0x%x extent=%ux%u mem=%llu", surface->id,
                        static_cast<unsigned long long>(surface->driver_instance_id), static_cast<unsigned long long>(surface->stream_id), existing->codec_operation,
                        existing->extent.width, existing->extent.height, static_cast<unsigned long long>(existing->allocation_size));
@@ -1012,8 +1018,13 @@ namespace vkvv {
             return false;
         }
 
+        VkImageViewUsageCreateInfo view_usage{};
+        view_usage.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO;
+        view_usage.usage = key.usage & (VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR | VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR);
+
         VkImageViewCreateInfo view_info{};
         view_info.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_info.pNext                           = &view_usage;
         view_info.image                           = resource->image;
         view_info.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
         view_info.format                          = key.picture_format;
@@ -1044,7 +1055,12 @@ namespace vkvv {
         resource->import             = surface->import;
         resource->exportable         = false;
         surface->vulkan              = resource;
-        surface->role_flags |= VKVV_SURFACE_ROLE_ENCODE_INPUT;
+        if ((key.usage & VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR) != 0) {
+            surface->role_flags |= VKVV_SURFACE_ROLE_ENCODE_INPUT;
+        }
+        if ((key.usage & VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR) != 0) {
+            surface->role_flags |= VKVV_SURFACE_ROLE_ENCODE_RECONSTRUCTED | VKVV_SURFACE_ROLE_ENCODE_REFERENCE;
+        }
 
         vkvv_trace("encode-input-resource-create", "surface=%u driver=%llu stream=%llu codec=0x%x extent=%ux%u format=%d fourcc=0x%x mem=%llu", surface->id,
                    static_cast<unsigned long long>(surface->driver_instance_id), static_cast<unsigned long long>(surface->stream_id), resource->codec_operation,
@@ -1139,7 +1155,7 @@ VAStatus vkvv_vulkan_upload_encode_input_image(void* runtime_ptr, VkvvSurface* s
     }
 
     std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
-    if (!ensure_command_resources(runtime, reason, reason_size)) {
+    if (!ensure_command_resources_for_queue(runtime, runtime->encode_queue_family, runtime->encode_queue, reason, reason_size)) {
         destroy_upload_buffer(runtime, &staging);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
@@ -1191,7 +1207,7 @@ VAStatus vkvv_vulkan_upload_encode_input_image(void* runtime_ptr, VkvvSurface* s
         destroy_upload_buffer(runtime, &staging);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
-    if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "encode input upload")) {
+    if (!submit_command_buffer_and_wait_on_queue(runtime, runtime->encode_queue, reason, reason_size, "encode input upload")) {
         destroy_upload_buffer(runtime, &staging);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }

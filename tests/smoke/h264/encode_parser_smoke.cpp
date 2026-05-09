@@ -136,6 +136,7 @@ int main(void) {
         .render_buffer   = vkvv_h264_encode_render_buffer,
         .prepare_encode  = vkvv_h264_encode_prepare,
         .ensure_session  = nullptr,
+        .encode          = nullptr,
     };
 
     void* state = ops.state_create();

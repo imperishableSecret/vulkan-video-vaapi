@@ -347,7 +347,12 @@ namespace {
                 return status;
             }
         }
-        return VA_STATUS_ERROR_UNIMPLEMENTED;
+        if (vctx->encode_ops->encode == NULL) {
+            return VA_STATUS_ERROR_UNIMPLEMENTED;
+        }
+        status = vctx->encode_ops->encode(drv->vulkan, vctx->encode_session, drv, vctx, vctx->encode_state, reason, sizeof(reason));
+        vkvv_log("%s", reason);
+        return status;
     }
 
     VAStatus end_decode_picture(VkvvDriver* drv, VkvvContext* vctx) {

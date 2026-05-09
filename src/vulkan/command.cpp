@@ -55,18 +55,25 @@ namespace vkvv {
         return false;
     }
 
-    bool ensure_command_resources(VulkanRuntime* runtime, char* reason, size_t reason_size) {
+    bool ensure_command_resources_for_queue(VulkanRuntime* runtime, uint32_t queue_family, VkQueue queue, char* reason, size_t reason_size) {
         if (!ensure_runtime_usable(runtime, reason, reason_size, "video command resources")) {
             return false;
         }
-        if (runtime->command_buffer != VK_NULL_HANDLE && runtime->fence != VK_NULL_HANDLE) {
+        if (queue_family == invalid_queue_family || queue == VK_NULL_HANDLE) {
+            std::snprintf(reason, reason_size, "missing video command queue");
+            return false;
+        }
+        if (runtime->command_buffer != VK_NULL_HANDLE && runtime->fence != VK_NULL_HANDLE && runtime->command_queue_family == queue_family) {
             return true;
+        }
+        if (runtime->command_pool != VK_NULL_HANDLE || runtime->command_buffer != VK_NULL_HANDLE || runtime->fence != VK_NULL_HANDLE) {
+            runtime->destroy_command_resources();
         }
 
         VkCommandPoolCreateInfo pool_info{};
         pool_info.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         pool_info.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        pool_info.queueFamilyIndex = runtime->decode_queue_family;
+        pool_info.queueFamilyIndex = queue_family;
 
         VkResult result = vkCreateCommandPool(runtime->device, &pool_info, nullptr, &runtime->command_pool);
         if (!record_vk_result(runtime, result, "vkCreateCommandPool", "video command", reason, reason_size)) {
@@ -92,11 +99,22 @@ namespace vkvv {
             return false;
         }
 
+        runtime->command_queue_family = queue_family;
+        runtime->command_queue        = queue;
         return true;
     }
 
-    bool submit_command_buffer(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation) {
+    bool ensure_command_resources(VulkanRuntime* runtime, char* reason, size_t reason_size) {
+        return ensure_command_resources_for_queue(runtime, runtime != nullptr ? runtime->decode_queue_family : invalid_queue_family,
+                                                  runtime != nullptr ? runtime->decode_queue : VK_NULL_HANDLE, reason, reason_size);
+    }
+
+    bool submit_command_buffer_to_queue(VulkanRuntime* runtime, VkQueue queue, char* reason, size_t reason_size, const char* operation) {
         if (!ensure_runtime_usable(runtime, reason, reason_size, operation)) {
+            return false;
+        }
+        if (queue == VK_NULL_HANDLE) {
+            std::snprintf(reason, reason_size, "missing queue for %s", operation);
             return false;
         }
         VkSubmitInfo submit{};
@@ -104,12 +122,16 @@ namespace vkvv {
         submit.commandBufferCount = 1;
         submit.pCommandBuffers    = &runtime->command_buffer;
 
-        VkResult result = vkQueueSubmit(runtime->decode_queue, 1, &submit, runtime->fence);
+        VkResult result = vkQueueSubmit(queue, 1, &submit, runtime->fence);
         if (!record_vk_result(runtime, result, "vkQueueSubmit", operation, reason, reason_size)) {
             return false;
         }
 
         return true;
+    }
+
+    bool submit_command_buffer(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation) {
+        return submit_command_buffer_to_queue(runtime, runtime != nullptr ? runtime->decode_queue : VK_NULL_HANDLE, reason, reason_size, operation);
     }
 
     bool wait_for_command_fence(VulkanRuntime* runtime, uint64_t timeout_ns, char* reason, size_t reason_size, const char* operation) {
@@ -147,6 +169,13 @@ namespace vkvv {
 
     bool submit_command_buffer_and_wait(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation) {
         if (!submit_command_buffer(runtime, reason, reason_size, operation)) {
+            return false;
+        }
+        return wait_for_command_fence(runtime, std::numeric_limits<uint64_t>::max(), reason, reason_size, operation);
+    }
+
+    bool submit_command_buffer_and_wait_on_queue(VulkanRuntime* runtime, VkQueue queue, char* reason, size_t reason_size, const char* operation) {
+        if (!submit_command_buffer_to_queue(runtime, queue, reason, reason_size, operation)) {
             return false;
         }
         return wait_for_command_fence(runtime, std::numeric_limits<uint64_t>::max(), reason, reason_size, operation);

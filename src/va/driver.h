@@ -240,6 +240,7 @@ typedef struct VkvvEncodeOps {
     VAStatus (*prepare_encode)(void* state, VkvvDriver* drv, VkvvContext* vctx, unsigned int* width, unsigned int* height, VABufferID* coded_buffer, char* reason,
                                size_t reason_size);
     VAStatus (*ensure_session)(void* runtime, void* session, VkvvDriver* drv, VkvvContext* vctx, void* state, char* reason, size_t reason_size);
+    VAStatus (*encode)(void* runtime, void* session, VkvvDriver* drv, VkvvContext* vctx, void* state, char* reason, size_t reason_size);
 } VkvvEncodeOps;
 
 typedef struct VkvvContext {
