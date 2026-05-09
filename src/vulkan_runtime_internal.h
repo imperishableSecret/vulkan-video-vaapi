@@ -299,6 +299,8 @@ RetainedExportBudget retained_export_budget_from_expected(
         size_t expected_count,
         VkDeviceSize expected_bytes,
         VkDeviceSize global_cap_bytes);
+size_t runtime_retained_export_count(VulkanRuntime *runtime);
+VkDeviceSize runtime_retained_export_memory_bytes(VulkanRuntime *runtime);
 size_t runtime_detached_export_count(VulkanRuntime *runtime);
 VkDeviceSize runtime_detached_export_memory_bytes(VulkanRuntime *runtime);
 void prune_detached_exports_for_surface(

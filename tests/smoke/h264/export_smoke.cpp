@@ -52,7 +52,7 @@ vkvv::DecodeImageKey h264_decode_key(
     };
 }
 
-bool detached_memory_present(
+bool retained_memory_present(
         const vkvv::VulkanRuntime *runtime,
         VkDeviceMemory memory,
         uint64_t driver_instance_id,
@@ -464,7 +464,7 @@ bool check_untagged_export_adopts_active_decode_domain(vkvv::VulkanRuntime *runt
     if (status != VA_STATUS_SUCCESS ||
         late_resource->export_resource.memory != first_decoded_export_memory ||
         late_resource->export_resource.content_generation != late_resource->content_generation ||
-        detached_memory_present(runtime, first_decoded_export_memory,
+        retained_memory_present(runtime, first_decoded_export_memory,
                                 late_export.driver_instance_id, late_export.id)) {
         std::fprintf(stderr, "surface reuse rotated an exported pool fd instead of updating it in place\n");
         cleanup();
@@ -1000,8 +1000,8 @@ int main(void) {
         return 1;
     }
 
-    const VkDeviceSize detached_bytes_before_reattach = typed_runtime->retained_export_memory_bytes;
-    const size_t detached_count_before_reattach = typed_runtime->retained_exports.size();
+    const VkDeviceSize retained_bytes_before_reattach = typed_runtime->retained_export_memory_bytes;
+    const size_t retained_count_before_reattach = typed_runtime->retained_exports.size();
     VkvvSurface replacement{};
     replacement.id = surface.id;
     replacement.driver_instance_id = surface.driver_instance_id;
@@ -1020,11 +1020,11 @@ int main(void) {
         replacement_resource->export_resource.content_generation != 0 ||
         replacement_resource->export_resource.layout != VK_IMAGE_LAYOUT_GENERAL ||
         first_export_size == 0 ||
-        detached_bytes_before_reattach < first_export_size ||
-        typed_runtime->retained_export_memory_bytes + first_export_size != detached_bytes_before_reattach ||
-        detached_count_before_reattach == 0 ||
-        typed_runtime->retained_exports.size() + 1 != detached_count_before_reattach) {
-        std::fprintf(stderr, "replacement VA surface did not reattach its detached exported shadow image\n");
+        retained_bytes_before_reattach < first_export_size ||
+        typed_runtime->retained_export_memory_bytes + first_export_size != retained_bytes_before_reattach ||
+        retained_count_before_reattach == 0 ||
+        typed_runtime->retained_exports.size() + 1 != retained_count_before_reattach) {
+        std::fprintf(stderr, "replacement VA surface did not reattach its retained exported shadow image\n");
         if (first_fd >= 0) {
             close(first_fd);
         }
@@ -1054,7 +1054,7 @@ int main(void) {
         foreign_resource == nullptr ||
         foreign_resource->export_resource.memory == VK_NULL_HANDLE ||
         foreign_resource->export_resource.memory == first_export_memory) {
-        std::fprintf(stderr, "foreign driver namespace reused a detached export from another driver instance\n");
+        std::fprintf(stderr, "foreign driver namespace reused a retained export from another driver instance\n");
         if (first_fd >= 0) {
             close(first_fd);
         }
@@ -1083,8 +1083,8 @@ int main(void) {
     if (status != VA_STATUS_SUCCESS ||
         resized_resource == nullptr ||
         resized_resource->export_resource.memory == VK_NULL_HANDLE ||
-        detached_memory_present(typed_runtime, first_export_memory, surface.driver_instance_id, surface.id)) {
-        std::fprintf(stderr, "resized same-id surface reused or retained an incompatible detached export\n");
+        retained_memory_present(typed_runtime, first_export_memory, surface.driver_instance_id, surface.id)) {
+        std::fprintf(stderr, "resized same-id surface reused or retained an incompatible export backing\n");
         if (first_fd >= 0) {
             close(first_fd);
         }

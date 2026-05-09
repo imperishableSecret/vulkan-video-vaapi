@@ -125,7 +125,7 @@ VkDeviceSize export_memory_bytes(const SurfaceResource *resource) {
     return resource->export_resource.allocation_size;
 }
 
-size_t runtime_detached_export_count(VulkanRuntime *runtime) {
+size_t runtime_retained_export_count(VulkanRuntime *runtime) {
     if (runtime == nullptr) {
         return 0;
     }
@@ -133,12 +133,20 @@ size_t runtime_detached_export_count(VulkanRuntime *runtime) {
     return runtime->retained_exports.size();
 }
 
-VkDeviceSize runtime_detached_export_memory_bytes(VulkanRuntime *runtime) {
+VkDeviceSize runtime_retained_export_memory_bytes(VulkanRuntime *runtime) {
     if (runtime == nullptr) {
         return 0;
     }
     std::lock_guard<std::mutex> lock(runtime->export_mutex);
     return runtime->retained_export_memory_bytes;
+}
+
+size_t runtime_detached_export_count(VulkanRuntime *runtime) {
+    return runtime_retained_export_count(runtime);
+}
+
+VkDeviceSize runtime_detached_export_memory_bytes(VulkanRuntime *runtime) {
+    return runtime_retained_export_memory_bytes(runtime);
 }
 
 void VulkanRuntime::destroy_detached_export_resources() {
