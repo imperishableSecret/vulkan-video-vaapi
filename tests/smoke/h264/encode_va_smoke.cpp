@@ -99,6 +99,15 @@ namespace {
         return check(non_zero, "encoded coded segment was all zeroes") && check(has_annexb_start_code(bytes, segment->size), "encoded coded segment did not start with Annex-B");
     }
 
+    template <typename Payload>
+    bool create_misc_buffer(VADisplay display, VAContextID context, VAEncMiscParameterType type, const Payload& payload, VABufferID* buffer, const char* label) {
+        std::vector<uint8_t> misc(sizeof(VAEncMiscParameterBuffer) + sizeof(Payload));
+        auto*                header = reinterpret_cast<VAEncMiscParameterBuffer*>(misc.data());
+        header->type                = type;
+        std::memcpy(header->data, &payload, sizeof(payload));
+        return check_va(vaCreateBuffer(display, context, VAEncMiscParameterBufferType, static_cast<unsigned int>(misc.size()), 1, misc.data(), buffer), label);
+    }
+
     VAEncSequenceParameterBufferH264 make_sequence(void) {
         VAEncSequenceParameterBufferH264 sequence{};
         sequence.seq_parameter_set_id                              = 0;
@@ -258,14 +267,19 @@ int main(void) {
     VASurfaceID surfaces[3] = {VA_INVALID_SURFACE, VA_INVALID_SURFACE, VA_INVALID_SURFACE};
     VAContextID context     = VA_INVALID_ID;
     VAImage     image{};
-    VABufferID  sequence_buffer   = VA_INVALID_ID;
-    VABufferID  picture_buffer    = VA_INVALID_ID;
-    VABufferID  slice_buffer      = VA_INVALID_ID;
-    VABufferID  coded_buffer      = VA_INVALID_ID;
-    VABufferID  p_picture_buffer  = VA_INVALID_ID;
-    VABufferID  p_slice_buffer    = VA_INVALID_ID;
-    VABufferID  p2_picture_buffer = VA_INVALID_ID;
-    VABufferID  p2_slice_buffer   = VA_INVALID_ID;
+    VABufferID  sequence_buffer     = VA_INVALID_ID;
+    VABufferID  picture_buffer      = VA_INVALID_ID;
+    VABufferID  slice_buffer        = VA_INVALID_ID;
+    VABufferID  frame_rate_buffer   = VA_INVALID_ID;
+    VABufferID  rate_control_buffer = VA_INVALID_ID;
+    VABufferID  hrd_buffer          = VA_INVALID_ID;
+    VABufferID  quality_buffer      = VA_INVALID_ID;
+    VABufferID  quantization_buffer = VA_INVALID_ID;
+    VABufferID  coded_buffer        = VA_INVALID_ID;
+    VABufferID  p_picture_buffer    = VA_INVALID_ID;
+    VABufferID  p_slice_buffer      = VA_INVALID_ID;
+    VABufferID  p2_picture_buffer   = VA_INVALID_ID;
+    VABufferID  p2_slice_buffer     = VA_INVALID_ID;
 
     if (ok) {
         ok = check_va(vaCreateSurfaces(display, VA_RT_FORMAT_YUV420, 64, 64, surfaces, 3, nullptr, 0), "vaCreateSurfaces(H264 encode)") && ok;
@@ -295,12 +309,35 @@ int main(void) {
         ok = check_va(vaCreateBuffer(display, context, VAEncSequenceParameterBufferType, sizeof(sequence), 1, &sequence, &sequence_buffer), "vaCreateBuffer(sequence)") && ok;
         ok = check_va(vaCreateBuffer(display, context, VAEncPictureParameterBufferType, sizeof(picture), 1, &picture, &picture_buffer), "vaCreateBuffer(picture)") && ok;
         ok = check_va(vaCreateBuffer(display, context, VAEncSliceParameterBufferType, sizeof(slice), 1, &slice, &slice_buffer), "vaCreateBuffer(slice)") && ok;
+
+        VAEncMiscParameterFrameRate frame_rate{};
+        frame_rate.framerate = (1u << 16u) | 60u;
+        ok                   = create_misc_buffer(display, context, VAEncMiscParameterTypeFrameRate, frame_rate, &frame_rate_buffer, "vaCreateBuffer(frame rate)") && ok;
+
+        VAEncMiscParameterRateControl rate_control{};
+        rate_control.bits_per_second   = 4'000'000;
+        rate_control.target_percentage = 100;
+        rate_control.initial_qp        = 26;
+        ok = create_misc_buffer(display, context, VAEncMiscParameterTypeRateControl, rate_control, &rate_control_buffer, "vaCreateBuffer(rate control)") && ok;
+
+        VAEncMiscParameterHRD hrd{};
+        hrd.initial_buffer_fullness = 2'000'000;
+        hrd.buffer_size             = 4'000'000;
+        ok                          = create_misc_buffer(display, context, VAEncMiscParameterTypeHRD, hrd, &hrd_buffer, "vaCreateBuffer(hrd)") && ok;
+
+        VAEncMiscParameterBufferQualityLevel quality{};
+        quality.quality_level = 1;
+        ok                    = create_misc_buffer(display, context, VAEncMiscParameterTypeQualityLevel, quality, &quality_buffer, "vaCreateBuffer(quality)") && ok;
+
+        VAEncMiscParameterQuantization quantization{};
+        quantization.quantization_flags.bits.enable_trellis_I = 1;
+        ok = create_misc_buffer(display, context, VAEncMiscParameterTypeQuantization, quantization, &quantization_buffer, "vaCreateBuffer(quantization)") && ok;
     }
 
     if (ok) {
-        VABufferID render_buffers[] = {sequence_buffer, picture_buffer, slice_buffer};
+        VABufferID render_buffers[] = {sequence_buffer, frame_rate_buffer, rate_control_buffer, hrd_buffer, quality_buffer, quantization_buffer, picture_buffer, slice_buffer};
         ok                          = check_va(vaBeginPicture(display, context, surfaces[0]), "vaBeginPicture(H264 encode)") && ok;
-        ok                          = check_va(vaRenderPicture(display, context, render_buffers, 3), "vaRenderPicture(H264 encode)") && ok;
+        ok                          = check_va(vaRenderPicture(display, context, render_buffers, 8), "vaRenderPicture(H264 encode)") && ok;
         ok                          = check_va(vaEndPicture(display, context), "vaEndPicture(H264 encode)") && ok;
         ok                          = check_va(vaSyncBuffer(display, coded_buffer, UINT64_MAX), "vaSyncBuffer(coded)") && ok;
 
@@ -364,6 +401,21 @@ int main(void) {
     }
     if (slice_buffer != VA_INVALID_ID) {
         ok = check_va(vaDestroyBuffer(display, slice_buffer), "vaDestroyBuffer(slice)") && ok;
+    }
+    if (frame_rate_buffer != VA_INVALID_ID) {
+        ok = check_va(vaDestroyBuffer(display, frame_rate_buffer), "vaDestroyBuffer(frame rate)") && ok;
+    }
+    if (rate_control_buffer != VA_INVALID_ID) {
+        ok = check_va(vaDestroyBuffer(display, rate_control_buffer), "vaDestroyBuffer(rate control)") && ok;
+    }
+    if (hrd_buffer != VA_INVALID_ID) {
+        ok = check_va(vaDestroyBuffer(display, hrd_buffer), "vaDestroyBuffer(hrd)") && ok;
+    }
+    if (quality_buffer != VA_INVALID_ID) {
+        ok = check_va(vaDestroyBuffer(display, quality_buffer), "vaDestroyBuffer(quality)") && ok;
+    }
+    if (quantization_buffer != VA_INVALID_ID) {
+        ok = check_va(vaDestroyBuffer(display, quantization_buffer), "vaDestroyBuffer(quantization)") && ok;
     }
     if (coded_buffer != VA_INVALID_ID) {
         ok = check_va(vaDestroyBuffer(display, coded_buffer), "vaDestroyBuffer(coded)") && ok;
