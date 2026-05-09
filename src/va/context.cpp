@@ -320,39 +320,42 @@ namespace {
         if (vctx->encode_ops == NULL) {
             return VA_STATUS_ERROR_UNIMPLEMENTED;
         }
+        auto finish_picture = [vctx](VAStatus status) {
+            vctx->render_target = VA_INVALID_ID;
+            return status;
+        };
         unsigned int width        = 0;
         unsigned int height       = 0;
         VABufferID   coded_buffer = VA_INVALID_ID;
         char         reason[512]  = {};
         VAStatus     status       = vctx->encode_ops->prepare_encode(vctx->encode_state, drv, vctx, &width, &height, &coded_buffer, reason, sizeof(reason));
         vkvv_log("%s", reason);
-        vctx->render_target = VA_INVALID_ID;
         if (status != VA_STATUS_SUCCESS) {
-            return status;
+            return finish_picture(status);
         }
         if (drv->vulkan == NULL) {
-            return VA_STATUS_ERROR_OPERATION_FAILED;
+            return finish_picture(VA_STATUS_ERROR_OPERATION_FAILED);
         }
         status = vkvv_vulkan_drain_pending_work(drv->vulkan, reason, sizeof(reason));
         if (reason[0] != '\0') {
             vkvv_log("%s", reason);
         }
         if (status != VA_STATUS_SUCCESS) {
-            return status;
+            return finish_picture(status);
         }
         if (vctx->encode_ops->ensure_session != NULL) {
             status = vctx->encode_ops->ensure_session(drv->vulkan, vctx->encode_session, drv, vctx, vctx->encode_state, reason, sizeof(reason));
             vkvv_log("%s", reason);
             if (status != VA_STATUS_SUCCESS) {
-                return status;
+                return finish_picture(status);
             }
         }
         if (vctx->encode_ops->encode == NULL) {
-            return VA_STATUS_ERROR_UNIMPLEMENTED;
+            return finish_picture(VA_STATUS_ERROR_UNIMPLEMENTED);
         }
         status = vctx->encode_ops->encode(drv->vulkan, vctx->encode_session, drv, vctx, vctx->encode_state, reason, sizeof(reason));
         vkvv_log("%s", reason);
-        return status;
+        return finish_picture(status);
     }
 
     VAStatus end_decode_picture(VkvvDriver* drv, VkvvContext* vctx) {

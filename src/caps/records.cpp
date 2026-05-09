@@ -1,5 +1,7 @@
 #include "va/private.h"
 
+#include <cstdlib>
+#include <cstring>
 #include <va/va_dec_av1.h>
 #include <vulkan/vulkan.h>
 
@@ -106,6 +108,11 @@ namespace {
         add_format_variant(cap, rt_format, format_supported, surface_wired);
     }
 
+    bool encode_advertising_enabled(void) {
+        const char* value = std::getenv("VKVV_ENABLE_ENCODE");
+        return value != NULL && std::strcmp(value, "0") != 0;
+    }
+
     void add_av1_profile0(VkvvDriver* drv) {
         VkvvProfileCapability* cap = add_profile_record(drv, VAProfileAV1Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE, VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR,
                                                         VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME, drv->caps.av1_limits, drv->caps.av1 || drv->caps.av1_10, true, true);
@@ -155,9 +162,10 @@ void vkvv_init_profile_capabilities(VkvvDriver* drv) {
                               drv->caps.surface_export_nv12);
     add_vp9_profile2(drv);
     add_av1_profile0(drv);
+    const bool advertise_h264_encode = drv->caps.h264_encode && encode_advertising_enabled();
     add_single_format_profile(drv, VAProfileH264High, VAEntrypointEncSlice, VKVV_CODEC_DIRECTION_ENCODE, VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
-                              VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME, VA_RT_FORMAT_YUV420, drv->caps.h264_encode_limits, drv->caps.h264_encode, false, false,
-                              drv->caps.h264_encode, false);
+                              VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME, VA_RT_FORMAT_YUV420, drv->caps.h264_encode_limits, drv->caps.h264_encode, advertise_h264_encode,
+                              advertise_h264_encode, drv->caps.h264_encode, advertise_h264_encode);
     add_single_format_profile(drv, VAProfileH264High, VAEntrypointEncSliceLP, VKVV_CODEC_DIRECTION_ENCODE, VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
                               VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME, VA_RT_FORMAT_YUV420, drv->caps.h264_encode_limits, drv->caps.h264_encode, false, false,
                               drv->caps.h264_encode, false);

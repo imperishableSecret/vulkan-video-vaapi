@@ -4,6 +4,7 @@
 #include "codecs/vp9/vp9.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <va/va_dec_av1.h>
 #include <va/va_dec_hevc.h>
@@ -485,6 +486,7 @@ int main(void) {
     drv.caps.surface_export      = true;
     drv.caps.surface_export_nv12 = true;
     drv.caps.surface_export_p010 = true;
+    unsetenv("VKVV_ENABLE_ENCODE");
     vkvv_init_profile_capabilities(&drv);
 
     const VkvvProfileCapability* h264_decode = vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointVLD);
@@ -546,10 +548,21 @@ int main(void) {
         check(av1_features.value != VA_ATTRIB_NOT_SUPPORTED && av1_feature_value.bits.lst_support == 0, "AV1 feature attribute should be present with large-scale tile disabled") &&
         ok;
 
+    const VkvvProfileCapability* h264_encode_hidden = vkvv_profile_capability_record(&drv, VAProfileH264High, VAEntrypointEncSlice, VKVV_CODEC_DIRECTION_ENCODE);
+    ok = check(h264_encode_hidden != nullptr && h264_encode_hidden->hardware_supported && !h264_encode_hidden->parser_wired && !h264_encode_hidden->runtime_wired &&
+                   !h264_encode_hidden->surface_wired && !h264_encode_hidden->advertise,
+               "H.264 EncSlice should stay hidden while the encode advertising gate is off") &&
+        ok;
+    ok = check(vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointEncSlice) == nullptr, "H.264 EncSlice should not advertise with encode gate off") && ok;
+
+    setenv("VKVV_ENABLE_ENCODE", "1", 1);
+    vkvv_init_profile_capabilities(&drv);
+    unsetenv("VKVV_ENABLE_ENCODE");
+
     const VkvvProfileCapability* h264_encode = vkvv_profile_capability_record(&drv, VAProfileH264High, VAEntrypointEncSlice, VKVV_CODEC_DIRECTION_ENCODE);
-    ok = check(h264_encode != nullptr && h264_encode->hardware_supported && !h264_encode->parser_wired && !h264_encode->runtime_wired && !h264_encode->surface_wired &&
-                   !h264_encode->advertise,
-               "H.264 encode descriptor should be present but inert") &&
+    ok = check(h264_encode != nullptr && h264_encode->hardware_supported && h264_encode->parser_wired && h264_encode->runtime_wired && h264_encode->surface_wired &&
+                   h264_encode->advertise && h264_encode->direction == VKVV_CODEC_DIRECTION_ENCODE,
+               "H.264 EncSlice descriptor should be advertised when encode is supported") &&
         ok;
     ok = check(h264_encode != nullptr && h264_encode->vulkan_codec_operation == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
                "H.264 encode descriptor should carry the Vulkan H.264 encode operation") &&
@@ -557,7 +570,13 @@ int main(void) {
     ok = check(h264_encode != nullptr && std::strcmp(h264_encode->required_extension, VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME) == 0,
                "H.264 encode descriptor should carry the Vulkan H.264 encode extension name") &&
         ok;
-    ok = check(vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointEncSlice) == nullptr, "H.264 encode entrypoint must not be advertised") && ok;
+    ok = check(h264_encode != nullptr && h264_encode->format_count == 1 && h264_encode->formats[0].fourcc == VA_FOURCC_NV12 && h264_encode->formats[0].advertise &&
+                   !h264_encode->formats[0].exportable,
+               "H.264 EncSlice should expose one non-exportable NV12 encode format") &&
+        ok;
+    ok = check(vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointEncSlice) == h264_encode, "H.264 EncSlice should be advertised") && ok;
+    ok = check(vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointEncSliceLP) == nullptr, "H.264 EncSliceLP must remain hidden") && ok;
+    ok = check(vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointEncPicture) == nullptr, "H.264 EncPicture must remain hidden") && ok;
 
     if (!ok) {
         return 1;

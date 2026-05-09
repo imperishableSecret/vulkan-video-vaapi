@@ -248,6 +248,13 @@ encode_submit_smoke = executable(
   install: false,
 )
 
+encode_va_smoke = executable(
+  'vkvv-h264-encode-va-smoke',
+  files('tests/smoke/h264/encode_va_smoke.cpp'),
+  dependencies: [libva_dep, libva_drm_dep],
+  install: false,
+)
+
 hevc_session_smoke = executable(
   'vkvv-hevc-session-smoke',
   files(
@@ -355,12 +362,18 @@ driver_test_env = environment()
 driver_test_env.set('LIBVA_DRIVER_NAME', 'nvidia_vulkan')
 driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
 
+encode_driver_test_env = environment()
+encode_driver_test_env.set('LIBVA_DRIVER_NAME', 'nvidia_vulkan')
+encode_driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
+encode_driver_test_env.set('VKVV_ENABLE_ENCODE', '1')
+
 test('smoke-session', session_smoke, is_parallel: false, timeout: 30)
 test('smoke-encode-runtime', encode_runtime_smoke, is_parallel: false, timeout: 30)
 test('smoke-h264-encode-surface', encode_surface_smoke, is_parallel: false, timeout: 30)
 test('smoke-h264-encode-image', encode_image_smoke, is_parallel: false, timeout: 30)
 test('smoke-h264-encode-session', encode_session_smoke, is_parallel: false, timeout: 30)
 test('smoke-h264-encode-submit', encode_submit_smoke, is_parallel: false, timeout: 30)
+test('smoke-h264-encode-va', encode_va_smoke, env: encode_driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-h264-encode-parser', encode_parser_smoke, is_parallel: false, timeout: 30)
 test('smoke-hevc-session', hevc_session_smoke, is_parallel: false, timeout: 30)
 test('smoke-vp9-session', vp9_session_smoke, is_parallel: false, timeout: 30)
