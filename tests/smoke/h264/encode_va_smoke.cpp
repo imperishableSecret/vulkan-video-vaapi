@@ -102,31 +102,65 @@ namespace {
         return sequence;
     }
 
-    VAEncPictureParameterBufferH264 make_picture(VASurfaceID reconstructed_surface, VABufferID coded_buffer) {
-        VAEncPictureParameterBufferH264 picture{};
-        picture.CurrPic.picture_id                                     = reconstructed_surface;
-        picture.CurrPic.frame_idx                                      = 0;
-        picture.CurrPic.TopFieldOrderCnt                               = 0;
-        picture.coded_buf                                              = coded_buffer;
-        picture.pic_parameter_set_id                                   = 0;
-        picture.seq_parameter_set_id                                   = 0;
-        picture.frame_num                                              = 0;
-        picture.pic_init_qp                                            = 26;
-        picture.pic_fields.bits.idr_pic_flag                           = 1;
-        picture.pic_fields.bits.reference_pic_flag                     = 1;
-        picture.pic_fields.bits.deblocking_filter_control_present_flag = 1;
+    VAPictureH264 invalid_picture(void) {
+        VAPictureH264 picture{};
+        picture.picture_id = VA_INVALID_ID;
+        picture.flags      = VA_PICTURE_H264_INVALID;
         return picture;
     }
 
-    VAEncSliceParameterBufferH264 make_slice(void) {
+    VAPictureH264 reference_picture(VASurfaceID surface, uint16_t frame_idx, int32_t poc) {
+        VAPictureH264 picture{};
+        picture.picture_id       = surface;
+        picture.frame_idx        = frame_idx;
+        picture.TopFieldOrderCnt = poc;
+        picture.flags            = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
+        return picture;
+    }
+
+    VAEncPictureParameterBufferH264 make_picture(VASurfaceID reconstructed_surface, VABufferID coded_buffer, bool idr, uint16_t frame_num, int32_t poc,
+                                                 VASurfaceID reference_surface = VA_INVALID_ID) {
+        VAEncPictureParameterBufferH264 picture{};
+        picture.CurrPic.picture_id                                     = reconstructed_surface;
+        picture.CurrPic.frame_idx                                      = frame_num;
+        picture.CurrPic.TopFieldOrderCnt                               = poc;
+        picture.coded_buf                                              = coded_buffer;
+        picture.pic_parameter_set_id                                   = 0;
+        picture.seq_parameter_set_id                                   = 0;
+        picture.frame_num                                              = frame_num;
+        picture.pic_init_qp                                            = 26;
+        picture.pic_fields.bits.idr_pic_flag                           = idr ? 1 : 0;
+        picture.pic_fields.bits.reference_pic_flag                     = 1;
+        picture.pic_fields.bits.deblocking_filter_control_present_flag = 1;
+        for (VAPictureH264& ref : picture.ReferenceFrames) {
+            ref = invalid_picture();
+        }
+        if (reference_surface != VA_INVALID_ID) {
+            picture.ReferenceFrames[0] = reference_picture(reference_surface, 0, 0);
+        }
+        return picture;
+    }
+
+    VAEncSliceParameterBufferH264 make_slice(uint8_t slice_type, VASurfaceID reference_surface = VA_INVALID_ID) {
         VAEncSliceParameterBufferH264 slice{};
         slice.macroblock_address            = 0;
         slice.num_macroblocks               = 16;
         slice.macroblock_info               = VA_INVALID_ID;
-        slice.slice_type                    = 2;
+        slice.slice_type                    = slice_type;
         slice.pic_parameter_set_id          = 0;
         slice.idr_pic_id                    = 0;
         slice.disable_deblocking_filter_idc = 0;
+        for (VAPictureH264& ref : slice.RefPicList0) {
+            ref = invalid_picture();
+        }
+        for (VAPictureH264& ref : slice.RefPicList1) {
+            ref = invalid_picture();
+        }
+        if (reference_surface != VA_INVALID_ID) {
+            slice.num_ref_idx_active_override_flag = 1;
+            slice.num_ref_idx_l0_active_minus1     = 0;
+            slice.RefPicList0[0]                   = reference_picture(reference_surface, 0, 0);
+        }
         return slice;
     }
 
@@ -199,17 +233,20 @@ int main(void) {
     VAConfigID config       = VA_INVALID_ID;
     ok                      = check_va(vaCreateConfig(display, VAProfileH264High, VAEntrypointEncSlice, create_attribs, 2, &config), "vaCreateConfig(H264 EncSlice CQP)") && ok;
 
-    VASurfaceID surfaces[2] = {VA_INVALID_SURFACE, VA_INVALID_SURFACE};
+    VASurfaceID surfaces[3] = {VA_INVALID_SURFACE, VA_INVALID_SURFACE, VA_INVALID_SURFACE};
     VAContextID context     = VA_INVALID_ID;
     VAImage     image{};
-    VABufferID  sequence_buffer = VA_INVALID_ID;
-    VABufferID  picture_buffer  = VA_INVALID_ID;
-    VABufferID  slice_buffer    = VA_INVALID_ID;
-    VABufferID  coded_buffer    = VA_INVALID_ID;
+    VABufferID  sequence_buffer  = VA_INVALID_ID;
+    VABufferID  picture_buffer   = VA_INVALID_ID;
+    VABufferID  slice_buffer     = VA_INVALID_ID;
+    VABufferID  coded_buffer     = VA_INVALID_ID;
+    VABufferID  p_picture_buffer = VA_INVALID_ID;
+    VABufferID  p_slice_buffer   = VA_INVALID_ID;
+    VABufferID  p_coded_buffer   = VA_INVALID_ID;
 
     if (ok) {
-        ok = check_va(vaCreateSurfaces(display, VA_RT_FORMAT_YUV420, 64, 64, surfaces, 2, nullptr, 0), "vaCreateSurfaces(H264 encode)") && ok;
-        ok = check_va(vaCreateContext(display, config, 64, 64, 0, surfaces, 2, &context), "vaCreateContext(H264 encode)") && ok;
+        ok = check_va(vaCreateSurfaces(display, VA_RT_FORMAT_YUV420, 64, 64, surfaces, 3, nullptr, 0), "vaCreateSurfaces(H264 encode)") && ok;
+        ok = check_va(vaCreateContext(display, config, 64, 64, 0, surfaces, 3, &context), "vaCreateContext(H264 encode)") && ok;
     }
 
     if (ok) {
@@ -229,8 +266,8 @@ int main(void) {
     if (ok) {
         ok = check_va(vaCreateBuffer(display, context, VAEncCodedBufferType, 1024 * 1024, 1, nullptr, &coded_buffer), "vaCreateBuffer(coded)") && ok;
         VAEncSequenceParameterBufferH264 sequence = make_sequence();
-        VAEncPictureParameterBufferH264  picture  = make_picture(surfaces[1], coded_buffer);
-        VAEncSliceParameterBufferH264    slice    = make_slice();
+        VAEncPictureParameterBufferH264  picture  = make_picture(surfaces[1], coded_buffer, true, 0, 0);
+        VAEncSliceParameterBufferH264    slice    = make_slice(2);
 
         ok = check_va(vaCreateBuffer(display, context, VAEncSequenceParameterBufferType, sizeof(sequence), 1, &sequence, &sequence_buffer), "vaCreateBuffer(sequence)") && ok;
         ok = check_va(vaCreateBuffer(display, context, VAEncPictureParameterBufferType, sizeof(picture), 1, &picture, &picture_buffer), "vaCreateBuffer(picture)") && ok;
@@ -259,6 +296,28 @@ int main(void) {
         ok = check_va(vaUnmapBuffer(display, coded_buffer), "vaUnmapBuffer(coded)") && ok;
     }
 
+    if (ok) {
+        ok = check_va(vaPutImage(display, surfaces[0], image.image_id, 0, 0, 64, 64, 0, 0, 64, 64), "vaPutImage(P encode input)") && ok;
+        ok = check_va(vaCreateBuffer(display, context, VAEncCodedBufferType, 1024 * 1024, 1, nullptr, &p_coded_buffer), "vaCreateBuffer(P coded)") && ok;
+        VAEncPictureParameterBufferH264 p_picture = make_picture(surfaces[2], p_coded_buffer, false, 1, 2, surfaces[1]);
+        VAEncSliceParameterBufferH264   p_slice   = make_slice(0, surfaces[1]);
+
+        ok = check_va(vaCreateBuffer(display, context, VAEncPictureParameterBufferType, sizeof(p_picture), 1, &p_picture, &p_picture_buffer), "vaCreateBuffer(P picture)") && ok;
+        ok = check_va(vaCreateBuffer(display, context, VAEncSliceParameterBufferType, sizeof(p_slice), 1, &p_slice, &p_slice_buffer), "vaCreateBuffer(P slice)") && ok;
+
+        VABufferID render_buffers[] = {sequence_buffer, p_picture_buffer, p_slice_buffer};
+        ok                          = check_va(vaBeginPicture(display, context, surfaces[0]), "vaBeginPicture(H264 P encode)") && ok;
+        ok                          = check_va(vaRenderPicture(display, context, render_buffers, 3), "vaRenderPicture(H264 P encode)") && ok;
+        ok                          = check_va(vaEndPicture(display, context), "vaEndPicture(H264 P encode)") && ok;
+        ok                          = check_va(vaSyncBuffer(display, p_coded_buffer, UINT64_MAX), "vaSyncBuffer(P coded)") && ok;
+
+        void* mapped_coded = nullptr;
+        ok                 = check_va(vaMapBuffer(display, p_coded_buffer, &mapped_coded), "vaMapBuffer(P coded)") && ok;
+        auto* segment      = static_cast<VACodedBufferSegment*>(mapped_coded);
+        ok                 = check(segment != nullptr && segment->size > 0 && segment->buf != nullptr, "P encoded coded segment is empty") && ok;
+        ok                 = check_va(vaUnmapBuffer(display, p_coded_buffer), "vaUnmapBuffer(P coded)") && ok;
+    }
+
     if (sequence_buffer != VA_INVALID_ID) {
         ok = check_va(vaDestroyBuffer(display, sequence_buffer), "vaDestroyBuffer(sequence)") && ok;
     }
@@ -271,14 +330,23 @@ int main(void) {
     if (coded_buffer != VA_INVALID_ID) {
         ok = check_va(vaDestroyBuffer(display, coded_buffer), "vaDestroyBuffer(coded)") && ok;
     }
+    if (p_picture_buffer != VA_INVALID_ID) {
+        ok = check_va(vaDestroyBuffer(display, p_picture_buffer), "vaDestroyBuffer(P picture)") && ok;
+    }
+    if (p_slice_buffer != VA_INVALID_ID) {
+        ok = check_va(vaDestroyBuffer(display, p_slice_buffer), "vaDestroyBuffer(P slice)") && ok;
+    }
+    if (p_coded_buffer != VA_INVALID_ID) {
+        ok = check_va(vaDestroyBuffer(display, p_coded_buffer), "vaDestroyBuffer(P coded)") && ok;
+    }
     if (image.image_id != VA_INVALID_ID) {
         ok = check_va(vaDestroyImage(display, image.image_id), "vaDestroyImage") && ok;
     }
     if (context != VA_INVALID_ID) {
         ok = check_va(vaDestroyContext(display, context), "vaDestroyContext") && ok;
     }
-    if (surfaces[0] != VA_INVALID_SURFACE || surfaces[1] != VA_INVALID_SURFACE) {
-        ok = check_va(vaDestroySurfaces(display, surfaces, 2), "vaDestroySurfaces") && ok;
+    if (surfaces[0] != VA_INVALID_SURFACE || surfaces[1] != VA_INVALID_SURFACE || surfaces[2] != VA_INVALID_SURFACE) {
+        ok = check_va(vaDestroySurfaces(display, surfaces, 3), "vaDestroySurfaces") && ok;
     }
     if (config != VA_INVALID_ID) {
         ok = check_va(vaDestroyConfig(display, config), "vaDestroyConfig") && ok;

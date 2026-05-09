@@ -44,6 +44,8 @@ namespace vkvv {
         session->quality_level                 = 0;
         session->max_dpb_slots                 = 0;
         session->max_active_reference_pictures = 0;
+        session->next_dpb_slot                 = 0;
+        session->surface_slots.clear();
     }
 
     uint32_t align_up_u32(uint32_t value, uint32_t alignment) {
@@ -361,7 +363,69 @@ namespace vkvv {
         return input != nullptr && input->picture != nullptr && input->picture->pic_fields.bits.reference_pic_flag != 0;
     }
 
-    void fill_h264_encode_reference_lists(const VkvvH264EncodeInput* input, StdVideoEncodeH264ReferenceListsInfo* lists) {
+    bool h264_encode_picture_is_invalid(const VAPictureH264& picture) {
+        return picture.picture_id == VA_INVALID_ID || (picture.flags & VA_PICTURE_H264_INVALID) != 0;
+    }
+
+    const VAPictureH264* h264_encode_l0_reference(const VkvvH264EncodeInput* input) {
+        if (input == nullptr || input->frame_type != VKVV_H264_ENCODE_FRAME_P || input->slices == nullptr || input->slice_count == 0) {
+            return nullptr;
+        }
+        const VAPictureH264& slice_ref = input->slices[0].RefPicList0[0];
+        if (!h264_encode_picture_is_invalid(slice_ref)) {
+            return &slice_ref;
+        }
+        for (uint32_t i = 0; i < 16; i++) {
+            const VAPictureH264& picture_ref = input->picture->ReferenceFrames[i];
+            if (!h264_encode_picture_is_invalid(picture_ref)) {
+                return &picture_ref;
+            }
+        }
+        return nullptr;
+    }
+
+    int h264_encode_dpb_slot_for_surface(const H264EncodeSession* session, VASurfaceID surface_id) {
+        if (session == nullptr || surface_id == VA_INVALID_ID) {
+            return -1;
+        }
+        for (const H264SurfaceDpbSlot& record : session->surface_slots) {
+            if (record.surface_id == surface_id) {
+                return record.slot;
+            }
+        }
+        return -1;
+    }
+
+    void h264_encode_set_dpb_slot_for_surface(H264EncodeSession* session, VASurfaceID surface_id, int slot) {
+        if (session == nullptr || surface_id == VA_INVALID_ID || slot < 0) {
+            return;
+        }
+        for (H264SurfaceDpbSlot& record : session->surface_slots) {
+            if (record.surface_id == surface_id) {
+                record.slot = slot;
+                return;
+            }
+        }
+        session->surface_slots.push_back({surface_id, slot});
+    }
+
+    int allocate_h264_encode_dpb_slot(H264EncodeSession* session, int forbidden_slot) {
+        if (session == nullptr || session->max_dpb_slots == 0) {
+            return -1;
+        }
+        const uint32_t slot_count = std::min<uint32_t>(session->max_dpb_slots, 2);
+        for (uint32_t attempt = 0; attempt < slot_count; attempt++) {
+            const uint32_t slot = (session->next_dpb_slot + attempt) % slot_count;
+            if (static_cast<int>(slot) == forbidden_slot) {
+                continue;
+            }
+            session->next_dpb_slot = (slot + 1) % slot_count;
+            return static_cast<int>(slot);
+        }
+        return -1;
+    }
+
+    void fill_h264_encode_reference_lists(const VkvvH264EncodeInput* input, int l0_slot, StdVideoEncodeH264ReferenceListsInfo* lists) {
         *lists                              = {};
         lists->num_ref_idx_l0_active_minus1 = input->picture->num_ref_idx_l0_active_minus1;
         lists->num_ref_idx_l1_active_minus1 = input->picture->num_ref_idx_l1_active_minus1;
@@ -370,6 +434,11 @@ namespace vkvv {
         for (uint32_t i = 1; i < STD_VIDEO_H264_MAX_NUM_LIST_REF; i++) {
             lists->RefPicList0[i] = STD_VIDEO_H264_NO_REFERENCE_PICTURE;
             lists->RefPicList1[i] = STD_VIDEO_H264_NO_REFERENCE_PICTURE;
+        }
+        if (l0_slot >= 0) {
+            lists->num_ref_idx_l0_active_minus1 = 0;
+            lists->num_ref_idx_l1_active_minus1 = 0;
+            lists->RefPicList0[0]               = static_cast<uint8_t>(l0_slot);
         }
     }
 
@@ -406,6 +475,16 @@ namespace vkvv {
         reference->primary_pic_type    = h264_encode_picture_type(input);
         reference->FrameNum            = input->picture->frame_num;
         reference->PicOrderCnt         = input->picture->CurrPic.TopFieldOrderCnt;
+        reference->long_term_pic_num   = 0;
+        reference->long_term_frame_idx = 0;
+        reference->temporal_id         = 0;
+    }
+
+    void fill_h264_encode_reference_info_from_picture(const VAPictureH264& picture, StdVideoEncodeH264ReferenceInfo* reference) {
+        *reference                     = {};
+        reference->primary_pic_type    = STD_VIDEO_H264_PICTURE_TYPE_P;
+        reference->FrameNum            = picture.frame_idx;
+        reference->PicOrderCnt         = picture.TopFieldOrderCnt;
         reference->long_term_pic_num   = 0;
         reference->long_term_frame_idx = 0;
         reference->temporal_id         = 0;
@@ -585,8 +664,8 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
         std::snprintf(reason, reason_size, "missing H.264 encode session");
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
-    if (input->frame_type != VKVV_H264_ENCODE_FRAME_IDR && input->frame_type != VKVV_H264_ENCODE_FRAME_I) {
-        std::snprintf(reason, reason_size, "H.264 Vulkan encode initially supports only I/IDR pictures");
+    if (input->frame_type == VKVV_H264_ENCODE_FRAME_B) {
+        std::snprintf(reason, reason_size, "H.264 Vulkan encode does not support B pictures yet");
         return VA_STATUS_ERROR_UNIMPLEMENTED;
     }
 
@@ -613,8 +692,39 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
         .height = round_up_16(input->height),
     };
 
+    const VAPictureH264* l0_reference_picture  = h264_encode_l0_reference(input);
+    VkvvSurface*         l0_reference_surface  = nullptr;
+    SurfaceResource*     l0_reference_resource = nullptr;
+    int                  l0_reference_slot     = -1;
+    if (input->frame_type == VKVV_H264_ENCODE_FRAME_P) {
+        if (l0_reference_picture == nullptr) {
+            std::snprintf(reason, reason_size, "missing H.264 P-frame L0 reference");
+            return VA_STATUS_ERROR_INVALID_SURFACE;
+        }
+        if (input->reconstructed_surface == l0_reference_picture->picture_id) {
+            std::snprintf(reason, reason_size, "H.264 P-frame reconstructed surface must differ from L0 reference surface %u", input->reconstructed_surface);
+            return VA_STATUS_ERROR_INVALID_SURFACE;
+        }
+        l0_reference_surface = static_cast<VkvvSurface*>(vkvv_object_get(drv, l0_reference_picture->picture_id, VKVV_OBJECT_SURFACE));
+        if (l0_reference_surface == nullptr || !l0_reference_surface->decoded || l0_reference_surface->vulkan == nullptr) {
+            std::snprintf(reason, reason_size, "H.264 P-frame reference surface %u is not ready", l0_reference_picture->picture_id);
+            return VA_STATUS_ERROR_INVALID_SURFACE;
+        }
+        l0_reference_resource = static_cast<SurfaceResource*>(l0_reference_surface->vulkan);
+        if (l0_reference_resource->image == VK_NULL_HANDLE || (l0_reference_resource->encode_key.usage & VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR) == 0) {
+            std::snprintf(reason, reason_size, "H.264 P-frame reference surface %u has no encode DPB image", l0_reference_picture->picture_id);
+            return VA_STATUS_ERROR_INVALID_SURFACE;
+        }
+        l0_reference_slot = h264_encode_dpb_slot_for_surface(session, l0_reference_picture->picture_id);
+        if (l0_reference_slot < 0) {
+            std::snprintf(reason, reason_size, "H.264 P-frame reference surface %u has no DPB slot", l0_reference_picture->picture_id);
+            return VA_STATUS_ERROR_INVALID_SURFACE;
+        }
+    }
+
     VkvvSurface*     reconstructed_surface  = nullptr;
     SurfaceResource* reconstructed_resource = nullptr;
+    int              reconstructed_slot     = -1;
     if (h264_encode_reference_requested(input)) {
         reconstructed_surface = static_cast<VkvvSurface*>(vkvv_object_get(drv, input->reconstructed_surface, VKVV_OBJECT_SURFACE));
         if (reconstructed_surface == nullptr) {
@@ -629,6 +739,15 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
         reconstructed_resource = static_cast<SurfaceResource*>(reconstructed_surface->vulkan);
+        reconstructed_slot     = h264_encode_dpb_slot_for_surface(session, input->reconstructed_surface);
+        if (reconstructed_slot < 0 || reconstructed_slot == l0_reference_slot) {
+            reconstructed_slot = allocate_h264_encode_dpb_slot(session, l0_reference_slot);
+            if (reconstructed_slot < 0) {
+                std::snprintf(reason, reason_size, "no free H.264 encode DPB slot for reconstructed surface %u", input->reconstructed_surface);
+                return VA_STATUS_ERROR_ALLOCATION_FAILED;
+            }
+            h264_encode_set_dpb_slot_for_surface(session, input->reconstructed_surface, reconstructed_slot);
+        }
     }
 
     if (!ensure_h264_encode_query_pool(runtime, session, reason, reason_size)) {
@@ -649,7 +768,7 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
     }
 
     StdVideoEncodeH264ReferenceListsInfo reference_lists{};
-    fill_h264_encode_reference_lists(input, &reference_lists);
+    fill_h264_encode_reference_lists(input, l0_reference_slot, &reference_lists);
     StdVideoEncodeH264PictureInfo std_picture{};
     fill_h264_encode_picture_info(input, &reference_lists, &std_picture);
     StdVideoEncodeH264SliceHeader std_slice{};
@@ -679,9 +798,25 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
         setup_picture                     = make_picture_resource(reconstructed_resource, coded_extent);
         setup_slot.sType                  = VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR;
         setup_slot.pNext                  = &setup_h264_slot;
-        setup_slot.slotIndex              = 0;
+        setup_slot.slotIndex              = reconstructed_slot;
         setup_slot.pPictureResource       = &setup_picture;
         setup_slot_ptr                    = &setup_slot;
+    }
+
+    StdVideoEncodeH264ReferenceInfo l0_std_reference{};
+    VkVideoEncodeH264DpbSlotInfoKHR l0_h264_slot{};
+    VkVideoReferenceSlotInfoKHR     l0_slot{};
+    VkVideoPictureResourceInfoKHR   l0_picture{};
+    const bool                      has_l0_reference = l0_reference_resource != nullptr && l0_reference_slot >= 0;
+    if (has_l0_reference) {
+        fill_h264_encode_reference_info_from_picture(*l0_reference_picture, &l0_std_reference);
+        l0_h264_slot.sType             = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_DPB_SLOT_INFO_KHR;
+        l0_h264_slot.pStdReferenceInfo = &l0_std_reference;
+        l0_picture                     = make_picture_resource(l0_reference_resource, coded_extent);
+        l0_slot.sType                  = VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR;
+        l0_slot.pNext                  = &l0_h264_slot;
+        l0_slot.slotIndex              = l0_reference_slot;
+        l0_slot.pPictureResource       = &l0_picture;
     }
 
     std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
@@ -708,6 +843,9 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
 
     std::vector<VkImageMemoryBarrier2> image_barriers;
     add_image_layout_barrier(&image_barriers, input_resource, VK_IMAGE_LAYOUT_VIDEO_ENCODE_SRC_KHR, VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR);
+    if (l0_reference_resource != nullptr) {
+        add_image_layout_barrier(&image_barriers, l0_reference_resource, VK_IMAGE_LAYOUT_VIDEO_ENCODE_DPB_KHR, VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR);
+    }
     if (reconstructed_resource != nullptr) {
         add_image_layout_barrier(&image_barriers, reconstructed_resource, VK_IMAGE_LAYOUT_VIDEO_ENCODE_DPB_KHR,
                                  VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR | VK_ACCESS_2_VIDEO_ENCODE_WRITE_BIT_KHR);
@@ -726,6 +864,8 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
     video_begin.sType                  = VK_STRUCTURE_TYPE_VIDEO_BEGIN_CODING_INFO_KHR;
     video_begin.videoSession           = session->video.session;
     video_begin.videoSessionParameters = session->parameters;
+    video_begin.referenceSlotCount     = has_l0_reference ? 1u : 0u;
+    video_begin.pReferenceSlots        = has_l0_reference ? &l0_slot : nullptr;
     runtime->cmd_begin_video_coding(runtime->command_buffer, &video_begin);
 
     VkVideoPictureResourceInfoKHR src_picture = make_picture_resource(input_resource, coded_extent);
@@ -737,6 +877,8 @@ VAStatus vkvv_vulkan_encode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
     encode_info.dstBufferRange      = session->output.size;
     encode_info.srcPictureResource  = src_picture;
     encode_info.pSetupReferenceSlot = setup_slot_ptr;
+    encode_info.referenceSlotCount  = has_l0_reference ? 1u : 0u;
+    encode_info.pReferenceSlots     = has_l0_reference ? &l0_slot : nullptr;
 
     vkCmdBeginQuery(runtime->command_buffer, session->query_pool, 0, 0);
     runtime->cmd_encode_video(runtime->command_buffer, &encode_info);

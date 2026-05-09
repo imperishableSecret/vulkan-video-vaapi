@@ -174,6 +174,12 @@ int main(void) {
         ok = check_va(ops.prepare_encode(state, &drv, &vctx, &width, &height, &coded, reason, sizeof(reason)), VA_STATUS_ERROR_INVALID_BUFFER, "missing coded buffer") && ok;
 
         ops.begin_picture(state);
+        ok = check(render_minimal_h264(&ops, state, coded_buffer, 0, false), "P-slice H.264 encode buffers were rejected") && ok;
+        ok = check_va(ops.prepare_encode(state, &drv, &vctx, &width, &height, &coded, reason, sizeof(reason)), VA_STATUS_SUCCESS, "prepare P-slice encode") && ok;
+        ok = check_va(vkvv_h264_encode_get_input(state, &drv, &vctx, &input, reason, sizeof(reason)), VA_STATUS_SUCCESS, "get P-slice H.264 encode input") && ok;
+        ok = check(input.frame_type == VKVV_H264_ENCODE_FRAME_P, "H.264 encode parser did not classify P-slice input") && ok;
+
+        ops.begin_picture(state);
         ok = check(render_minimal_h264(&ops, state, coded_buffer, 1, false), "B-slice H.264 encode buffers were rejected too early") && ok;
         ok = check_va(ops.prepare_encode(state, &drv, &vctx, &width, &height, &coded, reason, sizeof(reason)), VA_STATUS_ERROR_UNIMPLEMENTED, "B-slice rejection") && ok;
 

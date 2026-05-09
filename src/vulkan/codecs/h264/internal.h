@@ -41,6 +41,8 @@ namespace vkvv {
         uint32_t                             quality_level                 = 0;
         uint32_t                             max_dpb_slots                 = 0;
         uint32_t                             max_active_reference_pictures = 0;
+        uint32_t                             next_dpb_slot                 = 0;
+        std::vector<H264SurfaceDpbSlot>      surface_slots;
     };
 
     inline constexpr VideoProfileSpec h264_profile_spec{
