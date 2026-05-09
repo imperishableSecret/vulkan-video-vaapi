@@ -34,8 +34,8 @@ namespace {
     }
 
     bool check_hevc_reference_info() {
-        VAPictureHEVC                    pic{};
-        StdVideoDecodeH265ReferenceInfo  info{};
+        VAPictureHEVC                   pic{};
+        StdVideoDecodeH265ReferenceInfo info{};
 
         pic.flags = 0;
         vkvv::fill_hevc_reference_info(pic, &info);
@@ -66,28 +66,44 @@ namespace {
         const vkvv::HEVCRpsCounts counts = vkvv::fill_hevc_picture_rps(refs, sizeof(refs) / sizeof(refs[0]), &picture);
         bool ok = check(counts.st_curr_before == 2 && counts.st_curr_after == 2 && counts.lt_curr == 1, "HEVC RPS counts were not derived from VA RPS flags only");
 
-        ok = check(picture.RefPicSetStCurrBefore[0] == 2 && picture.RefPicSetStCurrBefore[1] == 7,
-                   "HEVC RefPicSetStCurrBefore was not sorted by descending POC") &&
-            ok;
+        ok = check(picture.RefPicSetStCurrBefore[0] == 2 && picture.RefPicSetStCurrBefore[1] == 7, "HEVC RefPicSetStCurrBefore was not sorted by descending POC") && ok;
         ok = check(picture.RefPicSetStCurrAfter[0] == 3 && picture.RefPicSetStCurrAfter[1] == 5, "HEVC RefPicSetStCurrAfter was not sorted by ascending POC") && ok;
         ok = check(picture.RefPicSetLtCurr[0] == 9, "HEVC RefPicSetLtCurr did not preserve the long-term entry") && ok;
-        ok = check(picture.RefPicSetStCurrBefore[2] == STD_VIDEO_H265_NO_REFERENCE_PICTURE &&
-                       picture.RefPicSetStCurrAfter[2] == STD_VIDEO_H265_NO_REFERENCE_PICTURE &&
+        ok = check(picture.RefPicSetStCurrBefore[2] == STD_VIDEO_H265_NO_REFERENCE_PICTURE && picture.RefPicSetStCurrAfter[2] == STD_VIDEO_H265_NO_REFERENCE_PICTURE &&
                        picture.RefPicSetLtCurr[1] == STD_VIDEO_H265_NO_REFERENCE_PICTURE,
                    "HEVC RPS helper did not clear unused RPS entries") &&
             ok;
 
         StdVideoDecodeH265PictureInfo no_rps_picture{};
-        vkvv::HEVCDpbReference        non_rps_ref = {.slot = 4, .pic_order_cnt = 50, .flags = 0};
+        vkvv::HEVCDpbReference        non_rps_ref   = {.slot = 4, .pic_order_cnt = 50, .flags = 0};
         const vkvv::HEVCRpsCounts     no_rps_counts = vkvv::fill_hevc_picture_rps(&non_rps_ref, 1, &no_rps_picture);
-        ok = check(no_rps_counts.st_curr_before == 0 && no_rps_counts.st_curr_after == 0 && no_rps_counts.lt_curr == 0,
-                   "HEVC RPS helper treated a non-RPS picture as active") &&
-            ok;
+        ok =
+            check(no_rps_counts.st_curr_before == 0 && no_rps_counts.st_curr_after == 0 && no_rps_counts.lt_curr == 0, "HEVC RPS helper treated a non-RPS picture as active") && ok;
         ok = check(no_rps_picture.RefPicSetStCurrBefore[0] == STD_VIDEO_H265_NO_REFERENCE_PICTURE &&
-                       no_rps_picture.RefPicSetStCurrAfter[0] == STD_VIDEO_H265_NO_REFERENCE_PICTURE &&
-                       no_rps_picture.RefPicSetLtCurr[0] == STD_VIDEO_H265_NO_REFERENCE_PICTURE,
+                       no_rps_picture.RefPicSetStCurrAfter[0] == STD_VIDEO_H265_NO_REFERENCE_PICTURE && no_rps_picture.RefPicSetLtCurr[0] == STD_VIDEO_H265_NO_REFERENCE_PICTURE,
                    "HEVC RPS helper emitted references without VA RPS flags") &&
             ok;
+
+        return ok;
+    }
+
+    bool check_hevc_rps_capacity_and_uniqueness() {
+        StdVideoDecodeH265PictureInfo picture{};
+        vkvv::HEVCDpbReference        refs[] = {
+            {.slot = 0, .pic_order_cnt = 0, .flags = VA_PICTURE_HEVC_RPS_ST_CURR_BEFORE},  {.slot = 1, .pic_order_cnt = 10, .flags = VA_PICTURE_HEVC_RPS_ST_CURR_BEFORE},
+            {.slot = 1, .pic_order_cnt = 99, .flags = VA_PICTURE_HEVC_RPS_ST_CURR_BEFORE}, {.slot = 2, .pic_order_cnt = 20, .flags = VA_PICTURE_HEVC_RPS_ST_CURR_BEFORE},
+            {.slot = 3, .pic_order_cnt = 30, .flags = VA_PICTURE_HEVC_RPS_ST_CURR_BEFORE}, {.slot = 4, .pic_order_cnt = 40, .flags = VA_PICTURE_HEVC_RPS_ST_CURR_BEFORE},
+            {.slot = 5, .pic_order_cnt = 50, .flags = VA_PICTURE_HEVC_RPS_ST_CURR_BEFORE}, {.slot = 6, .pic_order_cnt = 60, .flags = VA_PICTURE_HEVC_RPS_ST_CURR_BEFORE},
+            {.slot = 7, .pic_order_cnt = 70, .flags = VA_PICTURE_HEVC_RPS_ST_CURR_BEFORE}, {.slot = 8, .pic_order_cnt = 80, .flags = VA_PICTURE_HEVC_RPS_ST_CURR_BEFORE},
+        };
+
+        const vkvv::HEVCRpsCounts counts = vkvv::fill_hevc_picture_rps(refs, sizeof(refs) / sizeof(refs[0]), &picture);
+        bool          ok = check(counts.st_curr_before == STD_VIDEO_DECODE_H265_REF_PIC_SET_LIST_SIZE, "HEVC RPS helper did not cap short-term references to the Vulkan list size");
+
+        const uint8_t expected_slots[] = {7, 6, 5, 4, 3, 2, 1, 0};
+        for (uint32_t i = 0; i < STD_VIDEO_DECODE_H265_REF_PIC_SET_LIST_SIZE; i++) {
+            ok = check(picture.RefPicSetStCurrBefore[i] == expected_slots[i], "HEVC capped RPS entries were not unique and sorted") && ok;
+        }
 
         return ok;
     }
@@ -98,6 +114,7 @@ int main(void) {
     bool ok = check_hevc_dpb_slots();
     ok      = check_hevc_reference_info() && ok;
     ok      = check_hevc_rps_ordering() && ok;
+    ok      = check_hevc_rps_capacity_and_uniqueness() && ok;
 
     if (!ok) {
         return 1;
