@@ -77,6 +77,28 @@ namespace {
         std::memset(bytes + image->offsets[1], 0x80, image->data_size - image->offsets[1]);
     }
 
+    bool has_annexb_start_code(const uint8_t* bytes, unsigned int size) {
+        if (bytes == nullptr || size < 3) {
+            return false;
+        }
+        if (bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0x01) {
+            return true;
+        }
+        return size >= 4 && bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0x00 && bytes[3] == 0x01;
+    }
+
+    bool check_coded_segment(const VACodedBufferSegment* segment, const char* label) {
+        if (!check(segment != nullptr && segment->size > 0 && segment->buf != nullptr, label)) {
+            return false;
+        }
+        const auto* bytes    = static_cast<const uint8_t*>(segment->buf);
+        bool        non_zero = false;
+        for (unsigned int i = 0; i < segment->size; i++) {
+            non_zero = non_zero || bytes[i] != 0;
+        }
+        return check(non_zero, "encoded coded segment was all zeroes") && check(has_annexb_start_code(bytes, segment->size), "encoded coded segment did not start with Annex-B");
+    }
+
     VAEncSequenceParameterBufferH264 make_sequence(void) {
         VAEncSequenceParameterBufferH264 sequence{};
         sequence.seq_parameter_set_id                              = 0;
@@ -285,16 +307,8 @@ int main(void) {
         void* mapped_coded = nullptr;
         ok                 = check_va(vaMapBuffer(display, coded_buffer, &mapped_coded), "vaMapBuffer(coded)") && ok;
         auto* segment      = static_cast<VACodedBufferSegment*>(mapped_coded);
-        ok                 = check(segment != nullptr && segment->size > 0 && segment->buf != nullptr, "encoded coded segment is empty") && ok;
-        if (segment != nullptr && segment->buf != nullptr) {
-            const auto* bytes    = static_cast<const uint8_t*>(segment->buf);
-            bool        non_zero = false;
-            for (unsigned int i = 0; i < segment->size; i++) {
-                non_zero = non_zero || bytes[i] != 0;
-            }
-            ok = check(non_zero, "encoded coded segment was all zeroes") && ok;
-        }
-        ok = check_va(vaUnmapBuffer(display, coded_buffer), "vaUnmapBuffer(coded)") && ok;
+        ok                 = check_coded_segment(segment, "encoded coded segment is empty") && ok;
+        ok                 = check_va(vaUnmapBuffer(display, coded_buffer), "vaUnmapBuffer(coded)") && ok;
     }
 
     if (ok) {
@@ -314,7 +328,7 @@ int main(void) {
         void* mapped_coded = nullptr;
         ok                 = check_va(vaMapBuffer(display, coded_buffer, &mapped_coded), "vaMapBuffer(reused P coded)") && ok;
         auto* segment      = static_cast<VACodedBufferSegment*>(mapped_coded);
-        ok                 = check(segment != nullptr && segment->size > 0 && segment->buf != nullptr, "reused P encoded coded segment is empty") && ok;
+        ok                 = check_coded_segment(segment, "reused P encoded coded segment is empty") && ok;
         ok                 = check_va(vaUnmapBuffer(display, coded_buffer), "vaUnmapBuffer(reused P coded)") && ok;
     }
 
@@ -338,7 +352,7 @@ int main(void) {
         void* mapped_coded = nullptr;
         ok                 = check_va(vaMapBuffer(display, coded_buffer, &mapped_coded), "vaMapBuffer(reused P2 coded)") && ok;
         auto* segment      = static_cast<VACodedBufferSegment*>(mapped_coded);
-        ok                 = check(segment != nullptr && segment->size > 0 && segment->buf != nullptr, "reused P2 encoded coded segment is empty") && ok;
+        ok                 = check_coded_segment(segment, "reused P2 encoded coded segment is empty") && ok;
         ok                 = check_va(vaUnmapBuffer(display, coded_buffer), "vaUnmapBuffer(reused P2 coded)") && ok;
     }
 

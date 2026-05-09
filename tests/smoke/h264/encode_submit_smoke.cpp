@@ -24,6 +24,28 @@ namespace {
         return true;
     }
 
+    bool has_annexb_start_code(const unsigned char* bytes, unsigned int size) {
+        if (bytes == nullptr || size < 3) {
+            return false;
+        }
+        if (bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0x01) {
+            return true;
+        }
+        return size >= 4 && bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0x00 && bytes[3] == 0x01;
+    }
+
+    bool check_coded_segment(const VACodedBufferSegment* segment) {
+        if (!check(segment != nullptr && segment->size > 0 && segment->buf != nullptr, "encoded coded segment is empty")) {
+            return false;
+        }
+        const auto* bytes    = static_cast<const unsigned char*>(segment->buf);
+        bool        non_zero = false;
+        for (unsigned int i = 0; i < segment->size; i++) {
+            non_zero = non_zero || bytes[i] != 0;
+        }
+        return check(non_zero, "encoded coded segment was all zeroes") && check(has_annexb_start_code(bytes, segment->size), "encoded coded segment did not start with Annex-B");
+    }
+
     VASurfaceID add_test_surface(VkvvDriver* drv, unsigned int width, unsigned int height, uint64_t stream_id) {
         auto* surface = new (std::nothrow) VkvvSurface();
         if (surface == nullptr) {
@@ -195,16 +217,8 @@ int main(void) {
     void* mapped_coded = nullptr;
     ok                 = check_va(vkvvMapBuffer(&ctx, coded_buffer, &mapped_coded), VA_STATUS_SUCCESS, "map coded buffer") && ok;
     auto* segment      = static_cast<VACodedBufferSegment*>(mapped_coded);
-    ok                 = check(segment != nullptr && segment->size > 0 && segment->buf != nullptr, "encoded coded segment is empty") && ok;
-    if (segment != nullptr && segment->buf != nullptr) {
-        const auto* bytes    = static_cast<const unsigned char*>(segment->buf);
-        bool        non_zero = false;
-        for (unsigned int i = 0; i < segment->size; i++) {
-            non_zero = non_zero || bytes[i] != 0;
-        }
-        ok = check(non_zero, "encoded coded segment was all zeroes") && ok;
-    }
-    ok = check_va(vkvvUnmapBuffer(&ctx, coded_buffer), VA_STATUS_SUCCESS, "unmap coded buffer") && ok;
+    ok                 = check_coded_segment(segment) && ok;
+    ok                 = check_va(vkvvUnmapBuffer(&ctx, coded_buffer), VA_STATUS_SUCCESS, "unmap coded buffer") && ok;
 
     picture.pic_fields.bits.idr_pic_flag = 0;
     slice.slice_type                     = 0;
