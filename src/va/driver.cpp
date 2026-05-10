@@ -1,4 +1,5 @@
 #include "va/private.h"
+#include "telemetry.h"
 #include "vulkan/runtime.h"
 
 #include <atomic>
@@ -15,11 +16,6 @@
 #define VKVV_VERSION "unknown"
 #endif
 
-static bool log_enabled(void) {
-    const char* env = std::getenv("VKVV_LOG");
-    return env != NULL && std::strcmp(env, "0") != 0;
-}
-
 namespace {
 
     std::mutex            global_runtime_mutex;
@@ -29,7 +25,7 @@ namespace {
 } // namespace
 
 void vkvv_log(const char* fmt, ...) {
-    if (!log_enabled()) {
+    if (!vkvv_log_enabled()) {
         return;
     }
 
