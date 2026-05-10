@@ -4,6 +4,8 @@
 #include "vulkan/runtime_internal.h"
 #include "codecs/vp9/vp9.h"
 
+#include <array>
+
 namespace vkvv {
 
     inline constexpr uint32_t         max_vp9_reference_slots   = VKVV_VP9_REFERENCE_COUNT;
@@ -28,22 +30,22 @@ namespace vkvv {
     };
 
     struct VP9VideoSession {
-        VAProfile                       va_profile        = VAProfileVP9Profile0;
-        unsigned int                    va_rt_format      = VA_RT_FORMAT_YUV420;
-        unsigned int                    va_fourcc         = VA_FOURCC_NV12;
-        uint8_t                         bitstream_profile = 0;
-        uint8_t                         bit_depth         = 8;
-        VideoProfileSpec                profile_spec      = vp9_profile0_spec;
-        VideoSession                    video;
-        UploadBuffer                    upload;
-        VP9ReferenceSlot                reference_slots[max_vp9_reference_slots]{};
-        VkDeviceSize                    bitstream_offset_alignment    = 1;
-        VkDeviceSize                    bitstream_size_alignment      = 1;
-        StdVideoVP9Level                max_level                     = STD_VIDEO_VP9_LEVEL_6_2;
-        VkVideoDecodeCapabilityFlagsKHR decode_flags                  = 0;
-        uint32_t                        next_dpb_slot                 = 0;
-        uint32_t                        max_dpb_slots                 = 0;
-        uint32_t                        max_active_reference_pictures = 0;
+        VAProfile                                    va_profile        = VAProfileVP9Profile0;
+        unsigned int                                 va_rt_format      = VA_RT_FORMAT_YUV420;
+        unsigned int                                 va_fourcc         = VA_FOURCC_NV12;
+        uint8_t                                      bitstream_profile = 0;
+        uint8_t                                      bit_depth         = 8;
+        VideoProfileSpec                             profile_spec      = vp9_profile0_spec;
+        VideoSession                                 video;
+        std::array<UploadBuffer, command_slot_count> uploads;
+        VP9ReferenceSlot                             reference_slots[max_vp9_reference_slots]{};
+        VkDeviceSize                                 bitstream_offset_alignment    = 1;
+        VkDeviceSize                                 bitstream_size_alignment      = 1;
+        StdVideoVP9Level                             max_level                     = STD_VIDEO_VP9_LEVEL_6_2;
+        VkVideoDecodeCapabilityFlagsKHR              decode_flags                  = 0;
+        uint32_t                                     next_dpb_slot                 = 0;
+        uint32_t                                     max_dpb_slots                 = 0;
+        uint32_t                                     max_active_reference_pictures = 0;
     };
 
     void              destroy_vp9_video_session(VulkanRuntime* runtime, VP9VideoSession* session);

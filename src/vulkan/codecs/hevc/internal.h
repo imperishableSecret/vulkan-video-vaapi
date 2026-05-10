@@ -4,6 +4,8 @@
 #include "vulkan/runtime_internal.h"
 #include "codecs/hevc/hevc.h"
 
+#include <array>
+
 namespace vkvv {
 
     inline constexpr uint32_t         max_va_hevc_reference_frames = 15;
@@ -39,21 +41,21 @@ namespace vkvv {
     };
 
     struct HEVCVideoSession {
-        VAProfile                       va_profile   = VAProfileHEVCMain;
-        unsigned int                    va_rt_format = VA_RT_FORMAT_YUV420;
-        unsigned int                    va_fourcc    = VA_FOURCC_NV12;
-        uint8_t                         bit_depth    = 8;
-        VideoProfileSpec                profile_spec = hevc_main_profile_spec;
-        VideoSession                    video;
-        UploadBuffer                    upload;
-        std::vector<HEVCSurfaceDpbSlot> surface_slots;
-        VkDeviceSize                    bitstream_offset_alignment    = 1;
-        VkDeviceSize                    bitstream_size_alignment      = 1;
-        StdVideoH265LevelIdc            max_level                     = STD_VIDEO_H265_LEVEL_IDC_6_2;
-        VkVideoDecodeCapabilityFlagsKHR decode_flags                  = 0;
-        uint32_t                        next_dpb_slot                 = 0;
-        uint32_t                        max_dpb_slots                 = 0;
-        uint32_t                        max_active_reference_pictures = 0;
+        VAProfile                                    va_profile   = VAProfileHEVCMain;
+        unsigned int                                 va_rt_format = VA_RT_FORMAT_YUV420;
+        unsigned int                                 va_fourcc    = VA_FOURCC_NV12;
+        uint8_t                                      bit_depth    = 8;
+        VideoProfileSpec                             profile_spec = hevc_main_profile_spec;
+        VideoSession                                 video;
+        std::array<UploadBuffer, command_slot_count> uploads;
+        std::vector<HEVCSurfaceDpbSlot>              surface_slots;
+        VkDeviceSize                                 bitstream_offset_alignment    = 1;
+        VkDeviceSize                                 bitstream_size_alignment      = 1;
+        StdVideoH265LevelIdc                         max_level                     = STD_VIDEO_H265_LEVEL_IDC_6_2;
+        VkVideoDecodeCapabilityFlagsKHR              decode_flags                  = 0;
+        uint32_t                                     next_dpb_slot                 = 0;
+        uint32_t                                     max_dpb_slots                 = 0;
+        uint32_t                                     max_active_reference_pictures = 0;
     };
 
     struct HEVCStdParameters {

@@ -62,7 +62,9 @@ namespace vkvv {
         if (session == nullptr) {
             return;
         }
-        destroy_upload_buffer(runtime, &session->upload);
+        for (UploadBuffer& upload : session->uploads) {
+            destroy_upload_buffer(runtime, &upload);
+        }
         destroy_video_session(runtime, &session->video);
         for (AV1ReferenceSlot& slot : session->reference_slots) {
             slot = {};
@@ -257,13 +259,14 @@ VAStatus vkvv_vulkan_configure_av1_session(void* runtime_ptr, void* session_ptr,
         return VA_STATUS_SUCCESS;
     }
 
-    if (runtime == nullptr && (session->video.session != VK_NULL_HANDLE || session->upload.buffer != VK_NULL_HANDLE || session->upload.memory != VK_NULL_HANDLE)) {
+    const bool has_uploads = std::any_of(session->uploads.begin(), session->uploads.end(),
+                                         [](const UploadBuffer& upload) { return upload.buffer != VK_NULL_HANDLE || upload.memory != VK_NULL_HANDLE; });
+    if (runtime == nullptr && (session->video.session != VK_NULL_HANDLE || has_uploads)) {
         std::snprintf(reason, reason_size, "missing Vulkan runtime for AV1 session retarget");
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
 
-    const bool had_session = session->video.session != VK_NULL_HANDLE || session->upload.buffer != VK_NULL_HANDLE || session->upload.memory != VK_NULL_HANDLE ||
-        !session->surface_slots.empty() || session->max_dpb_slots != 0;
+    const bool had_session = session->video.session != VK_NULL_HANDLE || has_uploads || !session->surface_slots.empty() || session->max_dpb_slots != 0;
     if (had_session) {
         destroy_av1_video_session(runtime, session);
     }

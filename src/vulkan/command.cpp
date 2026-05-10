@@ -402,12 +402,82 @@ namespace vkvv {
         return find_pending_slot_locked(runtime, surface, nullptr) != nullptr;
     }
 
-    VAStatus drain_pending_surface_work_before_sync_command(VulkanRuntime* runtime, VkvvSurface* surface, char* reason, size_t reason_size) {
-        if (surface == nullptr || surface->work_state != VKVV_SURFACE_WORK_RENDERING) {
+    bool runtime_surface_has_pending_displayable_work(VulkanRuntime* runtime, const VkvvSurface* surface) {
+        if (runtime == nullptr || surface == nullptr) {
+            return false;
+        }
+        std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+        CommandSlot*                slot = find_pending_slot_locked(runtime, surface, nullptr);
+        return slot != nullptr && slot->pending_displayable;
+    }
+
+    VAStatus ensure_command_slot_capacity(VulkanRuntime* runtime, const char* operation, char* reason, size_t reason_size) {
+        if (!ensure_runtime_usable(runtime, reason, reason_size, operation != nullptr ? operation : "command slot capacity")) {
+            return VA_STATUS_ERROR_OPERATION_FAILED;
+        }
+
+        while (runtime_pending_work_count(runtime) >= command_slot_count) {
+            const size_t pending_before = runtime_pending_work_count(runtime);
+            vkvv_trace("pending-backpressure-drain", "operation=%s pending=%zu slots=%zu", operation != nullptr ? operation : "Vulkan decode", pending_before, command_slot_count);
+            char     completion_reason[512] = {};
+            VAStatus status                 = complete_pending_work(runtime, nullptr, std::numeric_limits<uint64_t>::max(), completion_reason, sizeof(completion_reason));
+            vkvv_trace("pending-backpressure-drain-done", "operation=%s status=%d pending_before=%zu pending_after=%zu reason=\"%s\"",
+                       operation != nullptr ? operation : "Vulkan decode", status, pending_before, runtime_pending_work_count(runtime), completion_reason);
+            if (status != VA_STATUS_SUCCESS) {
+                std::snprintf(reason, reason_size, "%s", completion_reason);
+                return status;
+            }
+        }
+
+        if (reason_size > 0) {
+            reason[0] = '\0';
+        }
+        return VA_STATUS_SUCCESS;
+    }
+
+    VAStatus complete_pending_surface_work_if_needed(VulkanRuntime* runtime, VkvvSurface* surface, const char* operation, char* reason, size_t reason_size) {
+        if (runtime == nullptr || surface == nullptr || surface->work_state != VKVV_SURFACE_WORK_RENDERING) {
             if (reason_size > 0) {
                 reason[0] = '\0';
             }
             return VA_STATUS_SUCCESS;
+        }
+        {
+            std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+            if (find_pending_slot_locked(runtime, surface, nullptr) == nullptr) {
+                if (reason_size > 0) {
+                    reason[0] = '\0';
+                }
+                return VA_STATUS_SUCCESS;
+            }
+        }
+
+        vkvv_trace("pending-reference-drain", "operation=%s surface=%u driver=%llu stream=%llu codec=0x%x", operation != nullptr ? operation : "pending reference", surface->id,
+                   static_cast<unsigned long long>(surface->driver_instance_id), static_cast<unsigned long long>(surface->stream_id), surface->codec_operation);
+        VAStatus status = complete_pending_work(runtime, surface, std::numeric_limits<uint64_t>::max(), reason, reason_size);
+        vkvv_trace("pending-reference-drain-done", "operation=%s surface=%u status=%d decoded=%u pending=%u", operation != nullptr ? operation : "pending reference", surface->id,
+                   status, surface->decoded ? 1U : 0U, surface->work_state == VKVV_SURFACE_WORK_RENDERING ? 1U : 0U);
+        return status;
+    }
+
+    VAStatus drain_pending_surface_work_before_sync_command(VulkanRuntime* runtime, VkvvSurface* surface, char* reason, size_t reason_size) {
+        if (runtime == nullptr || surface == nullptr || surface->work_state != VKVV_SURFACE_WORK_RENDERING) {
+            if (reason_size > 0) {
+                reason[0] = '\0';
+            }
+            return VA_STATUS_SUCCESS;
+        }
+        {
+            std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+            if (find_pending_slot_locked(runtime, surface, nullptr) == nullptr) {
+                vkvv_trace("pending-drain-skip", "surface=%u driver=%llu stream=%llu codec=0x%x pending=%zu reason=no-slot", surface->id,
+                           static_cast<unsigned long long>(surface->driver_instance_id), static_cast<unsigned long long>(surface->stream_id), surface->codec_operation,
+                           pending_work_count_locked(runtime));
+                if (reason_size > 0) {
+                    reason[0] = '\0';
+                }
+                return VA_STATUS_SUCCESS;
+            }
         }
         return complete_pending_work(runtime, surface, std::numeric_limits<uint64_t>::max(), reason, reason_size);
     }
@@ -438,6 +508,11 @@ using namespace vkvv;
 VAStatus vkvv_vulkan_complete_surface_work(void* runtime_ptr, VkvvSurface* surface, uint64_t timeout_ns, char* reason, size_t reason_size) {
     auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
     return complete_pending_work(runtime, surface, timeout_ns, reason, reason_size);
+}
+
+bool vkvv_vulkan_surface_has_pending_displayable_work(void* runtime_ptr, const VkvvSurface* surface) {
+    auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
+    return runtime_surface_has_pending_displayable_work(runtime, surface);
 }
 
 VAStatus vkvv_vulkan_drain_pending_work(void* runtime_ptr, char* reason, size_t reason_size) {

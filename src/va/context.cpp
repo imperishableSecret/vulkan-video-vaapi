@@ -218,7 +218,22 @@ VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
     if (vkvv_surface_has_pending_work(surface)) {
-        return VA_STATUS_ERROR_OPERATION_FAILED;
+        vkvv_trace("va-begin-target-drain", "driver=%llu ctx=%u target=%u stream=%llu codec=0x%x", (unsigned long long)drv->driver_instance_id, context, surface->id,
+                   (unsigned long long)surface->stream_id, surface->codec_operation);
+        if (drv->vulkan == NULL) {
+            return VA_STATUS_ERROR_OPERATION_FAILED;
+        }
+        char     reason[512] = {};
+        VAStatus status      = vkvv_vulkan_complete_surface_work(drv->vulkan, surface, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            vkvv_log("%s", reason);
+        }
+        if (status != VA_STATUS_SUCCESS) {
+            return status;
+        }
+        if (vkvv_surface_has_pending_work(surface)) {
+            return VA_STATUS_ERROR_TIMEDOUT;
+        }
     }
     surface->stream_id       = vctx->stream_id;
     surface->codec_operation = vctx->codec_operation;
@@ -338,9 +353,12 @@ namespace {
             return finish_surface(status);
         }
 
-        if (vkvv_surface_has_pending_work(target) && vkvv_vulkan_surface_has_exported_backing(target)) {
-            vkvv_trace("va-end-export-drain", "driver=%llu target=%u stream=%llu codec=0x%x", (unsigned long long)drv->driver_instance_id, target->id,
-                       (unsigned long long)target->stream_id, target->codec_operation);
+        const bool pending_displayable = vkvv_vulkan_surface_has_pending_displayable_work(drv->vulkan, target);
+        const bool externally_visible  = vkvv_vulkan_surface_has_exported_backing(target) || target->import.external;
+        if (vkvv_surface_has_pending_work(target) && pending_displayable && externally_visible) {
+            vkvv_trace("va-end-visible-drain", "driver=%llu target=%u stream=%llu codec=0x%x exported=%u import_external=%u", (unsigned long long)drv->driver_instance_id,
+                       target->id, (unsigned long long)target->stream_id, target->codec_operation, vkvv_vulkan_surface_has_exported_backing(target) ? 1U : 0U,
+                       target->import.external ? 1U : 0U);
             status = vkvv_vulkan_complete_surface_work(drv->vulkan, target, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
             if (reason[0] != '\0') {
                 vkvv_log("%s", reason);

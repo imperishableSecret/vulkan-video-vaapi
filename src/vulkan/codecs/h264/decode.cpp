@@ -91,6 +91,10 @@ VAStatus vkvv_vulkan_decode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
             std::snprintf(reason, reason_size, "H.264 reference surface %u is missing", ref_pic.picture_id);
             return VA_STATUS_ERROR_INVALID_SURFACE;
         }
+        VAStatus ref_status = complete_pending_surface_work_if_needed(runtime, ref_surface, "H.264 reference", reason, reason_size);
+        if (ref_status != VA_STATUS_SUCCESS) {
+            return ref_status;
+        }
         const int ref_dpb_slot = h264_dpb_slot_for_surface(session, ref_pic.picture_id);
         if (!ref_surface->decoded || ref_surface->vulkan == nullptr || ref_dpb_slot < 0) {
             std::snprintf(reason, reason_size, "H.264 reference surface %u is not decoded yet", ref_pic.picture_id);
@@ -165,15 +169,20 @@ VAStatus vkvv_vulkan_decode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
         }
     }
 
-    UploadBuffer* upload = &session->upload;
-    if (!ensure_bitstream_upload_buffer(runtime, h264_profile_spec, input->bitstream, input->bitstream_size, session->bitstream_size_alignment,
-                                        VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR, upload, "H.264 bitstream", reason, reason_size)) {
+    VAStatus capacity_status = ensure_command_slot_capacity(runtime, "H.264 decode", reason, reason_size);
+    if (capacity_status != VA_STATUS_SUCCESS) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
-        return VA_STATUS_ERROR_ALLOCATION_FAILED;
+        return capacity_status;
     }
 
     std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
     if (!ensure_command_resources(runtime, reason, reason_size)) {
+        runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
+        return VA_STATUS_ERROR_ALLOCATION_FAILED;
+    }
+    UploadBuffer* upload = &session->uploads[runtime->active_command_slot];
+    if (!ensure_bitstream_upload_buffer(runtime, h264_profile_spec, input->bitstream, input->bitstream_size, session->bitstream_size_alignment,
+                                        VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR, upload, "H.264 bitstream", reason, reason_size)) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }

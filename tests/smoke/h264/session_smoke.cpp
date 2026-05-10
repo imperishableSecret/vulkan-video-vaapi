@@ -53,13 +53,13 @@ namespace {
     bool ensure_upload(vkvv::VulkanRuntime* runtime, vkvv::H264VideoSession* session, const std::vector<uint8_t>& bytes) {
         char reason[512] = {};
         if (!check(vkvv::ensure_bitstream_upload_buffer(runtime, vkvv::h264_profile_spec, bytes.data(), bytes.size(), session->bitstream_size_alignment,
-                                                        VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR, &session->upload, "H.264 smoke bitstream", reason, sizeof(reason)),
+                                                        VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR, &session->uploads[0], "H.264 smoke bitstream", reason, sizeof(reason)),
                    "ensure_bitstream_upload_buffer failed")) {
             std::fprintf(stderr, "%s\n", reason);
             return false;
         }
-        if (!check(session->upload.buffer != VK_NULL_HANDLE && session->upload.memory != VK_NULL_HANDLE && session->upload.size >= bytes.size() &&
-                       session->upload.capacity >= session->upload.size && session->upload.mapped != nullptr,
+        if (!check(session->uploads[0].buffer != VK_NULL_HANDLE && session->uploads[0].memory != VK_NULL_HANDLE && session->uploads[0].size >= bytes.size() &&
+                       session->uploads[0].capacity >= session->uploads[0].size && session->uploads[0].mapped != nullptr,
                    "upload buffer was not populated correctly")) {
             return false;
         }
@@ -83,7 +83,7 @@ namespace {
         return true;
     }
 
-    bool submit_empty_pending(vkvv::VulkanRuntime* runtime, VkvvSurface* surface, const char* operation) {
+    bool submit_empty_pending(vkvv::VulkanRuntime* runtime, VkvvSurface* surface, const char* operation, bool displayable = true) {
         char reason[512] = {};
         {
             std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
@@ -116,7 +116,7 @@ namespace {
                 std::fprintf(stderr, "%s\n", reason);
                 return false;
             }
-            vkvv::track_pending_decode(runtime, surface, VK_NULL_HANDLE, 0, true, operation);
+            vkvv::track_pending_decode(runtime, surface, VK_NULL_HANDLE, 0, displayable, operation);
         }
         return true;
     }
@@ -176,6 +176,177 @@ namespace {
         }
         return check(vkvv::runtime_pending_work_count(runtime) == 0 && first.decoded && second.decoded && second.work_state == VKVV_SURFACE_WORK_READY,
                      "pending ring did not drain deterministically");
+    }
+
+    bool check_pending_displayable_tracking(vkvv::VulkanRuntime* runtime) {
+        VkvvSurface displayable{};
+        displayable.work_state  = VKVV_SURFACE_WORK_RENDERING;
+        displayable.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+        VkvvSurface nondisplay{};
+        nondisplay.work_state  = VKVV_SURFACE_WORK_RENDERING;
+        nondisplay.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+
+        if (!submit_empty_pending(runtime, &displayable, "displayable pending smoke", true) || !submit_empty_pending(runtime, &nondisplay, "nondisplay pending smoke", false)) {
+            return false;
+        }
+        if (!check(vkvv_vulkan_surface_has_pending_displayable_work(runtime, &displayable), "displayable pending surface was not tracked as displayable")) {
+            return false;
+        }
+        if (!check(!vkvv_vulkan_surface_has_pending_displayable_work(runtime, &nondisplay), "non-display pending surface was tracked as displayable")) {
+            return false;
+        }
+
+        char     reason[512] = {};
+        VAStatus status      = vkvv_vulkan_complete_surface_work(runtime, &displayable, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
+        if (!check(status == VA_STATUS_SUCCESS, "displayable pending tracking completion failed")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        status = vkvv_vulkan_complete_surface_work(runtime, &nondisplay, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
+        if (!check(status == VA_STATUS_SUCCESS, "non-display pending tracking completion failed")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        return true;
+    }
+
+    bool submit_upload_pending(vkvv::VulkanRuntime* runtime, vkvv::H264VideoSession* session, VkvvSurface* surface, const std::vector<uint8_t>& bytes, const char* operation,
+                               size_t* slot_index) {
+        char reason[512] = {};
+        {
+            std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+            if (!check(vkvv::ensure_command_resources(runtime, reason, sizeof(reason)), "ensure_command_resources failed for upload slot smoke")) {
+                std::fprintf(stderr, "%s\n", reason);
+                return false;
+            }
+            *slot_index = runtime->active_command_slot;
+            if (!check(vkvv::ensure_bitstream_upload_buffer(runtime, vkvv::h264_profile_spec, bytes.data(), bytes.size(), session->bitstream_size_alignment,
+                                                            VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR, &session->uploads[*slot_index], operation, reason, sizeof(reason)),
+                       "per-slot upload allocation failed")) {
+                std::fprintf(stderr, "%s\n", reason);
+                return false;
+            }
+
+            VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
+            if (!check(result == VK_SUCCESS, "vkResetFences failed for upload slot smoke")) {
+                return false;
+            }
+            result = vkResetCommandBuffer(runtime->command_buffer, 0);
+            if (!check(result == VK_SUCCESS, "vkResetCommandBuffer failed for upload slot smoke")) {
+                return false;
+            }
+
+            VkCommandBufferBeginInfo begin_info{};
+            begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            result           = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
+            if (!check(result == VK_SUCCESS, "vkBeginCommandBuffer failed for upload slot smoke")) {
+                return false;
+            }
+            result = vkEndCommandBuffer(runtime->command_buffer);
+            if (!check(result == VK_SUCCESS, "vkEndCommandBuffer failed for upload slot smoke")) {
+                return false;
+            }
+            if (!check(vkvv::submit_command_buffer(runtime, reason, sizeof(reason), operation), "submit_command_buffer failed for upload slot smoke")) {
+                std::fprintf(stderr, "%s\n", reason);
+                return false;
+            }
+            vkvv::track_pending_decode(runtime, surface, VK_NULL_HANDLE, session->uploads[*slot_index].allocation_size, true, operation);
+        }
+        return true;
+    }
+
+    bool check_pending_upload_slots_are_independent(vkvv::VulkanRuntime* runtime, vkvv::H264VideoSession* session) {
+        VkvvSurface first{};
+        first.work_state  = VKVV_SURFACE_WORK_RENDERING;
+        first.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+        VkvvSurface second{};
+        second.work_state  = VKVV_SURFACE_WORK_RENDERING;
+        second.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+
+        const std::vector<uint8_t> first_bytes(64, 0xa5);
+        const std::vector<uint8_t> second_bytes(64, 0x5a);
+        size_t                     first_slot  = 0;
+        size_t                     second_slot = 0;
+        if (!submit_upload_pending(runtime, session, &first, first_bytes, "first upload slot smoke", &first_slot) ||
+            !submit_upload_pending(runtime, session, &second, second_bytes, "second upload slot smoke", &second_slot)) {
+            return false;
+        }
+        if (!check(first_slot != second_slot, "pending uploads reused the same command slot")) {
+            return false;
+        }
+        if (!check_upload_contents(session->uploads[first_slot], first_bytes, "first pending upload was overwritten") ||
+            !check_upload_contents(session->uploads[second_slot], second_bytes, "second pending upload contents mismatch")) {
+            return false;
+        }
+
+        char     reason[512] = {};
+        VAStatus status      = vkvv_vulkan_complete_surface_work(runtime, &first, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
+        if (!check(status == VA_STATUS_SUCCESS, "first upload pending completion failed")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        status = vkvv_vulkan_complete_surface_work(runtime, &second, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
+        if (!check(status == VA_STATUS_SUCCESS, "second upload pending completion failed")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        return true;
+    }
+
+    bool check_full_pending_ring_backpressures(vkvv::VulkanRuntime* runtime) {
+        std::vector<VkvvSurface> surfaces(vkvv::command_slot_count + 1);
+        for (size_t i = 0; i < vkvv::command_slot_count; i++) {
+            surfaces[i].id          = static_cast<VASurfaceID>(700 + i);
+            surfaces[i].work_state  = VKVV_SURFACE_WORK_RENDERING;
+            surfaces[i].sync_status = VA_STATUS_ERROR_TIMEDOUT;
+            char operation[64]{};
+            std::snprintf(operation, sizeof(operation), "full ring smoke %zu", i);
+            if (!submit_empty_pending(runtime, &surfaces[i], operation)) {
+                return false;
+            }
+        }
+        if (!check(vkvv::runtime_pending_work_count(runtime) == vkvv::command_slot_count, "pending ring smoke did not fill all command slots")) {
+            return false;
+        }
+
+        char     reason[512] = {};
+        VAStatus status      = vkvv::ensure_command_slot_capacity(runtime, "full pending ring smoke", reason, sizeof(reason));
+        if (!check(status == VA_STATUS_SUCCESS, "full pending ring backpressure failed")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        if (!check(vkvv::runtime_pending_work_count(runtime) == vkvv::command_slot_count - 1, "backpressure did not free exactly one command slot")) {
+            return false;
+        }
+
+        size_t completed_count = 0;
+        for (size_t i = 0; i < vkvv::command_slot_count; i++) {
+            if (surfaces[i].decoded && surfaces[i].work_state == VKVV_SURFACE_WORK_READY && surfaces[i].sync_status == VA_STATUS_SUCCESS) {
+                completed_count++;
+            }
+        }
+        if (!check(completed_count == 1, "backpressure did not complete one pending surface")) {
+            return false;
+        }
+
+        VkvvSurface& extra = surfaces.back();
+        extra.id           = 800;
+        extra.work_state   = VKVV_SURFACE_WORK_RENDERING;
+        extra.sync_status  = VA_STATUS_ERROR_TIMEDOUT;
+        if (!submit_empty_pending(runtime, &extra, "post-backpressure pending smoke")) {
+            return false;
+        }
+        if (!check(vkvv::runtime_pending_work_count(runtime) == vkvv::command_slot_count, "post-backpressure submit did not reuse the freed command slot")) {
+            return false;
+        }
+
+        status = vkvv::drain_pending_work_before_sync_command(runtime, reason, sizeof(reason));
+        if (!check(status == VA_STATUS_SUCCESS, "full pending ring drain failed")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        return check(vkvv::runtime_pending_work_count(runtime) == 0, "full pending ring did not drain after backpressure smoke");
     }
 
     bool check_device_lost_fast_fail(vkvv::VulkanRuntime* runtime) {
@@ -254,27 +425,31 @@ int main(void) {
     auto*                typed_session = static_cast<vkvv::H264VideoSession*>(session);
     std::vector<uint8_t> first_upload(256, 0x11);
     ok                                           = ensure_upload(typed_runtime, typed_session, first_upload) && ok;
-    ok                                           = check_upload_contents(typed_session->upload, first_upload, "first H.264 upload contents mismatch") && ok;
-    const VkBuffer       first_upload_buffer     = typed_session->upload.buffer;
-    const VkDeviceMemory first_upload_memory     = typed_session->upload.memory;
-    void*                first_upload_mapping    = typed_session->upload.mapped;
-    const VkDeviceSize   first_upload_capacity   = typed_session->upload.capacity;
-    const VkDeviceSize   first_upload_allocation = typed_session->upload.allocation_size;
+    ok                                           = check_upload_contents(typed_session->uploads[0], first_upload, "first H.264 upload contents mismatch") && ok;
+    const VkBuffer       first_upload_buffer     = typed_session->uploads[0].buffer;
+    const VkDeviceMemory first_upload_memory     = typed_session->uploads[0].memory;
+    void*                first_upload_mapping    = typed_session->uploads[0].mapped;
+    const VkDeviceSize   first_upload_capacity   = typed_session->uploads[0].capacity;
+    const VkDeviceSize   first_upload_allocation = typed_session->uploads[0].allocation_size;
 
     std::vector<uint8_t> smaller_upload(128, 0x22);
     ok = ensure_upload(typed_runtime, typed_session, smaller_upload) && ok;
-    ok = check_upload_contents(typed_session->upload, smaller_upload, "smaller H.264 upload contents mismatch") && ok;
-    ok = check(typed_session->upload.buffer == first_upload_buffer && typed_session->upload.memory == first_upload_memory && typed_session->upload.mapped == first_upload_mapping &&
-                   typed_session->upload.capacity == first_upload_capacity && typed_session->upload.allocation_size == first_upload_allocation,
+    ok = check_upload_contents(typed_session->uploads[0], smaller_upload, "smaller H.264 upload contents mismatch") && ok;
+    ok = check(typed_session->uploads[0].buffer == first_upload_buffer && typed_session->uploads[0].memory == first_upload_memory &&
+                   typed_session->uploads[0].mapped == first_upload_mapping && typed_session->uploads[0].capacity == first_upload_capacity &&
+                   typed_session->uploads[0].allocation_size == first_upload_allocation,
                "smaller H.264 upload did not reuse the existing buffer") &&
         ok;
 
     std::vector<uint8_t> larger_upload(static_cast<size_t>(first_upload_capacity + 1), 0x33);
     ok = ensure_upload(typed_runtime, typed_session, larger_upload) && ok;
-    ok = check_upload_contents(typed_session->upload, larger_upload, "larger H.264 upload contents mismatch") && ok;
-    ok = check(typed_session->upload.capacity > first_upload_capacity, "larger H.264 upload did not grow the reusable buffer") && ok;
+    ok = check_upload_contents(typed_session->uploads[0], larger_upload, "larger H.264 upload contents mismatch") && ok;
+    ok = check(typed_session->uploads[0].capacity > first_upload_capacity, "larger H.264 upload did not grow the reusable buffer") && ok;
     ok = check_async_completion(typed_runtime) && ok;
     ok = check_two_pending_surfaces(typed_runtime) && ok;
+    ok = check_pending_displayable_tracking(typed_runtime) && ok;
+    ok = check_pending_upload_slots_are_independent(typed_runtime, typed_session) && ok;
+    ok = check_full_pending_ring_backpressures(typed_runtime) && ok;
 
     ok                                    = ensure_session(runtime, session, 640, 360, 640, 368) && ok;
     const VkVideoSessionKHR grown_session = typed_session->video.session;

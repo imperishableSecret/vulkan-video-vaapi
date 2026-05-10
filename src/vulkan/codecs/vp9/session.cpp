@@ -29,7 +29,9 @@ namespace vkvv {
         if (session == nullptr) {
             return;
         }
-        destroy_upload_buffer(runtime, &session->upload);
+        for (UploadBuffer& upload : session->uploads) {
+            destroy_upload_buffer(runtime, &upload);
+        }
         destroy_video_session(runtime, &session->video);
         for (VP9ReferenceSlot& slot : session->reference_slots) {
             slot = {};

@@ -4,6 +4,8 @@
 #include "vulkan/runtime_internal.h"
 #include "codecs/h264/h264.h"
 
+#include <array>
+
 namespace vkvv {
 
     inline constexpr uint32_t max_va_h264_reference_frames = 16;
@@ -15,16 +17,16 @@ namespace vkvv {
     };
 
     struct H264VideoSession {
-        VideoSession                    video;
-        UploadBuffer                    upload;
-        std::vector<H264SurfaceDpbSlot> surface_slots;
-        VkDeviceSize                    bitstream_offset_alignment    = 1;
-        VkDeviceSize                    bitstream_size_alignment      = 1;
-        StdVideoH264LevelIdc            max_level                     = STD_VIDEO_H264_LEVEL_IDC_5_2;
-        VkVideoDecodeCapabilityFlagsKHR decode_flags                  = 0;
-        uint32_t                        next_dpb_slot                 = 0;
-        uint32_t                        max_dpb_slots                 = 0;
-        uint32_t                        max_active_reference_pictures = 0;
+        VideoSession                                 video;
+        std::array<UploadBuffer, command_slot_count> uploads;
+        std::vector<H264SurfaceDpbSlot>              surface_slots;
+        VkDeviceSize                                 bitstream_offset_alignment    = 1;
+        VkDeviceSize                                 bitstream_size_alignment      = 1;
+        StdVideoH264LevelIdc                         max_level                     = STD_VIDEO_H264_LEVEL_IDC_5_2;
+        VkVideoDecodeCapabilityFlagsKHR              decode_flags                  = 0;
+        uint32_t                                     next_dpb_slot                 = 0;
+        uint32_t                                     max_dpb_slots                 = 0;
+        uint32_t                                     max_active_reference_pictures = 0;
     };
 
     inline constexpr VideoProfileSpec h264_profile_spec{

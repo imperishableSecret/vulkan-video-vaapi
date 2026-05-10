@@ -545,6 +545,10 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
                 std::snprintf(reason, reason_size, "AV1 reference surface %u is missing: ref_name=%u ref_idx=%d", ref_surface_id, i, reference_index);
                 return VA_STATUS_ERROR_INVALID_SURFACE;
             }
+            VAStatus ref_status = complete_pending_surface_work_if_needed(runtime, ref_surface, "AV1 reference", reason, reason_size);
+            if (ref_status != VA_STATUS_SUCCESS) {
+                return ref_status;
+            }
 
             const AV1ReferenceSlot* stored_slot  = av1_reconcile_reference_slot(session, static_cast<uint32_t>(reference_index), ref_surface_id);
             const int               ref_dpb_slot = stored_slot != nullptr ? stored_slot->slot : -1;
@@ -624,15 +628,20 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
-    UploadBuffer* upload = &session->upload;
-    if (!ensure_bitstream_upload_buffer(runtime, session->profile_spec, input->bitstream, input->bitstream_size, session->bitstream_size_alignment,
-                                        VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR, upload, "AV1 bitstream", reason, reason_size)) {
+    VAStatus capacity_status = ensure_command_slot_capacity(runtime, "AV1 decode", reason, reason_size);
+    if (capacity_status != VA_STATUS_SUCCESS) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
-        return VA_STATUS_ERROR_ALLOCATION_FAILED;
+        return capacity_status;
     }
 
     std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
     if (!ensure_command_resources(runtime, reason, reason_size)) {
+        runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
+        return VA_STATUS_ERROR_ALLOCATION_FAILED;
+    }
+    UploadBuffer* upload = &session->uploads[runtime->active_command_slot];
+    if (!ensure_bitstream_upload_buffer(runtime, session->profile_spec, input->bitstream, input->bitstream_size, session->bitstream_size_alignment,
+                                        VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR, upload, "AV1 bitstream", reason, reason_size)) {
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }

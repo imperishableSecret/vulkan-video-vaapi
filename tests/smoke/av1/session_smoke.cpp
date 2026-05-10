@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <mutex>
 #include <vector>
 
 namespace {
@@ -54,13 +55,13 @@ namespace {
     bool ensure_upload(vkvv::VulkanRuntime* runtime, vkvv::AV1VideoSession* session, const std::vector<uint8_t>& bytes) {
         char reason[512] = {};
         if (!check(vkvv::ensure_bitstream_upload_buffer(runtime, session->profile_spec, bytes.data(), bytes.size(), session->bitstream_size_alignment,
-                                                        VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR, &session->upload, "AV1 smoke bitstream", reason, sizeof(reason)),
+                                                        VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR, &session->uploads[0], "AV1 smoke bitstream", reason, sizeof(reason)),
                    "ensure_bitstream_upload_buffer failed")) {
             std::fprintf(stderr, "%s\n", reason);
             return false;
         }
-        return check(session->upload.buffer != VK_NULL_HANDLE && session->upload.memory != VK_NULL_HANDLE && session->upload.size >= bytes.size() &&
-                         session->upload.capacity >= session->upload.size,
+        return check(session->uploads[0].buffer != VK_NULL_HANDLE && session->uploads[0].memory != VK_NULL_HANDLE && session->uploads[0].size >= bytes.size() &&
+                         session->uploads[0].capacity >= session->uploads[0].size,
                      "AV1 upload buffer was not populated correctly");
     }
 
@@ -88,7 +89,7 @@ namespace {
         const auto* typed_session = static_cast<const vkvv::AV1VideoSession*>(session);
         return check(typed_session->va_rt_format == VA_RT_FORMAT_YUV420_10 && typed_session->va_fourcc == VA_FOURCC_P010 && typed_session->bit_depth == 10,
                      "AV1 retarget did not switch the session metadata to P010") &&
-            check(typed_session->video.session == VK_NULL_HANDLE && typed_session->upload.buffer == VK_NULL_HANDLE, "AV1 retarget did not discard stale NV12 Vulkan resources");
+            check(typed_session->video.session == VK_NULL_HANDLE && typed_session->uploads[0].buffer == VK_NULL_HANDLE, "AV1 retarget did not discard stale NV12 Vulkan resources");
     }
 
     bool check_av1_dpb_slots() {
@@ -290,6 +291,68 @@ namespace {
         return ok;
     }
 
+    bool submit_empty_pending(vkvv::VulkanRuntime* runtime, VkvvSurface* surface, const char* operation) {
+        char reason[512] = {};
+        {
+            std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+            if (!check(vkvv::ensure_command_resources(runtime, reason, sizeof(reason)), "ensure_command_resources failed")) {
+                std::fprintf(stderr, "%s\n", reason);
+                return false;
+            }
+
+            VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
+            if (!check(result == VK_SUCCESS, "vkResetFences failed for pending AV1 smoke")) {
+                return false;
+            }
+            result = vkResetCommandBuffer(runtime->command_buffer, 0);
+            if (!check(result == VK_SUCCESS, "vkResetCommandBuffer failed for pending AV1 smoke")) {
+                return false;
+            }
+
+            VkCommandBufferBeginInfo begin_info{};
+            begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            result           = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
+            if (!check(result == VK_SUCCESS, "vkBeginCommandBuffer failed for pending AV1 smoke")) {
+                return false;
+            }
+            result = vkEndCommandBuffer(runtime->command_buffer);
+            if (!check(result == VK_SUCCESS, "vkEndCommandBuffer failed for pending AV1 smoke")) {
+                return false;
+            }
+            if (!check(vkvv::submit_command_buffer(runtime, reason, sizeof(reason), operation), "submit_command_buffer failed for pending AV1 smoke")) {
+                std::fprintf(stderr, "%s\n", reason);
+                return false;
+            }
+            surface->work_state  = VKVV_SURFACE_WORK_RENDERING;
+            surface->sync_status = VA_STATUS_ERROR_TIMEDOUT;
+            vkvv::track_pending_decode(runtime, surface, VK_NULL_HANDLE, 0, true, operation);
+        }
+        return true;
+    }
+
+    bool check_pending_reference_completion(vkvv::VulkanRuntime* runtime) {
+        VkvvSurface reference{};
+        reference.id                 = 701;
+        reference.driver_instance_id = 1;
+        reference.stream_id          = 9;
+        reference.codec_operation    = VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR;
+
+        if (!submit_empty_pending(runtime, &reference, "AV1 pending reference smoke")) {
+            return false;
+        }
+
+        char     reason[512] = {};
+        VAStatus status      = vkvv::complete_pending_surface_work_if_needed(runtime, &reference, "AV1 reference", reason, sizeof(reason));
+        if (!check(status == VA_STATUS_SUCCESS, "pending AV1 reference completion failed")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        return check(!vkvv::runtime_surface_has_pending_work(runtime, &reference) && reference.work_state == VKVV_SURFACE_WORK_READY &&
+                         reference.sync_status == VA_STATUS_SUCCESS && reference.decoded,
+                     "pending AV1 reference was not ready after helper completion");
+    }
+
 } // namespace
 
 int main(void) {
@@ -307,6 +370,7 @@ int main(void) {
     }
     auto* typed_runtime = static_cast<vkvv::VulkanRuntime*>(runtime);
     ok = check((typed_runtime->enabled_decode_operations & VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR) != 0, "runtime did not enable AV1 through codec-driven selection") && ok;
+    ok = check_pending_reference_completion(typed_runtime) && ok;
 
     void* session = vkvv_vulkan_av1_session_create();
     if (session == nullptr) {
@@ -318,15 +382,15 @@ int main(void) {
     auto*                typed_session = static_cast<vkvv::AV1VideoSession*>(session);
     std::vector<uint8_t> first_upload(256, 0x11);
     ok                                         = ensure_upload(typed_runtime, typed_session, first_upload) && ok;
-    const VkBuffer       first_upload_buffer   = typed_session->upload.buffer;
-    const VkDeviceMemory first_upload_memory   = typed_session->upload.memory;
-    const VkDeviceSize   first_upload_capacity = typed_session->upload.capacity;
+    const VkBuffer       first_upload_buffer   = typed_session->uploads[0].buffer;
+    const VkDeviceMemory first_upload_memory   = typed_session->uploads[0].memory;
+    const VkDeviceSize   first_upload_capacity = typed_session->uploads[0].capacity;
 
     std::vector<uint8_t> smaller_upload(128, 0x22);
     ok = ensure_upload(typed_runtime, typed_session, smaller_upload) && ok;
-    ok =
-        check(typed_session->upload.buffer == first_upload_buffer && typed_session->upload.memory == first_upload_memory && typed_session->upload.capacity == first_upload_capacity,
-              "smaller AV1 upload did not reuse the existing buffer") &&
+    ok = check(typed_session->uploads[0].buffer == first_upload_buffer && typed_session->uploads[0].memory == first_upload_memory &&
+                   typed_session->uploads[0].capacity == first_upload_capacity,
+               "smaller AV1 upload did not reuse the existing buffer") &&
         ok;
 
     ok = ensure_session(runtime, session, 640, 360, 640, 368, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, "AV1 Profile0") && ok;

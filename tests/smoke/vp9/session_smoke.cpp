@@ -54,13 +54,13 @@ namespace {
     bool ensure_upload(vkvv::VulkanRuntime* runtime, vkvv::VP9VideoSession* session, const std::vector<uint8_t>& bytes) {
         char reason[512] = {};
         if (!check(vkvv::ensure_bitstream_upload_buffer(runtime, session->profile_spec, bytes.data(), bytes.size(), session->bitstream_size_alignment,
-                                                        VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR, &session->upload, "VP9 smoke bitstream", reason, sizeof(reason)),
+                                                        VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR, &session->uploads[0], "VP9 smoke bitstream", reason, sizeof(reason)),
                    "ensure_bitstream_upload_buffer failed")) {
             std::fprintf(stderr, "%s\n", reason);
             return false;
         }
-        return check(session->upload.buffer != VK_NULL_HANDLE && session->upload.memory != VK_NULL_HANDLE && session->upload.size >= bytes.size() &&
-                         session->upload.capacity >= session->upload.size,
+        return check(session->uploads[0].buffer != VK_NULL_HANDLE && session->uploads[0].memory != VK_NULL_HANDLE && session->uploads[0].size >= bytes.size() &&
+                         session->uploads[0].capacity >= session->uploads[0].size,
                      "VP9 upload buffer was not populated correctly");
     }
 
@@ -115,15 +115,15 @@ int main(void) {
     auto*                typed_session = static_cast<vkvv::VP9VideoSession*>(session);
     std::vector<uint8_t> first_upload(256, 0x11);
     ok                                         = ensure_upload(typed_runtime, typed_session, first_upload) && ok;
-    const VkBuffer       first_upload_buffer   = typed_session->upload.buffer;
-    const VkDeviceMemory first_upload_memory   = typed_session->upload.memory;
-    const VkDeviceSize   first_upload_capacity = typed_session->upload.capacity;
+    const VkBuffer       first_upload_buffer   = typed_session->uploads[0].buffer;
+    const VkDeviceMemory first_upload_memory   = typed_session->uploads[0].memory;
+    const VkDeviceSize   first_upload_capacity = typed_session->uploads[0].capacity;
 
     std::vector<uint8_t> smaller_upload(128, 0x22);
     ok = ensure_upload(typed_runtime, typed_session, smaller_upload) && ok;
-    ok =
-        check(typed_session->upload.buffer == first_upload_buffer && typed_session->upload.memory == first_upload_memory && typed_session->upload.capacity == first_upload_capacity,
-              "smaller VP9 upload did not reuse the existing buffer") &&
+    ok = check(typed_session->uploads[0].buffer == first_upload_buffer && typed_session->uploads[0].memory == first_upload_memory &&
+                   typed_session->uploads[0].capacity == first_upload_capacity,
+               "smaller VP9 upload did not reuse the existing buffer") &&
         ok;
 
     ok =

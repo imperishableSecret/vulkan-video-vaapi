@@ -358,6 +358,9 @@ namespace vkvv {
                                   const char* operation);
     size_t   runtime_pending_work_count(VulkanRuntime* runtime);
     bool     runtime_surface_has_pending_work(VulkanRuntime* runtime, const VkvvSurface* surface);
+    bool     runtime_surface_has_pending_displayable_work(VulkanRuntime* runtime, const VkvvSurface* surface);
+    VAStatus ensure_command_slot_capacity(VulkanRuntime* runtime, const char* operation, char* reason, size_t reason_size);
+    VAStatus complete_pending_surface_work_if_needed(VulkanRuntime* runtime, VkvvSurface* surface, const char* operation, char* reason, size_t reason_size);
     VAStatus drain_pending_surface_work_before_sync_command(VulkanRuntime* runtime, VkvvSurface* surface, char* reason, size_t reason_size);
     VAStatus drain_pending_work_before_sync_command(VulkanRuntime* runtime, char* reason, size_t reason_size);
     void     add_image_layout_barrier(std::vector<VkImageMemoryBarrier2>* barriers, SurfaceResource* resource, VkImageLayout new_layout, VkAccessFlags2 dst_access);

@@ -32,23 +32,23 @@ namespace vkvv {
     };
 
     struct AV1VideoSession {
-        VAProfile                       va_profile        = VAProfileAV1Profile0;
-        unsigned int                    va_rt_format      = VA_RT_FORMAT_YUV420;
-        unsigned int                    va_fourcc         = VA_FOURCC_NV12;
-        uint8_t                         bitstream_profile = 0;
-        uint8_t                         bit_depth         = 8;
-        VideoProfileSpec                profile_spec      = av1_profile0_spec;
-        VideoSession                    video;
-        UploadBuffer                    upload;
-        AV1ReferenceSlot                reference_slots[max_av1_reference_slots]{};
-        std::vector<AV1ReferenceSlot>   surface_slots;
-        VkDeviceSize                    bitstream_offset_alignment    = 1;
-        VkDeviceSize                    bitstream_size_alignment      = 1;
-        StdVideoAV1Level                max_level                     = STD_VIDEO_AV1_LEVEL_6_2;
-        VkVideoDecodeCapabilityFlagsKHR decode_flags                  = 0;
-        uint32_t                        next_dpb_slot                 = 0;
-        uint32_t                        max_dpb_slots                 = 0;
-        uint32_t                        max_active_reference_pictures = 0;
+        VAProfile                                    va_profile        = VAProfileAV1Profile0;
+        unsigned int                                 va_rt_format      = VA_RT_FORMAT_YUV420;
+        unsigned int                                 va_fourcc         = VA_FOURCC_NV12;
+        uint8_t                                      bitstream_profile = 0;
+        uint8_t                                      bit_depth         = 8;
+        VideoProfileSpec                             profile_spec      = av1_profile0_spec;
+        VideoSession                                 video;
+        std::array<UploadBuffer, command_slot_count> uploads;
+        AV1ReferenceSlot                             reference_slots[max_av1_reference_slots]{};
+        std::vector<AV1ReferenceSlot>                surface_slots;
+        VkDeviceSize                                 bitstream_offset_alignment    = 1;
+        VkDeviceSize                                 bitstream_size_alignment      = 1;
+        StdVideoAV1Level                             max_level                     = STD_VIDEO_AV1_LEVEL_6_2;
+        VkVideoDecodeCapabilityFlagsKHR              decode_flags                  = 0;
+        uint32_t                                     next_dpb_slot                 = 0;
+        uint32_t                                     max_dpb_slots                 = 0;
+        uint32_t                                     max_active_reference_pictures = 0;
     };
 
     struct AV1SessionStdParameters {
