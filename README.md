@@ -1,8 +1,8 @@
 # NVIDIA Vulkan Video VA-API Prototype
 
-This is a clean VA-API driver prototype for NVIDIA GPUs using Vulkan Video
-decode. The goal is modern browser decode first: expose a small, codec-aware
-VA-API driver that translates VA decode requests into Vulkan Video and exports
+This is a clean VA-API driver prototype for NVIDIA GPUs using Vulkan Video.
+The goal is modern browser decode first: expose a small, codec-aware VA-API
+driver that translates VA decode requests into Vulkan Video and exports
 browser-importable dma-bufs.
 
 This is not a fork of the NVDEC-backed driver design. The public boundary stays
@@ -20,10 +20,10 @@ NVIDIA Vulkan Video VA-API prototype 0.1.0
 Live state on the current development machine:
 
 ```text
-Vulkan runtime codecs: h264,vp9,av1
+Vulkan runtime codecs: h264,hevc,vp9,av1
 Vulkan profile caps: h264, h265, h265_10, h265_12, vp9, vp9_10, vp9_12, av1, av1_10
 Export caps: NV12 and P010
-Advertised VA decode profiles: H.264, VP9 Profile0, VP9 Profile2, AV1 Profile0
+Advertised VA decode profiles: H.264, HEVC Main, HEVC Main10, VP9 Profile0, VP9 Profile2, AV1 Profile0
 ```
 
 `vainfo` currently advertises:
@@ -31,27 +31,31 @@ Advertised VA decode profiles: H.264, VP9 Profile0, VP9 Profile2, AV1 Profile0
 - `VAProfileH264ConstrainedBaseline : VAEntrypointVLD`
 - `VAProfileH264Main : VAEntrypointVLD`
 - `VAProfileH264High : VAEntrypointVLD`
+- `VAProfileHEVCMain : VAEntrypointVLD`
+- `VAProfileHEVCMain10 : VAEntrypointVLD`
 - `VAProfileVP9Profile0 : VAEntrypointVLD`
 - `VAProfileVP9Profile2 : VAEntrypointVLD`
 - `VAProfileAV1Profile0 : VAEntrypointVLD`
 
 Important limits:
 
-- HEVC is probed by Vulkan but not advertised yet because the HEVC parser,
-  session-parameter builder, and decode command path are not implemented.
+- HEVC Main and Main10 are wired and advertised when Vulkan Video and export
+  support are present. HEVC Main12/P012 remains hidden because P012 export is
+  not wired.
 - AV1 Profile0 now supports both the 8-bit NV12 path and the 10-bit P010 path.
-  Browser HDR validation is still pending.
 - VP9 Profile2 uses the P010 path. 12-bit/P012 stays hidden because P012 export
   is not wired.
 - Encode entrypoints are deliberately not advertised. The tree has structural
-  hooks for a later encode path, but no encode runtime implementation.
+  hooks for a later encode path, but `main` does not expose VA-API encode.
 
 ## What Works
 
 - C++23 VA-API driver module exporting `__vaDriverInit_1_0`.
 - Runtime Vulkan Video probing through `libvulkan`.
-- Runtime codec selection for H.264, VP9, and AV1 decode.
+- Runtime codec selection for H.264, HEVC, VP9, and AV1 decode.
 - H.264 8-bit NV12 browser decode path.
+- HEVC Main 8-bit NV12 decode path.
+- HEVC Main10 10-bit P010 decode path.
 - VP9 Profile0 8-bit NV12 browser decode path.
 - VP9 Profile2 10-bit P010 browser decode path.
 - AV1 Profile0 8-bit NV12 browser decode path.
@@ -70,13 +74,12 @@ Important limits:
 src/
   caps/                 VA profile, format, and config capability records
   codecs/               VA buffer parsers and codec operation registry
-  codecs/{h264,vp9,av1} Codec-owned VA decode state
+  codecs/{h264,hevc,vp9,av1}
+                        Codec-owned VA decode state
   va/                   libva entrypoints, objects, configs, contexts, surfaces
   vulkan/               runtime, command submission, sessions, resources, export
   vulkan/codecs/*       Vulkan Video codec session/decode implementations
 tests/smoke/            Focused smoke tests for driver and codec behavior
-docs/codecs/            Codec bring-up and completeness plans
-docs/plans/             Driver-level cleanup, profile, split, and encode plans
 ```
 
 ## Build
@@ -176,17 +179,19 @@ Near-term driver work:
 - Expand browser transition telemetry only where it catches real stale-frame,
   grey-frame, or imported-backing regressions.
 - Build a repeatable browser sample matrix for H.264, VP9 SDR, VP9 HDR/P010,
-  AV1 SDR, resolution changes, and codec switches.
+  AV1 SDR/HDR, HEVC Main/Main10, resolution changes, and codec switches.
 
 Codec work:
 
 - Complete VP9 hardening: show-existing frames, superframes, invisible
   references, alt-ref behavior, resolution/profile transitions, and broader
   sample coverage.
-- Complete AV1 hardening: browser HDR/P010 validation, film-grain policy, more
-  tile and reference edge cases, and long-session browser validation.
-- Add HEVC after VP9 and AV1 are stable: start with HEVC Main/NV12, then
-  HEVC Main10/P010. Keep HEVC Main12/P012, 4:2:2, 4:4:4, and SCC hidden.
+- Complete AV1 hardening: film-grain policy, more tile/reference edge cases,
+  transition stress, and long-session browser validation.
+- Complete HEVC hardening: broader Main/Main10 samples, RPS/reference edge
+  cases, resolution changes, and long-session browser validation. Keep HEVC
+  Main12/P012, 4:2:2, 4:4:4, and SCC hidden until those paths are deliberately
+  implemented.
 - Revisit H.264 completeness: interlaced/field pictures, cropping, SPS/PPS edge
   cases, POC behavior, and conformance-stream coverage.
 
@@ -194,6 +199,6 @@ Deferred work:
 
 - P012 export and 12-bit decode profiles.
 - Non-4:2:0 profile families.
-- Real VA-API encode support. Encode descriptors and mode hooks are present
-  only to avoid future refactors; encode entrypoints must remain hidden until a
-  real encode path exists.
+- VA-API encode support. H.264 encode is being developed separately; `main`
+  keeps encode entrypoints hidden until packed headers, SPS/PPS/global-header
+  handling, rate-control coverage, and application compatibility are ready.
