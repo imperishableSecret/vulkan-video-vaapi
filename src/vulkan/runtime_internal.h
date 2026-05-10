@@ -95,6 +95,20 @@ namespace vkvv {
         VkDeviceSize average_bytes    = 0;
     };
 
+    struct RetainedExportStats {
+        size_t       count                     = 0;
+        VkDeviceSize bytes                     = 0;
+        VkDeviceSize accounted_bytes           = 0;
+        bool         accounting_valid          = true;
+        size_t       count_limit               = 0;
+        VkDeviceSize memory_budget             = 0;
+        bool         transition_active         = false;
+        size_t       transition_retained_count = 0;
+        VkDeviceSize transition_retained_bytes = 0;
+        size_t       transition_target_count   = 0;
+        VkDeviceSize transition_target_bytes   = 0;
+    };
+
     struct TransitionRetentionWindow {
         bool                          active             = false;
         uint64_t                      driver_instance_id = 0;
@@ -298,6 +312,9 @@ namespace vkvv {
     RetainedExportBudget retained_export_budget_from_expected(size_t expected_count, VkDeviceSize expected_bytes, VkDeviceSize global_cap_bytes);
     size_t               runtime_retained_export_count(VulkanRuntime* runtime);
     VkDeviceSize         runtime_retained_export_memory_bytes(VulkanRuntime* runtime);
+    RetainedExportStats  runtime_retained_export_stats(VulkanRuntime* runtime);
+    VkDeviceSize         runtime_retained_export_accounted_bytes(VulkanRuntime* runtime);
+    bool                 runtime_retained_export_memory_accounting_valid(VulkanRuntime* runtime);
     size_t               runtime_detached_export_count(VulkanRuntime* runtime);
     VkDeviceSize         runtime_detached_export_memory_bytes(VulkanRuntime* runtime);
     void                 prune_detached_exports_for_surface(VulkanRuntime* runtime, uint64_t driver_instance_id, VASurfaceID surface_id, uint64_t stream_id,

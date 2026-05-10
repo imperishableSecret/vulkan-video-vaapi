@@ -1,6 +1,7 @@
 #include "vulkan/runtime_internal.h"
 
 #include <algorithm>
+#include <mutex>
 
 namespace vkvv {
 
@@ -9,6 +10,14 @@ namespace vkvv {
         constexpr VkDeviceSize mib                  = 1024ull * 1024ull;
         constexpr VkDeviceSize min_global_cap_bytes = 128ull * mib;
         constexpr VkDeviceSize max_global_cap_bytes = 512ull * mib;
+
+        VkDeviceSize           retained_export_accounted_bytes_locked(const VulkanRuntime* runtime) {
+            VkDeviceSize bytes = 0;
+            for (const RetainedExportBacking& backing : runtime->retained_exports) {
+                bytes += backing.resource.allocation_size;
+            }
+            return bytes;
+        }
 
     } // namespace
 
@@ -104,6 +113,45 @@ namespace vkvv {
         const VkDeviceSize effective_cap  = std::max(budget.global_cap_bytes, expected_bytes);
         budget.target_bytes               = std::min(unclamped, effective_cap);
         return budget;
+    }
+
+    RetainedExportStats runtime_retained_export_stats(VulkanRuntime* runtime) {
+        RetainedExportStats stats{};
+        if (runtime == nullptr) {
+            return stats;
+        }
+
+        std::lock_guard<std::mutex> lock(runtime->export_mutex);
+        stats.count                     = runtime->retained_exports.size();
+        stats.bytes                     = runtime->retained_export_memory_bytes;
+        stats.accounted_bytes           = retained_export_accounted_bytes_locked(runtime);
+        stats.accounting_valid          = stats.bytes == stats.accounted_bytes;
+        stats.count_limit               = runtime->retained_export_count_limit;
+        stats.memory_budget             = runtime->retained_export_memory_budget;
+        stats.transition_active         = runtime->transition_retention.active;
+        stats.transition_retained_count = runtime->transition_retention.retained_count;
+        stats.transition_retained_bytes = runtime->transition_retention.retained_bytes;
+        stats.transition_target_count   = runtime->transition_retention.budget.target_count;
+        stats.transition_target_bytes   = runtime->transition_retention.budget.target_bytes;
+        return stats;
+    }
+
+    VkDeviceSize runtime_retained_export_accounted_bytes(VulkanRuntime* runtime) {
+        if (runtime == nullptr) {
+            return 0;
+        }
+
+        std::lock_guard<std::mutex> lock(runtime->export_mutex);
+        return retained_export_accounted_bytes_locked(runtime);
+    }
+
+    bool runtime_retained_export_memory_accounting_valid(VulkanRuntime* runtime) {
+        if (runtime == nullptr) {
+            return true;
+        }
+
+        std::lock_guard<std::mutex> lock(runtime->export_mutex);
+        return runtime->retained_export_memory_bytes == retained_export_accounted_bytes_locked(runtime);
     }
 
 } // namespace vkvv

@@ -60,34 +60,42 @@ VAStatus vkvv_vulkan_prepare_surface_export(void* runtime_ptr, VkvvSurface* surf
     if (!resource->exportable && !ensure_export_resource(runtime, resource, reason, reason_size)) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
+    const RetainedExportStats retained_stats = runtime_retained_export_stats(runtime);
     vkvv_trace("export-prepare",
                "surface=%u driver=%llu stream=%llu codec=0x%x decoded=%u exportable=%u shadow_mem=0x%llx shadow_gen=%llu predecode=%u seeded=%u seed_surface=%u seed_gen=%llu "
-               "retained=%zu retained_mem=%llu",
+               "retained=%zu retained_mem=%llu retained_accounted=%llu retained_ok=%u retained_limit=%zu retained_budget=%llu transition=%u transition_retained=%zu "
+               "transition_mem=%llu transition_target=%zu transition_budget=%llu",
                surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                surface->decoded ? 1U : 0U, resource->exportable ? 1U : 0U, vkvv_trace_handle(resource->export_resource.memory),
                static_cast<unsigned long long>(resource->export_resource.content_generation), resource->export_resource.predecode_exported ? 1U : 0U,
                resource->export_resource.predecode_seeded ? 1U : 0U, resource->export_resource.seed_source_surface_id,
-               static_cast<unsigned long long>(resource->export_resource.seed_source_generation), runtime_retained_export_count(runtime),
-               static_cast<unsigned long long>(runtime_retained_export_memory_bytes(runtime)));
+               static_cast<unsigned long long>(resource->export_resource.seed_source_generation), retained_stats.count, static_cast<unsigned long long>(retained_stats.bytes),
+               static_cast<unsigned long long>(retained_stats.accounted_bytes), retained_stats.accounting_valid ? 1U : 0U, retained_stats.count_limit,
+               static_cast<unsigned long long>(retained_stats.memory_budget), retained_stats.transition_active ? 1U : 0U, retained_stats.transition_retained_count,
+               static_cast<unsigned long long>(retained_stats.transition_retained_bytes), retained_stats.transition_target_count,
+               static_cast<unsigned long long>(retained_stats.transition_target_bytes));
 
     if (drain_reason[0] != '\0') {
         std::snprintf(reason, reason_size,
                       "surface export resource ready: driver=%llu surface=%u stream=%llu codec=0x%x format=%s visible=%ux%u coded=%ux%u vk_format=%d va_fourcc=0x%x exportable=%u "
-                      "shadow=%u decode_mem=%llu export_mem=%llu retained=%zu retained_mem=%llu drained=\"%s\"",
+                      "shadow=%u decode_mem=%llu export_mem=%llu retained=%zu retained_mem=%llu retained_accounted=%llu retained_ok=%u retained_limit=%zu retained_budget=%llu "
+                      "drained=\"%s\"",
                       static_cast<unsigned long long>(resource->driver_instance_id), surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                       format->name, surface->width, surface->height, resource->coded_extent.width, resource->coded_extent.height, resource->format, resource->va_fourcc,
                       resource->exportable, resource->export_resource.image != VK_NULL_HANDLE, static_cast<unsigned long long>(resource->allocation_size),
-                      static_cast<unsigned long long>(export_memory_bytes(resource)), runtime_retained_export_count(runtime),
-                      static_cast<unsigned long long>(runtime_retained_export_memory_bytes(runtime)), drain_reason);
+                      static_cast<unsigned long long>(export_memory_bytes(resource)), retained_stats.count, static_cast<unsigned long long>(retained_stats.bytes),
+                      static_cast<unsigned long long>(retained_stats.accounted_bytes), retained_stats.accounting_valid ? 1U : 0U, retained_stats.count_limit,
+                      static_cast<unsigned long long>(retained_stats.memory_budget), drain_reason);
     } else {
         std::snprintf(reason, reason_size,
                       "surface export resource ready: driver=%llu surface=%u stream=%llu codec=0x%x format=%s visible=%ux%u coded=%ux%u vk_format=%d va_fourcc=0x%x exportable=%u "
-                      "shadow=%u decode_mem=%llu export_mem=%llu retained=%zu retained_mem=%llu",
+                      "shadow=%u decode_mem=%llu export_mem=%llu retained=%zu retained_mem=%llu retained_accounted=%llu retained_ok=%u retained_limit=%zu retained_budget=%llu",
                       static_cast<unsigned long long>(resource->driver_instance_id), surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                       format->name, surface->width, surface->height, resource->coded_extent.width, resource->coded_extent.height, resource->format, resource->va_fourcc,
                       resource->exportable, resource->export_resource.image != VK_NULL_HANDLE, static_cast<unsigned long long>(resource->allocation_size),
-                      static_cast<unsigned long long>(export_memory_bytes(resource)), runtime_retained_export_count(runtime),
-                      static_cast<unsigned long long>(runtime_retained_export_memory_bytes(runtime)));
+                      static_cast<unsigned long long>(export_memory_bytes(resource)), retained_stats.count, static_cast<unsigned long long>(retained_stats.bytes),
+                      static_cast<unsigned long long>(retained_stats.accounted_bytes), retained_stats.accounting_valid ? 1U : 0U, retained_stats.count_limit,
+                      static_cast<unsigned long long>(retained_stats.memory_budget));
     }
     return VA_STATUS_SUCCESS;
 }

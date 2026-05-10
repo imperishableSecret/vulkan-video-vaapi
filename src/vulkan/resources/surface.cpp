@@ -378,18 +378,21 @@ namespace vkvv {
                 }
                 i++;
             }
-            backing.fd                = retained_export_fd_identity(detached);
-            backing.state             = RetainedExportState::Detached;
-            backing.retained_sequence = ++runtime->retained_export_sequence;
-            runtime->retained_export_memory_bytes += detached.allocation_size;
+            backing.fd                        = retained_export_fd_identity(detached);
+            backing.state                     = RetainedExportState::Detached;
+            backing.retained_sequence         = ++runtime->retained_export_sequence;
+            const VkDeviceSize detached_bytes = detached.allocation_size;
+            runtime->retained_exports.push_back(std::move(backing));
+            RetainedExportBacking& retained = runtime->retained_exports.back();
+            runtime->retained_export_memory_bytes += detached_bytes;
             vkvv_trace("retained-export-add",
                        "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx bytes=%llu fd_stat=%u fd_dev=%llu fd_ino=%llu retained=%zu retained_mem=%llu seq=%llu",
-                       detached.owner_surface_id, static_cast<unsigned long long>(detached.driver_instance_id), static_cast<unsigned long long>(detached.stream_id),
-                       detached.codec_operation, vkvv_trace_handle(detached.memory), static_cast<unsigned long long>(detached.allocation_size), backing.fd.valid ? 1U : 0U,
-                       static_cast<unsigned long long>(backing.fd.dev), static_cast<unsigned long long>(backing.fd.ino), runtime->retained_exports.size() + 1,
-                       static_cast<unsigned long long>(runtime->retained_export_memory_bytes), static_cast<unsigned long long>(backing.retained_sequence));
-            runtime->retained_exports.push_back(std::move(backing));
-            refresh_transition_retention_window_locked(runtime, &runtime->retained_exports.back().resource, "detach");
+                       retained.resource.owner_surface_id, static_cast<unsigned long long>(retained.resource.driver_instance_id),
+                       static_cast<unsigned long long>(retained.resource.stream_id), retained.resource.codec_operation, vkvv_trace_handle(retained.resource.memory),
+                       static_cast<unsigned long long>(detached_bytes), retained.fd.valid ? 1U : 0U, static_cast<unsigned long long>(retained.fd.dev),
+                       static_cast<unsigned long long>(retained.fd.ino), runtime->retained_exports.size(), static_cast<unsigned long long>(runtime->retained_export_memory_bytes),
+                       static_cast<unsigned long long>(retained.retained_sequence));
+            refresh_transition_retention_window_locked(runtime, &retained.resource, "detach");
             prune_detached_export_resources_locked(runtime);
         } catch (...) { destroy_export_resource(runtime, &detached); }
     }

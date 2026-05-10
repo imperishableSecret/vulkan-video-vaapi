@@ -3,6 +3,12 @@
 #include <cstdio>
 #include <string_view>
 
+namespace vkvv {
+    // This smoke links only the retained-export helpers. Its fake runtime never owns Vulkan handles,
+    // so the default destructor is enough here without pulling in the full runtime resource module.
+    VulkanRuntime::~VulkanRuntime() = default;
+} // namespace vkvv
+
 namespace {
 
     constexpr unsigned int                  fourcc_nv12 = 0x3231564e;
@@ -149,6 +155,50 @@ namespace {
         return ok;
     }
 
+    bool check_stats_and_accounting() {
+        bool                ok = true;
+
+        vkvv::VulkanRuntime runtime{};
+        runtime.retained_export_count_limit              = 7;
+        runtime.retained_export_memory_budget            = 42;
+        runtime.transition_retention.active              = true;
+        runtime.transition_retention.retained_count      = 2;
+        runtime.transition_retention.retained_bytes      = 384;
+        runtime.transition_retention.budget.target_count = 4;
+        runtime.transition_retention.budget.target_bytes = 768;
+
+        vkvv::RetainedExportBacking first  = make_backing();
+        first.resource.allocation_size     = 128;
+        vkvv::RetainedExportBacking second = make_backing();
+        second.resource.fd_ino             = 201;
+        second.resource.allocation_size    = 256;
+        runtime.retained_exports.push_back(std::move(first));
+        runtime.retained_exports.push_back(std::move(second));
+        runtime.retained_export_memory_bytes = 384;
+
+        const vkvv::RetainedExportStats stats = vkvv::runtime_retained_export_stats(&runtime);
+        ok &= check(stats.count == 2, "retained stats count mismatch");
+        ok &= check(stats.bytes == 384, "retained stats byte counter mismatch");
+        ok &= check(stats.accounted_bytes == 384, "retained stats accounted bytes mismatch");
+        ok &= check(stats.accounting_valid, "retained stats should report valid accounting");
+        ok &= check(stats.count_limit == 7, "retained stats count limit mismatch");
+        ok &= check(stats.memory_budget == 42, "retained stats memory budget mismatch");
+        ok &= check(stats.transition_active, "retained stats transition active flag mismatch");
+        ok &= check(stats.transition_retained_count == 2, "retained stats transition count mismatch");
+        ok &= check(stats.transition_retained_bytes == 384, "retained stats transition bytes mismatch");
+        ok &= check(stats.transition_target_count == 4, "retained stats transition target count mismatch");
+        ok &= check(stats.transition_target_bytes == 768, "retained stats transition target bytes mismatch");
+        ok &= check(vkvv::runtime_retained_export_accounted_bytes(&runtime) == 384, "retained accounted byte helper mismatch");
+        ok &= check(vkvv::runtime_retained_export_memory_accounting_valid(&runtime), "retained accounting helper should pass");
+
+        runtime.retained_export_memory_bytes = 383;
+        ok &= check(!vkvv::runtime_retained_export_memory_accounting_valid(&runtime), "retained accounting helper should catch counter drift");
+        const vkvv::RetainedExportStats drifted_stats = vkvv::runtime_retained_export_stats(&runtime);
+        ok &= check(drifted_stats.accounted_bytes == 384, "drifted retained stats accounted bytes mismatch");
+        ok &= check(!drifted_stats.accounting_valid, "drifted retained stats should report invalid accounting");
+        return ok;
+    }
+
 } // namespace
 
 int main() {
@@ -178,5 +228,6 @@ int main() {
     ok &= check_dynamic_budget();
     ok &= check_p010_over_cap_window_stays_retained();
     ok &= check_window_policy();
+    ok &= check_stats_and_accounting();
     return ok ? 0 : 1;
 }
