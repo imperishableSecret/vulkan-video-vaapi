@@ -164,7 +164,7 @@ namespace vkvv {
         if (current_is_reference) {
             return av1_select_target_dpb_slot(session, target_surface_id, used_slots);
         }
-        return allocate_av1_dpb_slot(session, used_slots);
+        return -1;
     }
 
     VkImageLayout av1_target_layout(bool has_setup_slot) {

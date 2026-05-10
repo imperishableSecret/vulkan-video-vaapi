@@ -261,14 +261,15 @@ namespace {
 
         used_slots[4]               = false;
         const int display_only_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false);
-        if (!check(display_only_slot == 4, "display-only AV1 frame did not select an available scratch setup slot")) {
+        if (!check(display_only_slot == -1, "display-only AV1 frame claimed an available scratch setup slot")) {
+            return false;
+        }
+        if (!check(session.next_dpb_slot == 0, "display-only AV1 frame advanced DPB slot allocation state")) {
             return false;
         }
 
-        used_slots[display_only_slot] = true;
-        used_slots[5]                 = false;
-        const int reference_slot      = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
-        if (!check(reference_slot == 5, "reference AV1 frame did not select the available DPB setup slot")) {
+        const int reference_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
+        if (!check(reference_slot == 4, "reference AV1 frame did not select the available DPB setup slot")) {
             return false;
         }
 

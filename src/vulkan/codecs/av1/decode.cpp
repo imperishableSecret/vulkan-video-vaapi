@@ -594,7 +594,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
 
     const bool current_is_reference = input->header.refresh_frame_flags != 0;
     int        target_dpb_slot      = av1_select_current_setup_slot(session, target_surface_id, used_slots, current_is_reference);
-    if (target_dpb_slot < 0) {
+    if (current_is_reference && target_dpb_slot < 0) {
         std::snprintf(reason, reason_size, "no free AV1 DPB slot for current picture");
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
@@ -621,7 +621,9 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
                    target_resource_before != nullptr && target_resource_before->export_resource.predecode_exported ? 1U : 0U, active_refs.c_str(), ref_slots_before.c_str(),
                    surface_slots_before.c_str());
     }
-    used_slots[target_dpb_slot] = true;
+    if (target_dpb_slot >= 0) {
+        used_slots[target_dpb_slot] = true;
+    }
 
     AV1SessionStdParameters session_params{};
     build_av1_session_parameters(input, &session_params);
@@ -692,19 +694,22 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
     }
 
-    StdVideoDecodeAV1ReferenceInfo setup_std_ref{};
-    VkVideoDecodeAV1DpbSlotInfoKHR setup_av1_slot{};
-    VkVideoReferenceSlotInfoKHR    setup_slot{};
-    VkVideoPictureResourceInfoKHR  setup_picture{};
-    setup_std_ref                                                             = build_current_reference_info(input);
-    setup_picture                                                             = make_picture_resource(target_resource, coded_extent);
-    setup_av1_slot.sType                                                      = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_DPB_SLOT_INFO_KHR;
-    setup_av1_slot.pStdReferenceInfo                                          = &setup_std_ref;
-    setup_slot.sType                                                          = VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR;
-    setup_slot.pNext                                                          = &setup_av1_slot;
-    setup_slot.slotIndex                                                      = target_dpb_slot;
-    setup_slot.pPictureResource                                               = &setup_picture;
-    const VkVideoReferenceSlotInfoKHR*                         setup_slot_ptr = &setup_slot;
+    StdVideoDecodeAV1ReferenceInfo     setup_std_ref{};
+    VkVideoDecodeAV1DpbSlotInfoKHR     setup_av1_slot{};
+    VkVideoReferenceSlotInfoKHR        setup_slot{};
+    VkVideoPictureResourceInfoKHR      setup_picture{};
+    const VkVideoReferenceSlotInfoKHR* setup_slot_ptr = nullptr;
+    if (has_setup_slot) {
+        setup_std_ref                    = build_current_reference_info(input);
+        setup_picture                    = make_picture_resource(target_resource, coded_extent);
+        setup_av1_slot.sType             = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_DPB_SLOT_INFO_KHR;
+        setup_av1_slot.pStdReferenceInfo = &setup_std_ref;
+        setup_slot.sType                 = VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR;
+        setup_slot.pNext                 = &setup_av1_slot;
+        setup_slot.slotIndex             = target_dpb_slot;
+        setup_slot.pPictureResource      = &setup_picture;
+        setup_slot_ptr                   = &setup_slot;
+    }
 
     std::array<VkVideoReferenceSlotInfoKHR, max_av1_dpb_slots> begin_reference_slots{};
     uint32_t                                                   begin_reference_count = 0;
