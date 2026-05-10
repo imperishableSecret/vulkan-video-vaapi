@@ -261,6 +261,7 @@ namespace vkvv {
         runtime->image_drm_format_modifier = best.image_drm_format_modifier;
         runtime->surface_export            = best.surface_export;
         runtime->video_decode_vp9          = best.video_decode_vp9;
+        vkGetPhysicalDeviceProperties(best.device, &runtime->device_properties);
         vkGetPhysicalDeviceMemoryProperties(best.device, &runtime->memory_properties);
         return true;
     }

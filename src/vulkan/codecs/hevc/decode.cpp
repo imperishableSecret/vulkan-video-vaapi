@@ -328,13 +328,11 @@ VAStatus vkvv_vulkan_decode_hevc(void* runtime_ptr, void* session_ptr, VkvvDrive
     }
     const HEVCRpsCounts             rps_counts = fill_hevc_picture_rps(rps_references.data(), rps_reference_count, &std_picture);
 
-    std::vector<uint32_t>           vulkan_slice_offsets(input->slice_offsets, input->slice_offsets + input->slice_count);
-
     VkVideoDecodeH265PictureInfoKHR h265_picture{};
     h265_picture.sType                = VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_PICTURE_INFO_KHR;
     h265_picture.pStdPictureInfo      = &std_picture;
     h265_picture.sliceSegmentCount    = input->slice_count;
-    h265_picture.pSliceSegmentOffsets = vulkan_slice_offsets.data();
+    h265_picture.pSliceSegmentOffsets = input->slice_offsets;
     VkVideoDecodeH265InlineSessionParametersInfoKHR inline_parameters{};
     if (use_inline_parameters) {
         inline_parameters.sType   = VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_INLINE_SESSION_PARAMETERS_INFO_KHR;

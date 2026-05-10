@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 
 namespace vkvv {
@@ -13,6 +14,10 @@ namespace vkvv {
         if (runtime == nullptr) {
             *upload = {};
             return;
+        }
+        if (upload->mapped != nullptr) {
+            vkUnmapMemory(runtime->device, upload->memory);
+            upload->mapped = nullptr;
         }
         if (upload->buffer != VK_NULL_HANDLE) {
             vkDestroyBuffer(runtime->device, upload->buffer, nullptr);
@@ -29,22 +34,27 @@ namespace vkvv {
     }
 
     bool copy_upload_buffer(VulkanRuntime* runtime, UploadBuffer* upload, const void* data, size_t data_size, const char* label, char* reason, size_t reason_size) {
-        void*    mapped = nullptr;
-        VkResult result = vkMapMemory(runtime->device, upload->memory, 0, upload->size, 0, &mapped);
-        if (!record_vk_result(runtime, result, "vkMapMemory", label, reason, reason_size)) {
-            return false;
+        if (upload->mapped == nullptr) {
+            VkResult result = vkMapMemory(runtime->device, upload->memory, 0, upload->allocation_size, 0, &upload->mapped);
+            if (!record_vk_result(runtime, result, "vkMapMemory", label, reason, reason_size)) {
+                return false;
+            }
         }
-        std::memset(mapped, 0, static_cast<size_t>(upload->size));
+        auto* mapped = static_cast<uint8_t*>(upload->mapped);
         std::memcpy(mapped, data, data_size);
+        if (upload->size > data_size) {
+            std::memset(mapped + data_size, 0, static_cast<size_t>(upload->size - data_size));
+        }
         if (!upload->coherent) {
+            const VkDeviceSize  atom_size  = std::max<VkDeviceSize>(1, runtime->device_properties.limits.nonCoherentAtomSize);
+            VkDeviceSize        flush_size = std::min(upload->allocation_size, align_up(upload->size, atom_size));
             VkMappedMemoryRange range{};
             range.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
             range.memory = upload->memory;
             range.offset = 0;
-            range.size   = VK_WHOLE_SIZE;
+            range.size   = flush_size;
             vkFlushMappedMemoryRanges(runtime->device, 1, &range);
         }
-        vkUnmapMemory(runtime->device, upload->memory);
         return true;
     }
 

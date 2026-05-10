@@ -161,6 +161,7 @@ namespace vkvv {
     struct UploadBuffer {
         VkBuffer       buffer          = VK_NULL_HANDLE;
         VkDeviceMemory memory          = VK_NULL_HANDLE;
+        void*          mapped          = nullptr;
         VkDeviceSize   size            = 0;
         VkDeviceSize   capacity        = 0;
         VkDeviceSize   allocation_size = 0;
@@ -214,6 +215,7 @@ namespace vkvv {
         VkVideoCodecOperationFlagsKHR                   enabled_decode_operations = 0;
         VkVideoCodecOperationFlagsKHR                   probed_encode_operations  = 0;
         VkVideoCodecOperationFlagsKHR                   enabled_encode_operations = 0;
+        VkPhysicalDeviceProperties                      device_properties{};
         VkPhysicalDeviceMemoryProperties                memory_properties{};
 
         PFN_vkGetPhysicalDeviceQueueFamilyProperties2   get_queue_family_properties2             = nullptr;

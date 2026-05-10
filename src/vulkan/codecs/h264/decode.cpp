@@ -266,13 +266,11 @@ VAStatus vkvv_vulkan_decode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
     std_picture.PicOrderCnt[STD_VIDEO_DECODE_H264_FIELD_ORDER_COUNT_TOP]    = current_top_poc;
     std_picture.PicOrderCnt[STD_VIDEO_DECODE_H264_FIELD_ORDER_COUNT_BOTTOM] = current_bottom_poc;
 
-    std::vector<uint32_t>           vulkan_slice_offsets(input->slice_offsets, input->slice_offsets + input->slice_count);
-
     VkVideoDecodeH264PictureInfoKHR h264_picture{};
     h264_picture.sType           = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_PICTURE_INFO_KHR;
     h264_picture.pStdPictureInfo = &std_picture;
     h264_picture.sliceCount      = input->slice_count;
-    h264_picture.pSliceOffsets   = vulkan_slice_offsets.data();
+    h264_picture.pSliceOffsets   = input->slice_offsets;
     VkVideoDecodeH264InlineSessionParametersInfoKHR inline_parameters{};
     if (use_inline_parameters) {
         inline_parameters.sType   = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_INLINE_SESSION_PARAMETERS_INFO_KHR;
@@ -317,7 +315,7 @@ VAStatus vkvv_vulkan_decode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
             "vkEndCommandBuffer for H.264 decode failed: %d vaProfile=%d nal=%u/%u ref=%u setup=%u slot=%d pps=%u frame=%u idr=%u refs=%u off0=%u bytes=%02x%02x%02x%02x seq=%08x "
             "pic=%08x curr(flags=%08x idx=%u rawpoc=%d/%d poc=%d/%d) s0(type=%u bit=%u l0=%u l1=%u) sps(profile=%d level=%d refs=%u poc=%d log2poc=%u) pps(l0=%u l1=%u)",
             result, profile, input->first_nal_unit_type, input->first_nal_ref_idc, current_is_reference, setup_slot_ptr != nullptr, target_dpb_slot,
-            std_picture.pic_parameter_set_id, std_picture.frame_num, std_picture.idr_pic_id, reference_count, vulkan_slice_offsets.empty() ? 0 : vulkan_slice_offsets[0],
+            std_picture.pic_parameter_set_id, std_picture.frame_num, std_picture.idr_pic_id, reference_count, input->slice_count > 0 ? input->slice_offsets[0] : 0,
             input->bitstream_size > 0 ? input->bitstream[0] : 0, input->bitstream_size > 1 ? input->bitstream[1] : 0, input->bitstream_size > 2 ? input->bitstream[2] : 0,
             input->bitstream_size > 3 ? input->bitstream[3] : 0, input->pic->seq_fields.value, input->pic->pic_fields.value, input->pic->CurrPic.flags,
             input->pic->CurrPic.frame_idx, input->pic->CurrPic.TopFieldOrderCnt, input->pic->CurrPic.BottomFieldOrderCnt, current_top_poc, current_bottom_poc,

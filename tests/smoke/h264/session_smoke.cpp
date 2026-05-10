@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <vector>
 
@@ -58,9 +59,26 @@ namespace {
             return false;
         }
         if (!check(session->upload.buffer != VK_NULL_HANDLE && session->upload.memory != VK_NULL_HANDLE && session->upload.size >= bytes.size() &&
-                       session->upload.capacity >= session->upload.size,
+                       session->upload.capacity >= session->upload.size && session->upload.mapped != nullptr,
                    "upload buffer was not populated correctly")) {
             return false;
+        }
+        return true;
+    }
+
+    bool check_upload_contents(const vkvv::UploadBuffer& upload, const std::vector<uint8_t>& bytes, const char* label) {
+        if (!check(upload.mapped != nullptr, "upload buffer is not persistently mapped")) {
+            return false;
+        }
+        const auto* mapped = static_cast<const uint8_t*>(upload.mapped);
+        if (!check(std::memcmp(mapped, bytes.data(), bytes.size()) == 0, label)) {
+            return false;
+        }
+        for (size_t i = bytes.size(); i < static_cast<size_t>(upload.size); i++) {
+            if (mapped[i] != 0) {
+                std::fprintf(stderr, "%s padding byte %zu was not zero: 0x%02x\n", label, i, mapped[i]);
+                return false;
+            }
         }
         return true;
     }
@@ -193,20 +211,24 @@ int main(void) {
     auto*                typed_session = static_cast<vkvv::H264VideoSession*>(session);
     std::vector<uint8_t> first_upload(256, 0x11);
     ok                                           = ensure_upload(typed_runtime, typed_session, first_upload) && ok;
+    ok                                           = check_upload_contents(typed_session->upload, first_upload, "first H.264 upload contents mismatch") && ok;
     const VkBuffer       first_upload_buffer     = typed_session->upload.buffer;
     const VkDeviceMemory first_upload_memory     = typed_session->upload.memory;
+    void*                first_upload_mapping    = typed_session->upload.mapped;
     const VkDeviceSize   first_upload_capacity   = typed_session->upload.capacity;
     const VkDeviceSize   first_upload_allocation = typed_session->upload.allocation_size;
 
     std::vector<uint8_t> smaller_upload(128, 0x22);
     ok = ensure_upload(typed_runtime, typed_session, smaller_upload) && ok;
-    ok = check(typed_session->upload.buffer == first_upload_buffer && typed_session->upload.memory == first_upload_memory &&
+    ok = check_upload_contents(typed_session->upload, smaller_upload, "smaller H.264 upload contents mismatch") && ok;
+    ok = check(typed_session->upload.buffer == first_upload_buffer && typed_session->upload.memory == first_upload_memory && typed_session->upload.mapped == first_upload_mapping &&
                    typed_session->upload.capacity == first_upload_capacity && typed_session->upload.allocation_size == first_upload_allocation,
                "smaller H.264 upload did not reuse the existing buffer") &&
         ok;
 
     std::vector<uint8_t> larger_upload(static_cast<size_t>(first_upload_capacity + 1), 0x33);
     ok = ensure_upload(typed_runtime, typed_session, larger_upload) && ok;
+    ok = check_upload_contents(typed_session->upload, larger_upload, "larger H.264 upload contents mismatch") && ok;
     ok = check(typed_session->upload.capacity > first_upload_capacity, "larger H.264 upload did not grow the reusable buffer") && ok;
     ok = check_async_completion(typed_runtime) && ok;
 

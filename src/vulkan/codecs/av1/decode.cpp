@@ -314,6 +314,10 @@ namespace {
             std::snprintf(reason, reason_size, "missing AV1 decode bitstream bounds");
             return false;
         }
+        if (input->tile_count > VKVV_AV1_MAX_TILES) {
+            std::snprintf(reason, reason_size, "AV1 decode has too many tiles: tiles=%zu max=%u", input->tile_count, VKVV_AV1_MAX_TILES);
+            return false;
+        }
         if (input->bitstream_size > std::numeric_limits<uint32_t>::max()) {
             std::snprintf(reason, reason_size, "AV1 decode bitstream is too large: bytes=%zu", input->bitstream_size);
             return false;
@@ -708,13 +712,11 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     AV1PictureStdData std_data{};
     build_av1_picture_std_data(input, &std_data);
 
-    std::vector<uint32_t> tile_offsets;
-    std::vector<uint32_t> tile_sizes;
-    tile_offsets.reserve(input->tile_count);
-    tile_sizes.reserve(input->tile_count);
+    std::array<uint32_t, VKVV_AV1_MAX_TILES> tile_offsets{};
+    std::array<uint32_t, VKVV_AV1_MAX_TILES> tile_sizes{};
     for (size_t i = 0; i < input->tile_count; i++) {
-        tile_offsets.push_back(input->tiles[i].offset);
-        tile_sizes.push_back(input->tiles[i].size);
+        tile_offsets[i] = input->tiles[i].offset;
+        tile_sizes[i]   = input->tiles[i].size;
     }
 
     VkVideoDecodeAV1PictureInfoKHR av1_picture{};
@@ -758,7 +760,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         }
         std::snprintf(reason, reason_size, "vkEndCommandBuffer for AV1 decode failed: %d frame=%u refs=%u setup=%u slot=%d refresh=0x%02x tiles=%u header=%u tile0=%u/%u bytes=%zu",
                       result, input->pic->pic_info_fields.bits.frame_type, reference_count, setup_slot_ptr != nullptr, target_dpb_slot, input->header.refresh_frame_flags,
-                      av1_picture.tileCount, av1_picture.frameHeaderOffset, tile_offsets.empty() ? 0 : tile_offsets[0], tile_sizes.empty() ? 0 : tile_sizes[0],
+                      av1_picture.tileCount, av1_picture.frameHeaderOffset, input->tile_count > 0 ? tile_offsets[0] : 0, input->tile_count > 0 ? tile_sizes[0] : 0,
                       input->bitstream_size);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
@@ -796,7 +798,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
                   "session_mem=%llu",
                   coded_extent.width, coded_extent.height, input->bit_depth, input->fourcc, input->tile_count, input->bitstream_size, reference_count,
                   setup_slot_ptr != nullptr ? 1U : 0U, target_dpb_slot, input->header.refresh_frame_flags, av1_picture.frameHeaderOffset,
-                  tile_offsets.empty() ? 0 : tile_offsets[0], tile_sizes.empty() ? 0 : tile_sizes[0], static_cast<unsigned long long>(target_resource->allocation_size),
+                  input->tile_count > 0 ? tile_offsets[0] : 0, input->tile_count > 0 ? tile_sizes[0] : 0, static_cast<unsigned long long>(target_resource->allocation_size),
                   static_cast<unsigned long long>(upload_allocation_size), static_cast<unsigned long long>(session->video.memory_bytes));
     return VA_STATUS_SUCCESS;
 }
