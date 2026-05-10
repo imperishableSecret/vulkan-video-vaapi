@@ -18,6 +18,18 @@ namespace vkvv {
 
     namespace {
 
+        struct ScopedUploadBuffer {
+            VulkanRuntime* runtime = nullptr;
+            UploadBuffer   buffer{};
+
+            explicit ScopedUploadBuffer(VulkanRuntime* owner) : runtime(owner) {}
+            ScopedUploadBuffer(const ScopedUploadBuffer&)            = delete;
+            ScopedUploadBuffer& operator=(const ScopedUploadBuffer&) = delete;
+            ~ScopedUploadBuffer() {
+                destroy_upload_buffer(runtime, &buffer);
+            }
+        };
+
         uint32_t export_plane_bytes_per_pixel(uint32_t drm_format) {
             switch (drm_format) {
                 case DRM_FORMAT_R8: return 1;
@@ -134,49 +146,44 @@ namespace vkvv {
                 staging_size += static_cast<VkDeviceSize>(plane_extents[i].width) * plane_extents[i].height * bytes_per_pixel;
             }
 
-            UploadBuffer staging{};
-            if (!create_staging_transfer_buffer(runtime, staging_size, &staging, reason, reason_size)) {
+            ScopedUploadBuffer staging(runtime);
+            if (!create_staging_transfer_buffer(runtime, staging_size, &staging.buffer, reason, reason_size)) {
                 return false;
             }
 
-            void*    mapped = nullptr;
-            VkResult result = vkMapMemory(runtime->device, staging.memory, 0, staging.size, 0, &mapped);
+            VkResult result = vkMapMemory(runtime->device, staging.buffer.memory, 0, staging.buffer.size, 0, &staging.buffer.mapped);
             if (!record_vk_result(runtime, result, "vkMapMemory", "export shadow init", reason, reason_size)) {
-                destroy_upload_buffer(runtime, &staging);
                 return false;
             }
-            std::memset(mapped, 0, static_cast<size_t>(staging.size));
+            auto* mapped = static_cast<uint8_t*>(staging.buffer.mapped);
+            std::memset(mapped, 0, static_cast<size_t>(staging.buffer.size));
             for (uint32_t i = 0; i < format->layer_count; i++) {
-                if (!fill_export_black_plane(static_cast<uint8_t*>(mapped) + regions[i].bufferOffset, plane_extents[i], plane_formats[i], reason, reason_size)) {
-                    vkUnmapMemory(runtime->device, staging.memory);
-                    destroy_upload_buffer(runtime, &staging);
+                if (!fill_export_black_plane(mapped + regions[i].bufferOffset, plane_extents[i], plane_formats[i], reason, reason_size)) {
                     return false;
                 }
             }
-            if (!staging.coherent) {
+            if (!staging.buffer.coherent) {
                 VkMappedMemoryRange range{};
                 range.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
-                range.memory = staging.memory;
+                range.memory = staging.buffer.memory;
                 range.offset = 0;
                 range.size   = VK_WHOLE_SIZE;
                 vkFlushMappedMemoryRanges(runtime->device, 1, &range);
             }
-            vkUnmapMemory(runtime->device, staging.memory);
+            vkUnmapMemory(runtime->device, staging.buffer.memory);
+            staging.buffer.mapped = nullptr;
 
             std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
             if (!ensure_command_resources(runtime, reason, reason_size)) {
-                destroy_upload_buffer(runtime, &staging);
                 return false;
             }
 
             result = vkResetFences(runtime->device, 1, &runtime->fence);
             if (!record_vk_result(runtime, result, "vkResetFences", "export shadow init", reason, reason_size)) {
-                destroy_upload_buffer(runtime, &staging);
                 return false;
             }
             result = vkResetCommandBuffer(runtime->command_buffer, 0);
             if (!record_vk_result(runtime, result, "vkResetCommandBuffer", "export shadow init", reason, reason_size)) {
-                destroy_upload_buffer(runtime, &staging);
                 return false;
             }
 
@@ -185,7 +192,6 @@ namespace vkvv {
             begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             result           = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
             if (!record_vk_result(runtime, result, "vkBeginCommandBuffer", "export shadow init", reason, reason_size)) {
-                destroy_upload_buffer(runtime, &staging);
                 return false;
             }
 
@@ -201,7 +207,7 @@ namespace vkvv {
             }
             resource->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 
-            vkCmdCopyBufferToImage(runtime->command_buffer, staging.buffer, resource->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, format->layer_count, regions);
+            vkCmdCopyBufferToImage(runtime->command_buffer, staging.buffer.buffer, resource->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, format->layer_count, regions);
 
             barriers.clear();
             add_raw_image_barrier(&barriers, resource->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
@@ -217,15 +223,12 @@ namespace vkvv {
 
             result = vkEndCommandBuffer(runtime->command_buffer);
             if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "export shadow init", reason, reason_size)) {
-                destroy_upload_buffer(runtime, &staging);
                 return false;
             }
             if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "export shadow init")) {
-                destroy_upload_buffer(runtime, &staging);
                 return false;
             }
 
-            destroy_upload_buffer(runtime, &staging);
             resource->content_generation     = 0;
             resource->predecode_exported     = false;
             resource->predecode_seeded       = false;
@@ -590,10 +593,18 @@ namespace vkvv {
             target->coded_extent.height != 0;
     }
 
+    bool export_seed_record_source_still_valid(const ExportSeedRecord& record) {
+        const SurfaceResource* source = record.resource;
+        return source != nullptr && source->driver_instance_id == record.driver_instance_id && source->stream_id == record.stream_id &&
+            source->codec_operation == record.codec_operation && source->surface_id == record.surface_id && source->format == record.format &&
+            source->va_fourcc == record.va_fourcc && source->coded_extent.width == record.coded_extent.width && source->coded_extent.height == record.coded_extent.height &&
+            source->export_seed_generation == record.content_generation && source->content_generation == record.content_generation && export_seed_source_valid(source);
+    }
+
     bool export_seed_record_matches(const ExportSeedRecord& record, const SurfaceResource* target) {
-        return target != nullptr && record.resource != nullptr && record.driver_instance_id == target->driver_instance_id && record.stream_id == target->stream_id &&
-            record.codec_operation == target->codec_operation && record.format == target->format && record.va_fourcc == target->va_fourcc &&
-            record.coded_extent.width == target->coded_extent.width && record.coded_extent.height == target->coded_extent.height && export_seed_source_valid(record.resource);
+        return target != nullptr && export_seed_record_source_still_valid(record) && record.driver_instance_id == target->driver_instance_id &&
+            record.stream_id == target->stream_id && record.codec_operation == target->codec_operation && record.format == target->format &&
+            record.va_fourcc == target->va_fourcc && record.coded_extent.width == target->coded_extent.width && record.coded_extent.height == target->coded_extent.height;
     }
 
     void remember_export_seed_resource_locked(VulkanRuntime* runtime, SurfaceResource* resource) {
@@ -603,7 +614,7 @@ namespace vkvv {
 
         for (size_t i = 0; i < runtime->export_seed_records.size();) {
             const ExportSeedRecord& record = runtime->export_seed_records[i];
-            if (record.resource == resource ||
+            if (!export_seed_record_source_still_valid(record) || record.resource == resource ||
                 (record.driver_instance_id == resource->driver_instance_id && record.stream_id == resource->stream_id && record.codec_operation == resource->codec_operation &&
                  record.format == resource->format && record.va_fourcc == resource->va_fourcc && record.coded_extent.width == resource->coded_extent.width &&
                  record.coded_extent.height == resource->coded_extent.height)) {
@@ -631,7 +642,10 @@ namespace vkvv {
             return;
         }
         for (size_t i = 0; i < runtime->export_seed_records.size();) {
-            if (runtime->export_seed_records[i].resource == resource) {
+            const ExportSeedRecord& record = runtime->export_seed_records[i];
+            if (record.resource == resource ||
+                (record.driver_instance_id == resource->driver_instance_id && record.surface_id == resource->surface_id && record.stream_id == resource->stream_id &&
+                 record.codec_operation == resource->codec_operation && record.format == resource->format && record.va_fourcc == resource->va_fourcc)) {
                 runtime->export_seed_records.erase(runtime->export_seed_records.begin() + static_cast<std::ptrdiff_t>(i));
                 continue;
             }
@@ -646,7 +660,7 @@ namespace vkvv {
 
         for (size_t i = 0; i < runtime->export_seed_records.size();) {
             ExportSeedRecord& record = runtime->export_seed_records[i];
-            if (!export_seed_source_valid(record.resource)) {
+            if (!export_seed_record_source_still_valid(record)) {
                 vkvv_trace("export-seed-stale-drop",
                            "record_surface=%u record_stream=%llu record_codec=0x%x record_gen=%llu source_surface=%u source_gen=%llu source_seed_gen=%llu source_shadow_gen=%llu",
                            record.surface_id, static_cast<unsigned long long>(record.stream_id), record.codec_operation, static_cast<unsigned long long>(record.content_generation),
@@ -657,9 +671,7 @@ namespace vkvv {
                 runtime->export_seed_records.erase(runtime->export_seed_records.begin() + static_cast<std::ptrdiff_t>(i));
                 continue;
             }
-            if (export_seed_record_matches(record, target)) {
-                record.surface_id         = record.resource->surface_id;
-                record.content_generation = record.resource->export_seed_generation;
+            if (export_seed_record_matches(record, target) && record.resource != target) {
                 return record.resource;
             }
             i++;
@@ -690,10 +702,19 @@ namespace vkvv {
             return targets;
         }
 
-        for (ExportResource* resource : runtime->predecode_exports) {
-            if (predecode_seed_target_matches(resource, source)) {
-                targets.push_back(resource);
+        for (size_t i = 0; i < runtime->predecode_exports.size();) {
+            PredecodeExportRecord& record = runtime->predecode_exports[i];
+            if (!predecode_export_record_still_valid(record)) {
+                vkvv_trace("predecode-export-stale-drop", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx gen=%llu", record.owner_surface_id,
+                           static_cast<unsigned long long>(record.driver_instance_id), static_cast<unsigned long long>(record.stream_id), record.codec_operation,
+                           vkvv_trace_handle(record.memory), static_cast<unsigned long long>(record.content_generation));
+                runtime->predecode_exports.erase(runtime->predecode_exports.begin() + static_cast<std::ptrdiff_t>(i));
+                continue;
             }
+            if (predecode_seed_target_matches(record.resource, source)) {
+                targets.push_back(record.resource);
+            }
+            i++;
         }
         for (RetainedExportBacking& backing : runtime->retained_exports) {
             if (predecode_seed_target_matches(&backing.resource, source)) {

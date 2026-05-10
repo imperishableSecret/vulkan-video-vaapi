@@ -12,6 +12,14 @@
 namespace vkvv {
 
     VulkanRuntime::~VulkanRuntime() {
+        if (device != VK_NULL_HANDLE && runtime_pending_work_count(this) > 0) {
+            char     reason[512] = {};
+            VAStatus status      = drain_pending_work_before_sync_command(this, reason, sizeof(reason));
+            if (status != VA_STATUS_SUCCESS) {
+                vkvv_trace("pending-teardown-drain-failed", "status=%d reason=\"%s\"", status, reason);
+                discard_pending_work_for_teardown(this, status, reason);
+            }
+        }
         destroy_command_resources();
         destroy_detached_export_resources();
         if (device != VK_NULL_HANDLE) {
@@ -149,7 +157,9 @@ namespace vkvv {
             return;
         }
         auto& exports = runtime->predecode_exports;
-        exports.erase(std::remove(exports.begin(), exports.end(), resource), exports.end());
+        exports.erase(
+            std::remove_if(exports.begin(), exports.end(), [resource](const PredecodeExportRecord& record) { return predecode_export_record_matches_resource(record, resource); }),
+            exports.end());
     }
 
     void unregister_predecode_export_resource(VulkanRuntime* runtime, ExportResource* resource) {
@@ -165,9 +175,59 @@ namespace vkvv {
             return;
         }
         std::lock_guard<std::mutex> lock(runtime->export_mutex);
-        if (std::find(runtime->predecode_exports.begin(), runtime->predecode_exports.end(), resource) == runtime->predecode_exports.end()) {
-            runtime->predecode_exports.push_back(resource);
+        PredecodeExportRecord       record = make_predecode_export_record(resource);
+        for (PredecodeExportRecord& existing : runtime->predecode_exports) {
+            if (predecode_export_record_matches_resource(existing, resource)) {
+                existing = record;
+                return;
+            }
         }
+        try {
+            runtime->predecode_exports.push_back(record);
+        } catch (const std::bad_alloc&) {
+            vkvv_trace("predecode-export-register-failed", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx reason=allocation-failed", resource->owner_surface_id,
+                       static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                       vkvv_trace_handle(resource->memory));
+        }
+    }
+
+    PredecodeExportRecord make_predecode_export_record(ExportResource* resource) {
+        PredecodeExportRecord record{};
+        if (resource == nullptr) {
+            return record;
+        }
+        record.resource           = resource;
+        record.image              = resource->image;
+        record.memory             = resource->memory;
+        record.driver_instance_id = resource->driver_instance_id;
+        record.stream_id          = resource->stream_id;
+        record.codec_operation    = resource->codec_operation;
+        record.owner_surface_id   = resource->owner_surface_id;
+        record.format             = resource->format;
+        record.va_fourcc          = resource->va_fourcc;
+        record.extent             = resource->extent;
+        record.content_generation = resource->content_generation;
+        return record;
+    }
+
+    bool predecode_export_record_matches_resource(const PredecodeExportRecord& record, const ExportResource* resource) {
+        if (resource == nullptr) {
+            return false;
+        }
+        return record.resource == resource ||
+            (record.memory == resource->memory && record.image == resource->image && record.driver_instance_id == resource->driver_instance_id &&
+             record.stream_id == resource->stream_id && record.codec_operation == resource->codec_operation && record.owner_surface_id == resource->owner_surface_id &&
+             record.format == resource->format && record.va_fourcc == resource->va_fourcc && record.extent.width == resource->extent.width &&
+             record.extent.height == resource->extent.height);
+    }
+
+    bool predecode_export_record_still_valid(const PredecodeExportRecord& record) {
+        const ExportResource* resource = record.resource;
+        return resource != nullptr && record.image != VK_NULL_HANDLE && record.memory != VK_NULL_HANDLE && resource->image == record.image && resource->memory == record.memory &&
+            resource->driver_instance_id == record.driver_instance_id && resource->stream_id == record.stream_id && resource->codec_operation == record.codec_operation &&
+            resource->owner_surface_id == record.owner_surface_id && resource->format == record.format && resource->va_fourcc == record.va_fourcc &&
+            resource->extent.width == record.extent.width && resource->extent.height == record.extent.height && resource->content_generation == record.content_generation &&
+            resource->predecode_exported;
     }
 
     void close_transition_retention_window_locked(VulkanRuntime* runtime, const char* reason) {
@@ -354,7 +414,27 @@ namespace vkvv {
             return;
         }
 
-        unregister_predecode_export_resource(runtime, &resource->export_resource);
+        const bool                   retainable = resource->export_resource.exported && resource->export_resource.allocation_size != 0 && !runtime->device_lost;
+        std::unique_lock<std::mutex> lock(runtime->export_mutex);
+        if (retainable) {
+            try {
+                runtime->retained_exports.reserve(runtime->retained_exports.size() + 1);
+            } catch (const std::bad_alloc&) {
+                vkvv_trace("retained-export-add-failed", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx bytes=%llu reason=allocation-failed",
+                           resource->export_resource.owner_surface_id, static_cast<unsigned long long>(resource->export_resource.driver_instance_id),
+                           static_cast<unsigned long long>(resource->export_resource.stream_id), resource->export_resource.codec_operation,
+                           vkvv_trace_handle(resource->export_resource.memory), static_cast<unsigned long long>(resource->export_resource.allocation_size));
+                unregister_predecode_export_resource_locked(runtime, &resource->export_resource);
+                ExportResource failed_detach = resource->export_resource;
+                resource->export_resource    = {};
+                resource->exported           = false;
+                lock.unlock();
+                destroy_export_resource(runtime, &failed_detach);
+                return;
+            }
+        }
+
+        unregister_predecode_export_resource_locked(runtime, &resource->export_resource);
         resource->exported = false;
         RetainedExportBacking backing{};
         ExportResource&       detached = backing.resource;
@@ -364,12 +444,12 @@ namespace vkvv {
         detached.stream_id             = resource->stream_id;
         detached.codec_operation       = resource->codec_operation;
         detached.owner_surface_id      = resource->surface_id;
-        if (!detached.exported || detached.allocation_size == 0 || runtime->device_lost) {
+        if (!retainable) {
+            lock.unlock();
             destroy_export_resource(runtime, &detached);
             return;
         }
 
-        std::lock_guard<std::mutex> lock(runtime->export_mutex);
         try {
             for (size_t i = 0; i < runtime->retained_exports.size();) {
                 if (detached_export_same_owner(runtime->retained_exports[i], detached.driver_instance_id, detached.owner_surface_id)) {
@@ -380,9 +460,10 @@ namespace vkvv {
             }
             backing.fd                        = retained_export_fd_identity(detached);
             backing.state                     = RetainedExportState::Detached;
-            backing.retained_sequence         = ++runtime->retained_export_sequence;
+            backing.retained_sequence         = runtime->retained_export_sequence + 1;
             const VkDeviceSize detached_bytes = detached.allocation_size;
             runtime->retained_exports.push_back(std::move(backing));
+            runtime->retained_export_sequence++;
             RetainedExportBacking& retained = runtime->retained_exports.back();
             runtime->retained_export_memory_bytes += detached_bytes;
             vkvv_trace("retained-export-add",

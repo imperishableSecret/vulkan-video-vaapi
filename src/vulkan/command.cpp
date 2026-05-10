@@ -502,6 +502,50 @@ namespace vkvv {
         return final_status;
     }
 
+    void discard_pending_work_for_teardown(VulkanRuntime* runtime, VAStatus status, const char* reason) {
+        if (runtime == nullptr) {
+            return;
+        }
+
+        struct PendingTeardownRecord {
+            VkvvSurface*                surface    = nullptr;
+            VkVideoSessionParametersKHR parameters = VK_NULL_HANDLE;
+            char                        operation[64]{};
+        };
+
+        PendingTeardownRecord records[command_slot_count]{};
+        size_t                record_count = 0;
+        {
+            std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+            for (CommandSlot& slot : runtime->command_slots) {
+                if (slot.pending_surface == nullptr && slot.pending_parameters == VK_NULL_HANDLE) {
+                    continue;
+                }
+                PendingTeardownRecord& record = records[record_count++];
+                record.surface                = slot.pending_surface;
+                record.parameters             = slot.pending_parameters;
+                std::snprintf(record.operation, sizeof(record.operation), "%s", slot.pending_operation);
+                slot.pending_surface                = nullptr;
+                slot.pending_parameters             = VK_NULL_HANDLE;
+                slot.pending_upload_allocation_size = 0;
+                slot.pending_export_refresh         = true;
+                slot.pending_operation[0]           = '\0';
+                slot.submitted                      = false;
+            }
+            refresh_legacy_pending_snapshot_locked(runtime);
+        }
+
+        for (size_t i = 0; i < record_count; i++) {
+            PendingTeardownRecord& record = records[i];
+            if (record.parameters != VK_NULL_HANDLE && runtime->destroy_video_session_parameters != nullptr && runtime->device != VK_NULL_HANDLE) {
+                runtime->destroy_video_session_parameters(runtime->device, record.parameters, nullptr);
+            }
+            complete_surface_status(record.surface, status);
+            vkvv_trace("pending-teardown-discard", "operation=%s surface=%u status=%d reason=\"%s\"", record.operation[0] != '\0' ? record.operation : "Vulkan decode",
+                       record.surface != nullptr ? record.surface->id : VA_INVALID_ID, status, reason != nullptr ? reason : "");
+        }
+    }
+
 } // namespace vkvv
 
 using namespace vkvv;
@@ -518,5 +562,5 @@ bool vkvv_vulkan_surface_has_pending_export_refresh_work(void* runtime_ptr, cons
 
 VAStatus vkvv_vulkan_drain_pending_work(void* runtime_ptr, char* reason, size_t reason_size) {
     auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
-    return complete_pending_work(runtime, nullptr, std::numeric_limits<uint64_t>::max(), reason, reason_size);
+    return drain_pending_work_before_sync_command(runtime, reason, reason_size);
 }

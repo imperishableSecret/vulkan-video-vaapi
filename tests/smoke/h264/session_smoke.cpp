@@ -16,6 +16,15 @@ namespace {
         return condition;
     }
 
+    template <typename Handle>
+    Handle fake_handle(uintptr_t value) {
+#if defined(VK_USE_64_BIT_PTR_DEFINES) && VK_USE_64_BIT_PTR_DEFINES
+        return reinterpret_cast<Handle>(value);
+#else
+        return static_cast<Handle>(value);
+#endif
+    }
+
     bool ensure_session(void* runtime, void* session, unsigned int width, unsigned int height, unsigned int expected_width, unsigned int expected_height) {
         char     reason[512] = {};
         VAStatus status      = vkvv_vulkan_ensure_h264_session(runtime, session, width, height, reason, sizeof(reason));
@@ -81,6 +90,43 @@ namespace {
             }
         }
         return true;
+    }
+
+    bool check_null_runtime_upload_destroy_clears_state() {
+        vkvv::UploadBuffer upload{};
+        upload.mapped           = reinterpret_cast<void*>(0x1);
+        upload.size             = 128;
+        upload.capacity         = 128;
+        upload.allocation_size  = 256;
+        upload.underused_frames = 7;
+        vkvv::destroy_upload_buffer(nullptr, &upload);
+        return check(upload.mapped == nullptr && upload.size == 0 && upload.capacity == 0 && upload.allocation_size == 0 && upload.underused_frames == 0,
+                     "null-runtime upload destroy did not clear stale state");
+    }
+
+    bool check_predecode_record_validation() {
+        vkvv::ExportResource resource{};
+        resource.image              = fake_handle<VkImage>(0x1000);
+        resource.memory             = fake_handle<VkDeviceMemory>(0x2000);
+        resource.driver_instance_id = 7;
+        resource.stream_id          = 8;
+        resource.codec_operation    = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR;
+        resource.owner_surface_id   = 9;
+        resource.format             = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+        resource.va_fourcc          = VA_FOURCC_NV12;
+        resource.extent             = {64, 64};
+        resource.predecode_exported = true;
+
+        const vkvv::PredecodeExportRecord record = vkvv::make_predecode_export_record(&resource);
+        bool                              ok     = check(vkvv::predecode_export_record_still_valid(record), "fresh predecode export record should validate");
+        ok &= check(vkvv::predecode_export_record_matches_resource(record, &resource), "fresh predecode export record should match its resource");
+
+        resource.content_generation = 1;
+        ok &= check(!vkvv::predecode_export_record_still_valid(record), "predecode record should reject generation drift");
+        resource.content_generation = 0;
+        resource.memory             = fake_handle<VkDeviceMemory>(0x3000);
+        ok &= check(!vkvv::predecode_export_record_still_valid(record), "predecode record should reject memory replacement");
+        return ok;
     }
 
     bool submit_empty_pending(vkvv::VulkanRuntime* runtime, VkvvSurface* surface, const char* operation, bool refresh_export = true) {
@@ -350,6 +396,53 @@ namespace {
         return check(vkvv::runtime_pending_work_count(runtime) == 0, "full pending ring did not drain after backpressure smoke");
     }
 
+    bool check_public_drain_completes_all_pending_work(vkvv::VulkanRuntime* runtime) {
+        VkvvSurface first{};
+        first.id          = 850;
+        first.work_state  = VKVV_SURFACE_WORK_RENDERING;
+        first.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+        VkvvSurface second{};
+        second.id          = 851;
+        second.work_state  = VKVV_SURFACE_WORK_RENDERING;
+        second.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+
+        if (!submit_empty_pending(runtime, &first, "public drain first smoke") || !submit_empty_pending(runtime, &second, "public drain second smoke")) {
+            return false;
+        }
+        char     reason[512] = {};
+        VAStatus status      = vkvv_vulkan_drain_pending_work(runtime, reason, sizeof(reason));
+        if (!check(status == VA_STATUS_SUCCESS, "public pending-work drain failed")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        return check(vkvv::runtime_pending_work_count(runtime) == 0 && first.work_state == VKVV_SURFACE_WORK_READY && second.work_state == VKVV_SURFACE_WORK_READY &&
+                         first.sync_status == VA_STATUS_SUCCESS && second.sync_status == VA_STATUS_SUCCESS && first.decoded && second.decoded,
+                     "public pending-work drain did not complete every pending slot");
+    }
+
+    bool check_runtime_destroy_drains_pending_work() {
+        char  reason[512] = {};
+        void* runtime_ptr = vkvv_vulkan_runtime_create(reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        if (!check(runtime_ptr != nullptr, "runtime create failed for teardown drain smoke")) {
+            return false;
+        }
+        auto*       runtime = static_cast<vkvv::VulkanRuntime*>(runtime_ptr);
+
+        VkvvSurface surface{};
+        surface.id          = 852;
+        surface.work_state  = VKVV_SURFACE_WORK_RENDERING;
+        surface.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+        if (!submit_empty_pending(runtime, &surface, "runtime teardown pending smoke")) {
+            vkvv_vulkan_runtime_destroy(runtime_ptr);
+            return false;
+        }
+
+        vkvv_vulkan_runtime_destroy(runtime_ptr);
+        return check(surface.work_state == VKVV_SURFACE_WORK_READY && surface.sync_status == VA_STATUS_SUCCESS && surface.decoded,
+                     "runtime teardown did not drain pending work before destroying command resources");
+    }
+
     bool check_device_lost_fast_fail(vkvv::VulkanRuntime* runtime) {
         VkvvSurface surface{};
         surface.work_state  = VKVV_SURFACE_WORK_RENDERING;
@@ -400,7 +493,9 @@ namespace {
 } // namespace
 
 int main(void) {
-    bool  ok = check_h264_dpb_slots();
+    bool ok = check_h264_dpb_slots();
+    ok      = check_null_runtime_upload_destroy_clears_state() && ok;
+    ok      = check_predecode_record_validation() && ok;
 
     char  reason[512] = {};
     void* runtime     = vkvv_vulkan_runtime_create(reason, sizeof(reason));
@@ -461,6 +556,8 @@ int main(void) {
     ok = check_pending_export_refresh_tracking(typed_runtime) && ok;
     ok = check_pending_upload_slots_are_independent(typed_runtime, typed_session) && ok;
     ok = check_full_pending_ring_backpressures(typed_runtime) && ok;
+    ok = check_public_drain_completes_all_pending_work(typed_runtime) && ok;
+    ok = check_runtime_destroy_drains_pending_work() && ok;
 
     ok                                    = ensure_session(runtime, session, 640, 360, 640, 368) && ok;
     const VkVideoSessionKHR grown_session = typed_session->video.session;

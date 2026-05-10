@@ -22,6 +22,10 @@ namespace vkvv {
             return;
         }
         if (runtime == nullptr) {
+            if (upload->buffer != VK_NULL_HANDLE || upload->memory != VK_NULL_HANDLE || upload->mapped != nullptr) {
+                vkvv_trace("upload-destroy-null-runtime", "buffer=0x%llx memory=0x%llx mapped=%u allocation=%llu", vkvv_trace_handle(upload->buffer),
+                           vkvv_trace_handle(upload->memory), upload->mapped != nullptr ? 1U : 0U, static_cast<unsigned long long>(upload->allocation_size));
+            }
             *upload = {};
             return;
         }
