@@ -3,6 +3,7 @@
 #include "codecs/h264/h264.h"
 #include "codecs/hevc/hevc.h"
 #include "codecs/vp9/vp9.h"
+#include "vulkan/formats.h"
 
 #include <cstdio>
 #include <cstring>
@@ -24,6 +25,62 @@ namespace {
         return ops != nullptr && ops->name != nullptr && ops->state_create != nullptr && ops->state_destroy != nullptr && ops->session_create != nullptr &&
             ops->session_destroy != nullptr && ops->begin_picture != nullptr && ops->render_buffer != nullptr && ops->prepare_decode != nullptr && ops->ensure_session != nullptr &&
             ops->configure_session != nullptr && ops->decode != nullptr;
+    }
+
+    VkVideoFormatPropertiesKHR make_format_property(VkFormat format, VkImageTiling tiling, VkImageCreateFlags flags) {
+        VkVideoFormatPropertiesKHR property{};
+        property.sType            = VK_STRUCTURE_TYPE_VIDEO_FORMAT_PROPERTIES_KHR;
+        property.format           = format;
+        property.imageTiling      = tiling;
+        property.imageCreateFlags = flags;
+        return property;
+    }
+
+    bool check_decode_format_selection() {
+        constexpr VkFormat         preferred = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+        constexpr VkFormat         alternate = VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
+
+        VkVideoFormatPropertiesKHR properties[] = {
+            make_format_property(preferred, VK_IMAGE_TILING_OPTIMAL, 0x1),
+            make_format_property(preferred, VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT, 0x2),
+            make_format_property(alternate, VK_IMAGE_TILING_LINEAR, 0x4),
+        };
+
+        vkvv::DecodeFormatSelection selection{};
+        bool ok = check(vkvv::choose_decode_format_from_properties(properties, 3, preferred, true, &selection), "decode format selection rejected a valid property list");
+        ok      = check(selection.format == preferred && selection.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT && selection.create_flags == 0x2 &&
+                            selection.direct_export_candidate && selection.format_property_count == 3 && selection.export_tiling_candidate_count == 2 &&
+                            selection.preferred_export_tiling_candidate_count == 1,
+                        "decode format selection did not prefer a directly exportable preferred format") &&
+            ok;
+
+        ok = check(vkvv::choose_decode_format_from_properties(properties, 3, preferred, false, &selection), "decode format selection rejected preferred-format fallback") && ok;
+        ok = check(selection.format == preferred && selection.tiling == VK_IMAGE_TILING_OPTIMAL && selection.create_flags == 0x1 && !selection.direct_export_candidate,
+                   "decode format selection should keep the preferred optimal format when export tiling is not requested") &&
+            ok;
+
+        VkVideoFormatPropertiesKHR fallback_properties[] = {
+            make_format_property(alternate, VK_IMAGE_TILING_LINEAR, 0x8),
+            make_format_property(alternate, VK_IMAGE_TILING_OPTIMAL, 0x10),
+        };
+        ok = check(vkvv::choose_decode_format_from_properties(fallback_properties, 2, preferred, true, &selection), "decode format selection rejected export fallback") && ok;
+        ok = check(selection.format == alternate && selection.tiling == VK_IMAGE_TILING_LINEAR && !selection.direct_export_candidate &&
+                       selection.export_tiling_candidate_count == 1 && selection.preferred_export_tiling_candidate_count == 0,
+                   "decode format selection did not expose non-preferred export fallback state") &&
+            ok;
+
+        VkVideoFormatPropertiesKHR optimal_only[] = {
+            make_format_property(preferred, VK_IMAGE_TILING_OPTIMAL, 0x20),
+        };
+        ok =
+            check(vkvv::choose_decode_format_from_properties(optimal_only, 1, preferred, true, &selection), "decode format selection rejected optimal-only preferred format") && ok;
+        ok = check(selection.format == preferred && selection.tiling == VK_IMAGE_TILING_OPTIMAL && !selection.direct_export_candidate &&
+                       selection.export_tiling_candidate_count == 0 && selection.preferred_export_tiling_candidate_count == 0,
+                   "decode format selection should report optimal-only preferred formats as not directly exportable") &&
+            ok;
+
+        ok = check(!vkvv::choose_decode_format_from_properties(nullptr, 0, preferred, true, &selection), "decode format selection accepted an empty property list") && ok;
+        return ok;
     }
 
     std::vector<uint8_t> make_vp9_keyframe() {
@@ -488,7 +545,9 @@ namespace {
 } // namespace
 
 int main(void) {
-    bool                 ok = true;
+    bool ok = true;
+
+    ok = check_decode_format_selection() && ok;
 
     const VkvvDecodeOps* h264 = vkvv_decode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointVLD);
     ok                        = check(ops_complete(h264), "H.264 decode ops are incomplete") && ok;

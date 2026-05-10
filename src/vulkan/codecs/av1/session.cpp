@@ -295,8 +295,9 @@ VAStatus vkvv_vulkan_ensure_av1_session(void* runtime_ptr, void* session_ptr, un
         .height = round_up_16(height),
     };
     if (session->video.session != VK_NULL_HANDLE && session->video.key.max_coded_extent.width >= extent.width && session->video.key.max_coded_extent.height >= extent.height) {
-        std::snprintf(reason, reason_size, "AV1 video session ready: codec=av1 actual=%ux%u format=%d mem=%llu", session->video.key.max_coded_extent.width,
-                      session->video.key.max_coded_extent.height, session->video.key.picture_format, static_cast<unsigned long long>(session->video.memory_bytes));
+        std::snprintf(reason, reason_size, "AV1 video session ready: codec=av1 actual=%ux%u format=%d tiling=%s mem=%llu", session->video.key.max_coded_extent.width,
+                      session->video.key.max_coded_extent.height, session->video.key.picture_format, decode_image_tiling_name(session->video.key.image_tiling),
+                      static_cast<unsigned long long>(session->video.memory_bytes));
         return VA_STATUS_SUCCESS;
     }
 
@@ -364,8 +365,11 @@ VAStatus vkvv_vulkan_ensure_av1_session(void* runtime_ptr, void* session_ptr, un
 
     session->max_dpb_slots                 = session_info.maxDpbSlots;
     session->max_active_reference_pictures = session_info.maxActiveReferencePictures;
-    std::snprintf(reason, reason_size, "AV1 video session ready: codec=av1 requested=%ux%u actual=%ux%u format=%d dpb=%u refs=%u mem=%llu", extent.width, extent.height,
-                  session_extent.width, session_extent.height, format_selection.format, session_info.maxDpbSlots, session_info.maxActiveReferencePictures,
-                  static_cast<unsigned long long>(session->video.memory_bytes));
+    std::snprintf(reason, reason_size,
+                  "AV1 video session ready: codec=av1 requested=%ux%u actual=%ux%u format=%d tiling=%s direct_export=%u export_tiling=%u preferred_export_tiling=%u dpb=%u refs=%u "
+                  "mem=%llu",
+                  extent.width, extent.height, session_extent.width, session_extent.height, format_selection.format, decode_image_tiling_name(format_selection.tiling),
+                  format_selection.direct_export_candidate ? 1U : 0U, format_selection.export_tiling_candidate_count, format_selection.preferred_export_tiling_candidate_count,
+                  session_info.maxDpbSlots, session_info.maxActiveReferencePictures, static_cast<unsigned long long>(session->video.memory_bytes));
     return VA_STATUS_SUCCESS;
 }
