@@ -255,6 +255,14 @@ telemetry_smoke = executable(
   install: false,
 )
 
+perf_counters_smoke = executable(
+  'vkvv-perf-counters-smoke',
+  files('tests/smoke/generic/perf_counters_smoke.cpp'),
+  include_directories: src_inc,
+  dependencies: [libva_dep, vulkan_dep],
+  install: false,
+)
+
 driver_test_env = environment()
 driver_test_env.set('LIBVA_DRIVER_NAME', 'nvidia_vulkan')
 driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
@@ -264,18 +272,24 @@ telemetry_trace_off_env.set('VKVV_TRACE', '0')
 telemetry_trace_off_env.set('VKVV_EXPECT_TRACE', '0')
 telemetry_trace_off_env.set('VKVV_LOG', '0')
 telemetry_trace_off_env.set('VKVV_EXPECT_LOG', '0')
+telemetry_trace_off_env.set('VKVV_PERF', '0')
+telemetry_trace_off_env.set('VKVV_EXPECT_PERF', '0')
 
 telemetry_trace_on_env = environment()
 telemetry_trace_on_env.set('VKVV_TRACE', '1')
 telemetry_trace_on_env.set('VKVV_EXPECT_TRACE', '1')
 telemetry_trace_on_env.set('VKVV_LOG', '1')
 telemetry_trace_on_env.set('VKVV_EXPECT_LOG', '1')
+telemetry_trace_on_env.set('VKVV_PERF', '0')
+telemetry_trace_on_env.set('VKVV_EXPECT_PERF', '0')
 
 telemetry_log_on_env = environment()
 telemetry_log_on_env.set('VKVV_TRACE', '0')
 telemetry_log_on_env.set('VKVV_EXPECT_TRACE', '0')
 telemetry_log_on_env.set('VKVV_LOG', '1')
 telemetry_log_on_env.set('VKVV_EXPECT_LOG', '1')
+telemetry_log_on_env.set('VKVV_PERF', '0')
+telemetry_log_on_env.set('VKVV_EXPECT_PERF', '0')
 
 telemetry_trace_deep_env = environment()
 telemetry_trace_deep_env.set('VKVV_TRACE', 'deep')
@@ -283,6 +297,16 @@ telemetry_trace_deep_env.set('VKVV_EXPECT_TRACE', '1')
 telemetry_trace_deep_env.set('VKVV_EXPECT_TRACE_DEEP', '1')
 telemetry_trace_deep_env.set('VKVV_LOG', '0')
 telemetry_trace_deep_env.set('VKVV_EXPECT_LOG', '0')
+telemetry_trace_deep_env.set('VKVV_PERF', '0')
+telemetry_trace_deep_env.set('VKVV_EXPECT_PERF', '0')
+
+telemetry_perf_on_env = environment()
+telemetry_perf_on_env.set('VKVV_TRACE', '0')
+telemetry_perf_on_env.set('VKVV_EXPECT_TRACE', '0')
+telemetry_perf_on_env.set('VKVV_LOG', '0')
+telemetry_perf_on_env.set('VKVV_EXPECT_LOG', '0')
+telemetry_perf_on_env.set('VKVV_PERF', '1')
+telemetry_perf_on_env.set('VKVV_EXPECT_PERF', '1')
 
 test('smoke-session', session_smoke, is_parallel: false, timeout: 30)
 test('smoke-hevc-session', hevc_session_smoke, is_parallel: false, timeout: 30)
@@ -301,3 +325,5 @@ test('smoke-telemetry-off', telemetry_smoke, env: telemetry_trace_off_env, is_pa
 test('smoke-telemetry-on', telemetry_smoke, env: telemetry_trace_on_env, is_parallel: false, timeout: 30)
 test('smoke-telemetry-log-on', telemetry_smoke, env: telemetry_log_on_env, is_parallel: false, timeout: 30)
 test('smoke-telemetry-deep', telemetry_smoke, env: telemetry_trace_deep_env, is_parallel: false, timeout: 30)
+test('smoke-telemetry-perf-on', telemetry_smoke, env: telemetry_perf_on_env, is_parallel: false, timeout: 30)
+test('smoke-perf-counters', perf_counters_smoke, is_parallel: false, timeout: 30)

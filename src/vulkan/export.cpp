@@ -119,10 +119,20 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
     }
 
     auto* resource = static_cast<SurfaceResource*>(surface->vulkan);
+    if (vkvv_perf_enabled()) {
+        if (refresh_export) {
+            runtime->perf.export_refresh_requested.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            runtime->perf.export_refresh_skipped.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     if (resource->export_resource.image == VK_NULL_HANDLE && resource->import.external && resource->import.fd.valid) {
         (void)attach_imported_export_resource_by_fd(runtime, resource);
     }
     if (resource->export_resource.image == VK_NULL_HANDLE) {
+        if (refresh_export && vkvv_perf_enabled()) {
+            runtime->perf.export_refresh_no_backing.fetch_add(1, std::memory_order_relaxed);
+        }
         if (refresh_export && resource->content_generation != 0) {
             resource->export_seed_generation = resource->content_generation;
             remember_export_seed_resource(runtime, resource);

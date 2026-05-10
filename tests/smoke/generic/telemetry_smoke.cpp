@@ -50,6 +50,7 @@ int main() {
     const bool expect_trace  = env_is_enabled("VKVV_EXPECT_TRACE");
     const bool expect_deep   = env_is_enabled("VKVV_EXPECT_TRACE_DEEP");
     const bool expect_log    = env_is_enabled("VKVV_EXPECT_LOG");
+    const bool expect_perf   = env_is_enabled("VKVV_EXPECT_PERF");
     const bool expect_reason = expect_trace || expect_log;
     char       reason[64]    = {};
 
@@ -57,6 +58,7 @@ int main() {
     ok            = check(vkvv_trace_enabled() == expect_trace, "trace env cache mismatch") && ok;
     ok            = check(vkvv_trace_deep_enabled() == expect_deep, "deep trace env cache mismatch") && ok;
     ok            = check(vkvv_log_enabled() == expect_log, "log env cache mismatch") && ok;
+    ok            = check(vkvv_perf_enabled() == expect_perf, "perf env cache mismatch") && ok;
     ok            = check(vkvv_success_reason_enabled() == expect_reason, "success reason env cache mismatch") && ok;
 
     VKVV_TRACE("telemetry-smoke", "value=%d", expensive_argument());

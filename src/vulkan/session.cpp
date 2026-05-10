@@ -1,4 +1,5 @@
 #include "vulkan/runtime_internal.h"
+#include "telemetry.h"
 
 #include <cstdio>
 #include <vector>
@@ -84,6 +85,9 @@ namespace vkvv {
         result = runtime->bind_video_session_memory(runtime->device, session->session, static_cast<uint32_t>(binds.size()), binds.data());
         if (!record_vk_result(runtime, result, "vkBindVideoSessionMemoryKHR", "video session memory bind", reason, reason_size)) {
             return false;
+        }
+        if (vkvv_perf_enabled()) {
+            perf_update_high_water(runtime->perf.video_session_high_water, static_cast<uint64_t>(session->memory_bytes));
         }
 
         return true;

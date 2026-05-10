@@ -243,6 +243,56 @@ namespace vkvv {
         uint64_t                      content_generation = 0;
     };
 
+    struct VkvvCodecPerfCounters {
+        std::atomic<uint64_t> submitted{0};
+        std::atomic<uint64_t> completed{0};
+    };
+
+    struct VkvvPerfCounters {
+        std::atomic<uint64_t> decode_submitted{0};
+        std::atomic<uint64_t> decode_completed{0};
+        std::atomic<uint64_t> command_fence_polls{0};
+        std::atomic<uint64_t> command_fence_waits{0};
+        std::atomic<uint64_t> command_fence_wait_ns{0};
+        std::atomic<uint64_t> upload_bytes{0};
+        std::atomic<uint64_t> upload_high_water{0};
+        std::atomic<uint64_t> pending_high_water{0};
+        std::atomic<uint64_t> decode_image_high_water{0};
+        std::atomic<uint64_t> export_image_high_water{0};
+        std::atomic<uint64_t> video_session_high_water{0};
+        std::atomic<uint64_t> export_refresh_requested{0};
+        std::atomic<uint64_t> export_refresh_skipped{0};
+        std::atomic<uint64_t> export_refresh_no_backing{0};
+        std::atomic<uint64_t> export_copy_count{0};
+        std::atomic<uint64_t> export_copy_targets{0};
+        std::atomic<uint64_t> export_copy_bytes{0};
+        std::atomic<uint64_t> export_copy_wait_ns{0};
+        std::atomic<uint64_t> retained_export_pruned{0};
+        std::atomic<uint64_t> retained_export_removed{0};
+        VkvvCodecPerfCounters h264_decode;
+        VkvvCodecPerfCounters h265_decode;
+        VkvvCodecPerfCounters vp9_decode;
+        VkvvCodecPerfCounters av1_decode;
+    };
+
+    inline void perf_update_high_water(std::atomic<uint64_t>& high_water, uint64_t value) {
+        uint64_t current = high_water.load(std::memory_order_relaxed);
+        while (current < value && !high_water.compare_exchange_weak(current, value, std::memory_order_relaxed, std::memory_order_relaxed)) {}
+    }
+
+    inline VkvvCodecPerfCounters* perf_decode_codec_counters(VkvvPerfCounters* counters, VkVideoCodecOperationFlagsKHR codec_operation) {
+        if (counters == nullptr) {
+            return nullptr;
+        }
+        switch (codec_operation) {
+            case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR: return &counters->h264_decode;
+            case VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR: return &counters->h265_decode;
+            case VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR: return &counters->vp9_decode;
+            case VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR: return &counters->av1_decode;
+            default: return nullptr;
+        }
+    }
+
     class VulkanRuntime {
       public:
         ~VulkanRuntime();
@@ -310,6 +360,7 @@ namespace vkvv {
         size_t                             retained_export_count_limit   = 4;
         uint64_t                           retained_export_sequence      = 0;
         TransitionRetentionWindow          transition_retention{};
+        VkvvPerfCounters                   perf{};
 
         void                               destroy_command_resources() {
             for (CommandSlot& slot : command_slots) {

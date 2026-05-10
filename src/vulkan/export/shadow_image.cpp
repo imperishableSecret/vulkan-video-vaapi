@@ -2,6 +2,7 @@
 #include "telemetry.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -333,6 +334,9 @@ namespace vkvv {
         resource->allocation_size    = requirements.size;
         resource->plane_count        = format->layer_count;
         resource->content_generation = 0;
+        if (vkvv_perf_enabled()) {
+            perf_update_high_water(runtime->perf.export_image_high_water, static_cast<uint64_t>(resource->allocation_size));
+        }
         if (tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
             VkImageDrmFormatModifierPropertiesEXT modifier_properties{};
             modifier_properties.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT;
@@ -884,11 +888,32 @@ namespace vkvv {
         if (!submit_command_buffer(runtime, reason, reason_size, "surface export copy")) {
             return false;
         }
+        const bool perf_enabled = vkvv_perf_enabled();
+        const auto wait_start   = perf_enabled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         export_lock.unlock();
         const bool waited = wait_for_command_fence(runtime, std::numeric_limits<uint64_t>::max(), reason, reason_size, "surface export copy");
         export_lock.lock();
         if (!waited) {
             return false;
+        }
+        if (perf_enabled) {
+            uint64_t copy_targets = 0;
+            uint64_t copy_bytes   = 0;
+            if (owner_export != nullptr && copy_owner_export) {
+                copy_targets++;
+                copy_bytes += static_cast<uint64_t>(owner_export->allocation_size);
+            }
+            for (const ExportResource* target : predecode_seed_targets) {
+                if (target != nullptr) {
+                    copy_targets++;
+                    copy_bytes += static_cast<uint64_t>(target->allocation_size);
+                }
+            }
+            const auto wait_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - wait_start).count();
+            runtime->perf.export_copy_count.fetch_add(1, std::memory_order_relaxed);
+            runtime->perf.export_copy_targets.fetch_add(copy_targets, std::memory_order_relaxed);
+            runtime->perf.export_copy_bytes.fetch_add(copy_bytes, std::memory_order_relaxed);
+            runtime->perf.export_copy_wait_ns.fetch_add(static_cast<uint64_t>(wait_ns), std::memory_order_relaxed);
         }
 
         const bool source_matches = export_copy_source_still_matches(source, source_image, source_content_generation);
