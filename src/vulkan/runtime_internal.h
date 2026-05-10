@@ -174,13 +174,14 @@ namespace vkvv {
     };
 
     struct UploadBuffer {
-        VkBuffer       buffer          = VK_NULL_HANDLE;
-        VkDeviceMemory memory          = VK_NULL_HANDLE;
-        void*          mapped          = nullptr;
-        VkDeviceSize   size            = 0;
-        VkDeviceSize   capacity        = 0;
-        VkDeviceSize   allocation_size = 0;
-        bool           coherent        = true;
+        VkBuffer       buffer           = VK_NULL_HANDLE;
+        VkDeviceMemory memory           = VK_NULL_HANDLE;
+        void*          mapped           = nullptr;
+        VkDeviceSize   size             = 0;
+        VkDeviceSize   capacity         = 0;
+        VkDeviceSize   allocation_size  = 0;
+        uint32_t       underused_frames = 0;
+        bool           coherent         = true;
     };
 
     struct CommandSlot {

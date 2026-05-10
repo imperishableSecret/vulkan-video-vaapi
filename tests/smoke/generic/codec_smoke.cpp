@@ -1,5 +1,6 @@
 #include "va/private.h"
 #include "codecs/av1/av1.h"
+#include "codecs/h264/h264.h"
 #include "codecs/hevc/hevc.h"
 #include "codecs/vp9/vp9.h"
 
@@ -49,6 +50,90 @@ namespace {
             0x7c, 0x88, 0xbf, 0xf1, 0x80, 0xb2, 0x31, 0x9e, 0x20, 0xbe, 0x85, 0xc5, 0xd7, 0xdc, 0x95, 0x4d, 0xaf, 0xbf, 0x3b, 0x9c, 0x53, 0xfb, 0x7b, 0xf7, 0x87,
             0xbc, 0x7c, 0xc8, 0xee, 0x69, 0xd8, 0x40, 0x0e, 0x61, 0xe2, 0xa0, 0x11, 0xd7, 0xcf, 0x94, 0xa8, 0x33, 0x86, 0xf8, 0x8d,
         };
+    }
+
+    bool check_h264_parser(const VkvvDecodeOps* h264) {
+        void* state = h264 != nullptr ? h264->state_create() : nullptr;
+        if (!check(state != nullptr, "H.264 codec state allocation failed")) {
+            return false;
+        }
+
+        h264->begin_picture(state);
+
+        VAPictureParameterBufferH264 pic{};
+        pic.CurrPic.picture_id                                = 7;
+        pic.picture_width_in_mbs_minus1                       = 0;
+        pic.picture_height_in_mbs_minus1                      = 0;
+        pic.seq_fields.bits.frame_mbs_only_flag               = 1;
+        pic.seq_fields.bits.log2_max_frame_num_minus4         = 0;
+        pic.seq_fields.bits.pic_order_cnt_type                = 0;
+        pic.seq_fields.bits.log2_max_pic_order_cnt_lsb_minus4 = 0;
+        pic.pic_fields.bits.reference_pic_flag                = 1;
+        for (VAPictureH264& ref : pic.ReferenceFrames) {
+            ref.picture_id = VA_INVALID_ID;
+            ref.flags      = VA_PICTURE_H264_INVALID;
+        }
+
+        VAIQMatrixBufferH264       iq{};
+
+        VASliceParameterBufferH264 slice{};
+        slice.slice_data_size   = 3;
+        slice.slice_data_offset = 0;
+        slice.slice_type        = 2;
+
+        std::vector<uint8_t> data = {0x65, 0xb8, 0x40};
+
+        VkvvBuffer           pic_buffer{};
+        pic_buffer.type         = VAPictureParameterBufferType;
+        pic_buffer.size         = sizeof(pic);
+        pic_buffer.num_elements = 1;
+        pic_buffer.data         = &pic;
+
+        VkvvBuffer iq_buffer{};
+        iq_buffer.type         = VAIQMatrixBufferType;
+        iq_buffer.size         = sizeof(iq);
+        iq_buffer.num_elements = 1;
+        iq_buffer.data         = &iq;
+
+        VkvvBuffer slice_buffer{};
+        slice_buffer.type         = VASliceParameterBufferType;
+        slice_buffer.size         = sizeof(slice);
+        slice_buffer.num_elements = 1;
+        slice_buffer.data         = &slice;
+
+        VkvvBuffer data_buffer{};
+        data_buffer.type         = VASliceDataBufferType;
+        data_buffer.size         = static_cast<unsigned int>(data.size());
+        data_buffer.num_elements = 1;
+        data_buffer.data         = data.data();
+
+        bool ok = check(h264->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "H.264 picture buffer ingestion failed");
+        ok      = check(h264->render_buffer(state, &iq_buffer) == VA_STATUS_SUCCESS, "H.264 IQ buffer ingestion failed") && ok;
+        ok      = check(h264->render_buffer(state, &slice_buffer) == VA_STATUS_SUCCESS, "H.264 slice buffer ingestion failed") && ok;
+        ok      = check(h264->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS, "H.264 slice data ingestion failed") && ok;
+
+        unsigned int width       = 0;
+        unsigned int height      = 0;
+        char         reason[512] = {};
+        ok                       = check(h264->prepare_decode(state, &width, &height, reason, sizeof(reason)) == VA_STATUS_SUCCESS, "H.264 prepare_decode failed") && ok;
+        if (!ok) {
+            std::fprintf(stderr, "%s\n", reason);
+        }
+        ok = check(width == 16 && height == 16, "H.264 prepare_decode returned the wrong dimensions") && ok;
+
+        VkvvH264DecodeInput input{};
+        ok = check(vkvv_h264_get_decode_input(state, &input) == VA_STATUS_SUCCESS, "H.264 decode input extraction failed") && ok;
+        ok = check(input.has_slice_header && input.first_nal_unit_type == 5 && input.first_nal_ref_idc == 3 && input.first_slice_type == 2 && input.pic_parameter_set_id == 0 &&
+                       input.idr_pic_id == 0 && input.parsed_frame_num == 0 && input.has_parsed_pic_order_cnt_lsb && input.parsed_pic_order_cnt_lsb == 0,
+                   "H.264 slice header parser returned unexpected fields") &&
+            ok;
+        ok = check(input.bitstream_size == data.size() + 3 && input.slice_count == 1 && input.slice_offsets[0] == 0 && input.bitstream[0] == 0x00 && input.bitstream[1] == 0x00 &&
+                       input.bitstream[2] == 0x01 && input.bitstream[3] == 0x65,
+                   "H.264 parser did not produce the expected Annex-B slice payload") &&
+            ok;
+
+        h264->state_destroy(state);
+        return ok;
     }
 
     bool check_vp9_parser(const VkvvDecodeOps* vp9, uint8_t profile, uint8_t bit_depth, const std::vector<uint8_t>& bitstream, const char* label) {
@@ -244,9 +329,12 @@ namespace {
             std::fprintf(stderr, "%s\n", reason);
         }
         VkvvAV1DecodeInput multi_input{};
-        ok = check(vkvv_av1_get_decode_input(state, &multi_input) == VA_STATUS_SUCCESS, "AV1 multi-frame decode input extraction failed") && ok;
-        ok = check(multi_input.header.frame_header_offset == 0 && multi_input.tiles[0].offset < multi_input.bitstream_size &&
-                       multi_input.tiles[0].size <= multi_input.bitstream_size - multi_input.tiles[0].offset && multi_input.bitstream_size < multi_frame.size() &&
+        ok                                  = check(vkvv_av1_get_decode_input(state, &multi_input) == VA_STATUS_SUCCESS, "AV1 multi-frame decode input extraction failed") && ok;
+        const bool     valid_window_offset  = multi_input.decode_window_offset > 0 && multi_input.decode_window_offset < target_tile_offset;
+        const uint32_t expected_tile_offset = valid_window_offset ? target_tile_offset - multi_input.decode_window_offset : 0;
+        const size_t   expected_window_size = static_cast<size_t>(expected_tile_offset) + tile.slice_data_size;
+        ok = check(multi_input.header.frame_header_offset == 0 && valid_window_offset && multi_input.tiles[0].offset == expected_tile_offset &&
+                       multi_input.tiles[0].size == tile.slice_data_size && multi_input.bitstream_size == expected_window_size && multi_input.bitstream_size < multi_frame.size() &&
                        multi_input.bit_depth == expected_bit_depth && multi_input.fourcc == expected_fourcc,
                    "AV1 parser did not normalize the selected frame window for a packed buffer") &&
             ok;
@@ -406,6 +494,7 @@ int main(void) {
     ok                        = check(ops_complete(h264), "H.264 decode ops are incomplete") && ok;
     if (h264 != nullptr) {
         ok = check(std::strcmp(h264->name, "h264") == 0, "H.264 decode ops used the wrong name") && ok;
+        ok = check_h264_parser(h264) && ok;
     }
 
     void* state = h264 != nullptr ? h264->state_create() : nullptr;

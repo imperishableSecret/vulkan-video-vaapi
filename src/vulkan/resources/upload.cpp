@@ -1,4 +1,5 @@
 #include "vulkan/runtime_internal.h"
+#include "telemetry.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -6,6 +7,15 @@
 #include <cstring>
 
 namespace vkvv {
+
+    namespace {
+        constexpr VkDeviceSize upload_shrink_capacity_ratio = 4;
+        constexpr uint32_t     upload_shrink_frame_count    = 64;
+
+        bool                   upload_is_underused(const UploadBuffer& upload, VkDeviceSize requested_size) {
+            return requested_size > 0 && upload.capacity / requested_size >= upload_shrink_capacity_ratio;
+        }
+    } // namespace
 
     void destroy_upload_buffer(VulkanRuntime* runtime, UploadBuffer* upload) {
         if (upload == nullptr) {
@@ -27,10 +37,11 @@ namespace vkvv {
             vkFreeMemory(runtime->device, upload->memory, nullptr);
             upload->memory = VK_NULL_HANDLE;
         }
-        upload->size            = 0;
-        upload->capacity        = 0;
-        upload->allocation_size = 0;
-        upload->coherent        = true;
+        upload->size             = 0;
+        upload->capacity         = 0;
+        upload->allocation_size  = 0;
+        upload->underused_frames = 0;
+        upload->coherent         = true;
     }
 
     bool copy_upload_buffer(VulkanRuntime* runtime, UploadBuffer* upload, const void* data, size_t data_size, const char* label, char* reason, size_t reason_size) {
@@ -78,6 +89,22 @@ namespace vkvv {
         const VkDeviceSize upload_size    = align_up(requested_size, std::max<VkDeviceSize>(1, size_alignment));
         upload->size                      = upload_size;
         if (upload->buffer != VK_NULL_HANDLE && upload->capacity >= upload_size) {
+            if (upload_is_underused(*upload, upload_size)) {
+                upload->underused_frames++;
+                if (upload->underused_frames >= upload_shrink_frame_count) {
+                    const VkDeviceSize old_capacity   = upload->capacity;
+                    const VkDeviceSize old_allocation = upload->allocation_size;
+                    vkvv_trace("upload-buffer-shrink", "label=%s old_capacity=%llu old_allocation=%llu new_capacity=%llu underused_frames=%u", label != nullptr ? label : "unknown",
+                               static_cast<unsigned long long>(old_capacity), static_cast<unsigned long long>(old_allocation), static_cast<unsigned long long>(upload_size),
+                               upload->underused_frames);
+                    destroy_upload_buffer(runtime, upload);
+                    upload->size = upload_size;
+                }
+            } else {
+                upload->underused_frames = 0;
+            }
+        }
+        if (upload->buffer != VK_NULL_HANDLE && upload->capacity >= upload_size) {
             return copy_upload_buffer(runtime, upload, data, data_size, label, reason, reason_size);
         }
 
@@ -98,8 +125,9 @@ namespace vkvv {
 
         VkMemoryRequirements requirements{};
         vkGetBufferMemoryRequirements(runtime->device, upload->buffer, &requirements);
-        upload->capacity        = upload_size;
-        upload->allocation_size = requirements.size;
+        upload->capacity         = upload_size;
+        upload->allocation_size  = requirements.size;
+        upload->underused_frames = 0;
 
         uint32_t memory_type_index = 0;
         upload->coherent           = true;

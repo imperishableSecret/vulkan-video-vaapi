@@ -442,10 +442,20 @@ int main(void) {
                "smaller H.264 upload did not reuse the existing buffer") &&
         ok;
 
-    std::vector<uint8_t> larger_upload(static_cast<size_t>(first_upload_capacity + 1), 0x33);
-    ok = ensure_upload(typed_runtime, typed_session, larger_upload) && ok;
-    ok = check_upload_contents(typed_session->uploads[0], larger_upload, "larger H.264 upload contents mismatch") && ok;
-    ok = check(typed_session->uploads[0].capacity > first_upload_capacity, "larger H.264 upload did not grow the reusable buffer") && ok;
+    std::vector<uint8_t> larger_upload(static_cast<size_t>((first_upload_capacity * 8) + 1), 0x33);
+    ok                                         = ensure_upload(typed_runtime, typed_session, larger_upload) && ok;
+    ok                                         = check_upload_contents(typed_session->uploads[0], larger_upload, "larger H.264 upload contents mismatch") && ok;
+    ok                                         = check(typed_session->uploads[0].capacity > first_upload_capacity, "larger H.264 upload did not grow the reusable buffer") && ok;
+    const VkDeviceSize   grown_upload_capacity = typed_session->uploads[0].capacity;
+
+    std::vector<uint8_t> tiny_upload(64, 0x44);
+    for (uint32_t i = 0; i < 64; i++) {
+        ok = ensure_upload(typed_runtime, typed_session, tiny_upload) && ok;
+        ok = check_upload_contents(typed_session->uploads[0], tiny_upload, "tiny H.264 upload contents mismatch") && ok;
+    }
+    ok = check(typed_session->uploads[0].capacity < grown_upload_capacity && typed_session->uploads[0].capacity >= typed_session->uploads[0].size,
+               "sustained tiny H.264 uploads did not shrink the overgrown upload buffer") &&
+        ok;
     ok = check_async_completion(typed_runtime) && ok;
     ok = check_two_pending_surfaces(typed_runtime) && ok;
     ok = check_pending_export_refresh_tracking(typed_runtime) && ok;

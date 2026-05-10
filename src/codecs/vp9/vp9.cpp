@@ -1,4 +1,5 @@
 #include "vp9.h"
+#include "codecs/storage.h"
 
 #ifndef GST_USE_UNSTABLE_API
 #define GST_USE_UNSTABLE_API
@@ -38,6 +39,7 @@ namespace {
         VASliceParameterBufferVP9      slice{};
         std::vector<uint8_t>           bitstream;
         VkvvVP9FrameHeader             header{};
+        uint32_t                       bitstream_underused_frames = 0;
     };
 
     bool copy_first_element(const VkvvBuffer* buffer, void* dst, size_t dst_size) {
@@ -169,7 +171,7 @@ void vkvv_vp9_begin_picture(void* state) {
     vp9->has_header     = false;
     vp9->pic            = {};
     vp9->slice          = {};
-    vp9->bitstream.clear();
+    vkvv::clear_with_capacity_hysteresis(vp9->bitstream, vp9->bitstream_underused_frames);
     vp9->header = {};
 }
 

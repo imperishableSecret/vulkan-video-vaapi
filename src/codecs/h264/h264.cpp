@@ -1,10 +1,10 @@
 #include "h264.h"
+#include "codecs/storage.h"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <new>
-#include <utility>
 #include <vector>
 
 namespace {
@@ -34,6 +34,11 @@ namespace {
         std::vector<VASliceParameterBufferH264> slices;
         std::vector<uint8_t>                    bitstream;
         std::vector<uint32_t>                   slice_offsets;
+        std::vector<uint8_t>                    rbsp_scratch;
+        uint32_t                                slices_underused_frames        = 0;
+        uint32_t                                bitstream_underused_frames     = 0;
+        uint32_t                                slice_offsets_underused_frames = 0;
+        uint32_t                                rbsp_underused_frames          = 0;
     };
 
     bool copy_first_element(const VkvvBuffer* buffer, void* dst, size_t dst_size) {
@@ -51,7 +56,7 @@ namespace {
 
     class BitReader {
       public:
-        explicit BitReader(std::vector<uint8_t> rbsp) : rbsp_(std::move(rbsp)) {}
+        explicit BitReader(const std::vector<uint8_t>& rbsp) : rbsp_(rbsp) {}
 
         bool read_bits(uint32_t count, uint32_t* value) {
             if (count > 32 || value == nullptr || bit_offset_ + count > rbsp_.size() * 8) {
@@ -117,8 +122,8 @@ namespace {
         }
 
       private:
-        std::vector<uint8_t> rbsp_;
-        size_t               bit_offset_ = 0;
+        const std::vector<uint8_t>& rbsp_;
+        size_t                      bit_offset_ = 0;
     };
 
     bool parse_h264_slice_header(const uint8_t* data, size_t size, const VAPictureParameterBufferH264& pic, H264State* h264) {
@@ -141,7 +146,8 @@ namespace {
         h264->first_nal_ref_idc   = (nal_header >> 5) & 0x3;
         h264->first_nal_unit_type = nal_header & 0x1f;
 
-        std::vector<uint8_t> rbsp;
+        std::vector<uint8_t>& rbsp = h264->rbsp_scratch;
+        rbsp.clear();
         rbsp.reserve(size - 1);
         uint32_t zero_count = 0;
         for (size_t i = 1; i < size; i++) {
@@ -161,7 +167,7 @@ namespace {
             return false;
         }
 
-        BitReader reader(std::move(rbsp));
+        BitReader reader(rbsp);
         uint32_t  first_mb_in_slice    = 0;
         uint32_t  slice_type           = 0;
         uint32_t  pic_parameter_set_id = 0;
@@ -263,9 +269,10 @@ void vkvv_h264_begin_picture(void* state) {
     h264->first_slice_type                  = 0;
     h264->pic                               = {};
     h264->iq                                = {};
-    h264->slices.clear();
-    h264->bitstream.clear();
-    h264->slice_offsets.clear();
+    vkvv::clear_with_capacity_hysteresis(h264->slices, h264->slices_underused_frames);
+    vkvv::clear_with_capacity_hysteresis(h264->bitstream, h264->bitstream_underused_frames);
+    vkvv::clear_with_capacity_hysteresis(h264->slice_offsets, h264->slice_offsets_underused_frames);
+    vkvv::clear_with_capacity_hysteresis(h264->rbsp_scratch, h264->rbsp_underused_frames);
 }
 
 VAStatus vkvv_h264_render_buffer(void* state, const VkvvBuffer* buffer) {

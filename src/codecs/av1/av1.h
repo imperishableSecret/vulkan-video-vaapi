@@ -72,6 +72,7 @@ typedef struct {
     size_t                                tile_count;
     const uint8_t*                        bitstream;
     size_t                                bitstream_size;
+    uint32_t                              decode_window_offset;
     VkvvAV1FrameHeader                    header;
     uint8_t                               bit_depth;
     unsigned int                          rt_format;

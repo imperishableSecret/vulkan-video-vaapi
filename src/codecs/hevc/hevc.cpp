@@ -1,4 +1,5 @@
 #include "hevc.h"
+#include "codecs/storage.h"
 #include "telemetry.h"
 
 #include <cstdio>
@@ -23,13 +24,16 @@ namespace {
         std::vector<VASliceParameterBufferHEVC> slices;
         std::vector<uint8_t>                    bitstream;
         std::vector<uint32_t>                   slice_offsets;
-        size_t                                  next_slice_data_index        = 0;
-        uint32_t                                first_slice_data_offset      = 0;
-        uint32_t                                first_slice_data_size        = 0;
-        uint32_t                                first_slice_data_byte_offset = 0;
-        uint8_t                                 first_slice_nal0             = 0;
-        uint8_t                                 first_slice_nal1             = 0;
-        bool                                    has_first_slice_nal          = false;
+        size_t                                  next_slice_data_index          = 0;
+        uint32_t                                first_slice_data_offset        = 0;
+        uint32_t                                first_slice_data_size          = 0;
+        uint32_t                                first_slice_data_byte_offset   = 0;
+        uint8_t                                 first_slice_nal0               = 0;
+        uint8_t                                 first_slice_nal1               = 0;
+        bool                                    has_first_slice_nal            = false;
+        uint32_t                                slices_underused_frames        = 0;
+        uint32_t                                bitstream_underused_frames     = 0;
+        uint32_t                                slice_offsets_underused_frames = 0;
     };
 
     bool copy_first_element(const VkvvBuffer* buffer, void* dst, size_t dst_size) {
@@ -97,9 +101,9 @@ void vkvv_hevc_begin_picture(void* state) {
     hevc->reference_count  = 0;
     hevc->pic              = {};
     hevc->iq               = {};
-    hevc->slices.clear();
-    hevc->bitstream.clear();
-    hevc->slice_offsets.clear();
+    vkvv::clear_with_capacity_hysteresis(hevc->slices, hevc->slices_underused_frames);
+    vkvv::clear_with_capacity_hysteresis(hevc->bitstream, hevc->bitstream_underused_frames);
+    vkvv::clear_with_capacity_hysteresis(hevc->slice_offsets, hevc->slice_offsets_underused_frames);
     hevc->next_slice_data_index        = 0;
     hevc->first_slice_data_offset      = 0;
     hevc->first_slice_data_size        = 0;
