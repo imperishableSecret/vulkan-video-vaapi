@@ -22,6 +22,16 @@ namespace {
     void*                 global_vulkan_runtime = NULL;
     std::atomic<uint64_t> next_driver_instance_id{1};
 
+    void                  destroy_global_vulkan_runtime_at_exit(void) {
+        void* runtime = NULL;
+        {
+            std::lock_guard<std::mutex> lock(global_runtime_mutex);
+            runtime               = global_vulkan_runtime;
+            global_vulkan_runtime = NULL;
+        }
+        vkvv_vulkan_runtime_destroy(runtime);
+    }
+
 } // namespace
 
 void vkvv_log(const char* fmt, ...) {
@@ -45,6 +55,9 @@ void* vkvv_get_or_create_vulkan_runtime(char* reason, size_t reason_size) {
     }
 
     global_vulkan_runtime = vkvv_vulkan_runtime_create(reason, reason_size);
+    if (global_vulkan_runtime != NULL) {
+        std::atexit(destroy_global_vulkan_runtime_at_exit);
+    }
     return global_vulkan_runtime;
 }
 
@@ -74,6 +87,7 @@ static VAStatus vkvvTerminate(VADriverContextP ctx) {
     VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
     if (drv != NULL) {
         release_owned_payloads(drv);
+        vkvv_vulkan_flush_perf_summary(drv->vulkan);
         vkvv_object_clear(drv);
         delete drv;
         ctx->pDriverData = NULL;

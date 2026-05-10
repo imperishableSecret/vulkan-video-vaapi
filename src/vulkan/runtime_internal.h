@@ -269,6 +269,7 @@ namespace vkvv {
         std::atomic<uint64_t> export_copy_wait_ns{0};
         std::atomic<uint64_t> retained_export_pruned{0};
         std::atomic<uint64_t> retained_export_removed{0};
+        std::atomic<uint64_t> summary_fingerprint{0};
         VkvvCodecPerfCounters h264_decode;
         VkvvCodecPerfCounters h265_decode;
         VkvvCodecPerfCounters vp9_decode;

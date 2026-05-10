@@ -11,6 +11,7 @@ extern "C" {
 
 void*    vkvv_vulkan_runtime_create(char* reason, size_t reason_size);
 void     vkvv_vulkan_runtime_destroy(void* runtime);
+void     vkvv_vulkan_flush_perf_summary(void* runtime);
 bool     vkvv_vulkan_supports_surface_export(void* runtime);
 bool     vkvv_vulkan_surface_has_exported_backing(const VkvvSurface* surface);
 bool     vkvv_vulkan_surface_has_predecode_export(const VkvvSurface* surface);

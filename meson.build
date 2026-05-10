@@ -322,6 +322,8 @@ test('smoke-sync', sync_smoke, env: driver_test_env, is_parallel: false, timeout
 test('smoke-capability', capability_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-surface-import', surface_import_smoke, is_parallel: false, timeout: 30)
 test('smoke-retained-export', retained_export_smoke, is_parallel: false, timeout: 30)
+test('smoke-perf-summary', python3, args: [files('tests/smoke/generic/perf_summary_smoke.py'), meson.current_build_dir() / 'vkvv-lifetime-smoke'], env: driver_test_env,
+     is_parallel: false, timeout: 30)
 test('smoke-telemetry-off', telemetry_smoke, env: telemetry_trace_off_env, is_parallel: false, timeout: 30)
 test('smoke-telemetry-on', telemetry_smoke, env: telemetry_trace_on_env, is_parallel: false, timeout: 30)
 test('smoke-telemetry-log-on', telemetry_smoke, env: telemetry_log_on_env, is_parallel: false, timeout: 30)

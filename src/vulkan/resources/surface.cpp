@@ -17,12 +17,63 @@ namespace vkvv {
             return value.load(std::memory_order_relaxed);
         }
 
+        void perf_mix(uint64_t* hash, uint64_t value) {
+            if (value == 0) {
+                return;
+            }
+            *hash ^= value + 0x9e3779b97f4a7c15ull + (*hash << 6U) + (*hash >> 2U);
+        }
+
+        uint64_t perf_summary_fingerprint(VulkanRuntime* runtime, const RetainedExportStats& retained) {
+            uint64_t hash = 0;
+            perf_mix(&hash, perf_value(runtime->perf.decode_submitted));
+            perf_mix(&hash, perf_value(runtime->perf.decode_completed));
+            perf_mix(&hash, perf_value(runtime->perf.command_fence_polls));
+            perf_mix(&hash, perf_value(runtime->perf.command_fence_waits));
+            perf_mix(&hash, perf_value(runtime->perf.command_fence_wait_ns));
+            perf_mix(&hash, perf_value(runtime->perf.upload_bytes));
+            perf_mix(&hash, perf_value(runtime->perf.upload_high_water));
+            perf_mix(&hash, perf_value(runtime->perf.pending_high_water));
+            perf_mix(&hash, perf_value(runtime->perf.decode_image_high_water));
+            perf_mix(&hash, perf_value(runtime->perf.export_image_high_water));
+            perf_mix(&hash, perf_value(runtime->perf.video_session_high_water));
+            perf_mix(&hash, perf_value(runtime->perf.export_refresh_requested));
+            perf_mix(&hash, perf_value(runtime->perf.export_refresh_skipped));
+            perf_mix(&hash, perf_value(runtime->perf.export_refresh_no_backing));
+            perf_mix(&hash, perf_value(runtime->perf.export_copy_count));
+            perf_mix(&hash, perf_value(runtime->perf.export_copy_targets));
+            perf_mix(&hash, perf_value(runtime->perf.export_copy_bytes));
+            perf_mix(&hash, perf_value(runtime->perf.export_copy_wait_ns));
+            perf_mix(&hash, perf_value(runtime->perf.retained_export_pruned));
+            perf_mix(&hash, perf_value(runtime->perf.retained_export_removed));
+            perf_mix(&hash, perf_value(runtime->perf.h264_decode.submitted));
+            perf_mix(&hash, perf_value(runtime->perf.h264_decode.completed));
+            perf_mix(&hash, perf_value(runtime->perf.h265_decode.submitted));
+            perf_mix(&hash, perf_value(runtime->perf.h265_decode.completed));
+            perf_mix(&hash, perf_value(runtime->perf.vp9_decode.submitted));
+            perf_mix(&hash, perf_value(runtime->perf.vp9_decode.completed));
+            perf_mix(&hash, perf_value(runtime->perf.av1_decode.submitted));
+            perf_mix(&hash, perf_value(runtime->perf.av1_decode.completed));
+            perf_mix(&hash, static_cast<uint64_t>(retained.count));
+            perf_mix(&hash, static_cast<uint64_t>(retained.bytes));
+            return hash;
+        }
+
         void emit_perf_summary(VulkanRuntime* runtime) {
             if (runtime == nullptr || !vkvv_perf_enabled()) {
                 return;
             }
 
-            const RetainedExportStats retained = runtime_retained_export_stats(runtime);
+            const RetainedExportStats retained    = runtime_retained_export_stats(runtime);
+            const uint64_t            fingerprint = perf_summary_fingerprint(runtime, retained);
+            if (fingerprint == 0) {
+                return;
+            }
+            uint64_t previous = runtime->perf.summary_fingerprint.load(std::memory_order_relaxed);
+            if (previous == fingerprint ||
+                !runtime->perf.summary_fingerprint.compare_exchange_strong(previous, fingerprint, std::memory_order_relaxed, std::memory_order_relaxed)) {
+                return;
+            }
             std::fprintf(
                 stderr,
                 "nvidia-vulkan-vaapi: perf decode_submitted=%llu decode_completed=%llu h264=%llu/%llu h265=%llu/%llu vp9=%llu/%llu av1=%llu/%llu "
@@ -885,6 +936,10 @@ namespace vkvv {
 } // namespace vkvv
 
 using namespace vkvv;
+
+void vkvv_vulkan_flush_perf_summary(void* runtime_ptr) {
+    emit_perf_summary(static_cast<VulkanRuntime*>(runtime_ptr));
+}
 
 void vkvv_vulkan_surface_destroy(void* runtime_ptr, VkvvSurface* surface) {
     auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);

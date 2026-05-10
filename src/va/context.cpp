@@ -164,7 +164,11 @@ VAStatus vkvvDestroyContext(VADriverContextP ctx, VAContextID context) {
         }
         vkvv_release_context_payload(drv, vctx);
     }
-    return vkvv_object_remove(drv, context, VKVV_OBJECT_CONTEXT) ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_INVALID_CONTEXT;
+    const bool removed = vkvv_object_remove(drv, context, VKVV_OBJECT_CONTEXT);
+    if (removed) {
+        vkvv_vulkan_flush_perf_summary(drv->vulkan);
+    }
+    return removed ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_INVALID_CONTEXT;
 }
 
 VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID render_target) {
