@@ -4,6 +4,7 @@ project(
   version: '0.1.0',
   meson_version: '>=0.58.0',
   default_options: [
+    'prefix=/usr',
     'cpp_std=c++23',
     'warning_level=2',
     'optimization=2',
@@ -23,6 +24,7 @@ threads_dep = dependency('threads')
 gst_codecparsers_dep = dependency('gstreamer-codecparsers-1.0')
 exports_map = meson.current_source_dir() / 'src' / 'exports.map'
 src_inc = include_directories('src')
+libva_driver_dir = libva_dep.get_variable(pkgconfig: 'driverdir')
 
 vulkan_runtime_sources = files(
   'src/telemetry.cpp',
@@ -101,7 +103,8 @@ shared_module(
     '-fno-gnu-unique',
     '-fvisibility-inlines-hidden',
   ],
-  install: false,
+  install: true,
+  install_dir: libva_driver_dir,
 )
 
 executable(

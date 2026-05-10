@@ -1,14 +1,12 @@
 BUILDDIR ?= build
 DESTDIR ?=
-PREFIX ?= $(HOME)/.local
-LIBVA_DRIVER_DIR ?= $(PREFIX)/lib/dri
 
 MESON ?= meson
 MESON_COMPILE ?= $(MESON) compile
+MESON_INSTALL ?= $(MESON) install
 MESON_TEST ?= $(MESON) test
 CLANG_FORMAT ?= clang-format
 CLANG_TIDY ?= clang-tidy
-INSTALL ?= install
 
 OPTIMIZATION ?= 2
 DEBUG ?= false
@@ -42,8 +40,12 @@ experimental:
 test: all
 	$(MESON_TEST) -C $(BUILDDIR) --print-errorlogs
 
-install: all
-	$(INSTALL) -Dm755 "$(BUILDDIR)/nvidia_vulkan_drv_video.so" "$(DESTDIR)$(LIBVA_DRIVER_DIR)/nvidia_vulkan_drv_video.so"
+install:
+	@test -f "$(BUILDDIR)/build.ninja" || { \
+		echo "missing $(BUILDDIR)/build.ninja; run 'make all' or 'make experimental' first" >&2; \
+		exit 1; \
+	}
+	$(MESON_INSTALL) -C "$(BUILDDIR)" --no-rebuild $(if $(DESTDIR),--destdir "$(DESTDIR)")
 
 format-fix:
 	$(CLANG_FORMAT) -i $(FORMAT_FILES)

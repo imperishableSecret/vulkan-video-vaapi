@@ -139,16 +139,31 @@ vainfo
 
 ## Install
 
-Install into the user's local libva driver directory:
+Build the driver variant you want to install:
 
 ```sh
-make install
+make all
 ```
 
-Override the install destination when needed:
+or, for a local-machine build:
 
 ```sh
-make install PREFIX=/usr LIBVA_DRIVER_DIR=/usr/lib/dri
+make experimental
+```
+
+Install the already-built driver into libva's system driver directory:
+
+```sh
+sudo make install
+```
+
+`make install` only installs `build/nvidia_vulkan_drv_video.so`; it does not
+rebuild or switch optimization modes. Like the original NVIDIA VA-API driver,
+Meson gets the install directory from libva's pkg-config `driverdir` variable.
+Check the resolved directory with:
+
+```sh
+pkg-config --variable=driverdir libva
 ```
 
 For local browser testing without installing:
