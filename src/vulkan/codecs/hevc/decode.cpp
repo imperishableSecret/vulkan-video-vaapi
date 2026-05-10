@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "api.h"
+#include "telemetry.h"
 
 #include <algorithm>
 #include <array>
@@ -398,14 +399,14 @@ VAStatus vkvv_vulkan_decode_hevc(void* runtime_ptr, void* session_ptr, VkvvDrive
     }
 
     track_pending_decode(runtime, target, parameters, upload_allocation_size, true, "HEVC decode");
-    std::snprintf(reason, reason_size,
-                  "submitted async HEVC Vulkan decode: %ux%u slices=%u bytes=%zu refs=%u active_refs=%u slot=%d poc=%d st_rps_sps=%u st_rps_bits=%u rps=%u/%u/%u "
-                  "rps_refs=%u slice_refs=%u l0=%u l1=%u "
-                  "decode_mem=%llu upload_mem=%llu session_mem=%llu",
-                  coded_extent.width, coded_extent.height, input->slice_count, input->bitstream_size, reference_count, decode_reference_count, target_dpb_slot,
-                  std_picture.PicOrderCntVal, std_picture.flags.short_term_ref_pic_set_sps_flag, input->pic->st_rps_bits, rps_counts.st_curr_before, rps_counts.st_curr_after,
-                  rps_counts.lt_curr, rps_reference_count, active_slice_ref_count, active_l0_count, active_l1_count,
-                  static_cast<unsigned long long>(target_resource->allocation_size), static_cast<unsigned long long>(upload_allocation_size),
-                  static_cast<unsigned long long>(session->video.memory_bytes));
+    VKVV_SUCCESS_REASON(reason, reason_size,
+                        "submitted async HEVC Vulkan decode: %ux%u slices=%u bytes=%zu refs=%u active_refs=%u slot=%d poc=%d st_rps_sps=%u st_rps_bits=%u rps=%u/%u/%u "
+                        "rps_refs=%u slice_refs=%u l0=%u l1=%u "
+                        "decode_mem=%llu upload_mem=%llu session_mem=%llu",
+                        coded_extent.width, coded_extent.height, input->slice_count, input->bitstream_size, reference_count, decode_reference_count, target_dpb_slot,
+                        std_picture.PicOrderCntVal, std_picture.flags.short_term_ref_pic_set_sps_flag, input->pic->st_rps_bits, rps_counts.st_curr_before, rps_counts.st_curr_after,
+                        rps_counts.lt_curr, rps_reference_count, active_slice_ref_count, active_l0_count, active_l1_count,
+                        static_cast<unsigned long long>(target_resource->allocation_size), static_cast<unsigned long long>(upload_allocation_size),
+                        static_cast<unsigned long long>(session->video.memory_bytes));
     return VA_STATUS_SUCCESS;
 }

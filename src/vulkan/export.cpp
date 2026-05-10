@@ -416,7 +416,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                static_cast<unsigned long long>(exported_shadow != nullptr ? exported_shadow->seed_source_generation : 0), export_after_nondisplay_skip ? 1U : 0U,
                static_cast<unsigned long long>(resource->last_nondisplay_skip_generation), static_cast<unsigned long long>(resource->last_nondisplay_skip_shadow_generation));
 
-    std::snprintf(
+    VKVV_SUCCESS_REASON(
         reason, reason_size,
         "exported %s dma-buf%s: driver=%llu surface=%u stream=%llu codec=0x%x %ux%u fd=%d size=%u modifier=0x%llx y_pitch=%u uv_pitch=%u decode_mem=%llu export_mem=%llu "
         "retained=%zu retained_mem=%llu source_generation=%llu shadow_generation=%llu predecode=%u seeded=%u placeholder=%s seed_source=%u seed_generation=%llu",

@@ -381,8 +381,8 @@ namespace vkvv {
                    completed_resource_after != nullptr && completed_resource_after->export_resource.exported ? 1U : 0U);
         complete_surface_status(completed_surface, VA_STATUS_SUCCESS);
         if (reason[0] == '\0') {
-            std::snprintf(reason, reason_size, "%s completed asynchronously: surface=%u upload_mem=%llu", operation[0] != '\0' ? operation : "Vulkan decode",
-                          completed_surface != nullptr ? completed_surface->id : VA_INVALID_ID, static_cast<unsigned long long>(upload_allocation_size));
+            VKVV_SUCCESS_REASON(reason, reason_size, "%s completed asynchronously: surface=%u upload_mem=%llu", operation[0] != '\0' ? operation : "Vulkan decode",
+                                completed_surface != nullptr ? completed_surface->id : VA_INVALID_ID, static_cast<unsigned long long>(upload_allocation_size));
         }
         return VA_STATUS_SUCCESS;
     }

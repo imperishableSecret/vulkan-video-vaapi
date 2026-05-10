@@ -1,12 +1,21 @@
 #ifndef VKVV_TELEMETRY_H
 #define VKVV_TELEMETRY_H
 
+#include <cstddef>
+#include <cstdio>
 #include <stdint.h>
 
-bool vkvv_log_enabled(void);
-bool vkvv_trace_enabled(void);
-void vkvv_trace(const char* event, const char* fmt, ...);
-void vkvv_trace_emit(const char* event, const char* fmt, ...);
+bool        vkvv_log_enabled(void);
+bool        vkvv_success_reason_enabled(void);
+bool        vkvv_trace_enabled(void);
+void        vkvv_trace(const char* event, const char* fmt, ...);
+void        vkvv_trace_emit(const char* event, const char* fmt, ...);
+
+inline void vkvv_clear_reason(char* reason, std::size_t reason_size) {
+    if (reason != nullptr && reason_size > 0) {
+        reason[0] = '\0';
+    }
+}
 
 // Use VKVV_TRACE in hot paths so trace arguments are not evaluated unless tracing
 // is enabled. vkvv_trace() remains for cold/compatibility paths where arguments
@@ -15,6 +24,15 @@ void vkvv_trace_emit(const char* event, const char* fmt, ...);
     do {                                                                                                                                                                           \
         if (vkvv_trace_enabled()) {                                                                                                                                                \
             vkvv_trace_emit((event), (fmt)__VA_OPT__(, ) __VA_ARGS__);                                                                                                             \
+        }                                                                                                                                                                          \
+    } while (false)
+
+#define VKVV_SUCCESS_REASON(reason, reason_size, fmt, ...)                                                                                                                         \
+    do {                                                                                                                                                                           \
+        if (vkvv_success_reason_enabled()) {                                                                                                                                       \
+            std::snprintf((reason), (reason_size), (fmt)__VA_OPT__(, ) __VA_ARGS__);                                                                                               \
+        } else {                                                                                                                                                                   \
+            vkvv_clear_reason((reason), (reason_size));                                                                                                                            \
         }                                                                                                                                                                          \
     } while (false)
 

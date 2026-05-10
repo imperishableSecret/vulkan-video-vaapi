@@ -811,13 +811,12 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
                input->header.refresh_frame_flags, refresh_export ? 1U : 0U, input->header.show_existing_frame ? 1U : 0U, input->header.show_frame ? 1U : 0U,
                input->header.showable_frame ? 1U : 0U, input->bit_depth, input->fourcc, reference_count, input->bitstream_size,
                static_cast<unsigned long long>(upload_allocation_size), static_cast<unsigned long long>(session->video.memory_bytes));
-    std::snprintf(reason, reason_size,
-                  "submitted async AV1 Vulkan decode: %ux%u depth=%u fourcc=0x%x tiles=%zu bytes=%zu refs=%u setup=%u slot=%d refresh=0x%02x header=%u tile0=%u/%u decode_mem=%llu "
-                  "upload_mem=%llu "
-                  "session_mem=%llu",
-                  coded_extent.width, coded_extent.height, input->bit_depth, input->fourcc, input->tile_count, input->bitstream_size, reference_count,
-                  setup_slot_ptr != nullptr ? 1U : 0U, target_dpb_slot, input->header.refresh_frame_flags, av1_picture.frameHeaderOffset,
-                  input->tile_count > 0 ? tile_offsets[0] : 0, input->tile_count > 0 ? tile_sizes[0] : 0, static_cast<unsigned long long>(target_resource->allocation_size),
-                  static_cast<unsigned long long>(upload_allocation_size), static_cast<unsigned long long>(session->video.memory_bytes));
+    VKVV_SUCCESS_REASON(reason, reason_size,
+                        "submitted async AV1 Vulkan decode: %ux%u depth=%u fourcc=0x%x tiles=%zu bytes=%zu refs=%u setup=%u slot=%d refresh=0x%02x header=%u tile0=%u/%u "
+                        "decode_mem=%llu upload_mem=%llu session_mem=%llu",
+                        coded_extent.width, coded_extent.height, input->bit_depth, input->fourcc, input->tile_count, input->bitstream_size, reference_count,
+                        setup_slot_ptr != nullptr ? 1U : 0U, target_dpb_slot, input->header.refresh_frame_flags, av1_picture.frameHeaderOffset,
+                        input->tile_count > 0 ? tile_offsets[0] : 0, input->tile_count > 0 ? tile_sizes[0] : 0, static_cast<unsigned long long>(target_resource->allocation_size),
+                        static_cast<unsigned long long>(upload_allocation_size), static_cast<unsigned long long>(session->video.memory_bytes));
     return VA_STATUS_SUCCESS;
 }

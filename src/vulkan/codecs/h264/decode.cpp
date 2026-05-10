@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "api.h"
+#include "telemetry.h"
 
 #include <algorithm>
 #include <array>
@@ -343,9 +344,9 @@ VAStatus vkvv_vulkan_decode_h264(void* runtime_ptr, void* session_ptr, VkvvDrive
     }
 
     track_pending_decode(runtime, target, parameters, upload_allocation_size, true, "H.264 decode");
-    std::snprintf(reason, reason_size, "submitted async H.264 Vulkan decode: %ux%u slices=%u bytes=%zu refs=%u slot=%d decode_mem=%llu upload_mem=%llu session_mem=%llu",
-                  coded_extent.width, coded_extent.height, input->slice_count, input->bitstream_size, reference_count, target_dpb_slot,
-                  static_cast<unsigned long long>(target_resource->allocation_size), static_cast<unsigned long long>(upload_allocation_size),
-                  static_cast<unsigned long long>(session->video.memory_bytes));
+    VKVV_SUCCESS_REASON(reason, reason_size, "submitted async H.264 Vulkan decode: %ux%u slices=%u bytes=%zu refs=%u slot=%d decode_mem=%llu upload_mem=%llu session_mem=%llu",
+                        coded_extent.width, coded_extent.height, input->slice_count, input->bitstream_size, reference_count, target_dpb_slot,
+                        static_cast<unsigned long long>(target_resource->allocation_size), static_cast<unsigned long long>(upload_allocation_size),
+                        static_cast<unsigned long long>(session->video.memory_bytes));
     return VA_STATUS_SUCCESS;
 }
