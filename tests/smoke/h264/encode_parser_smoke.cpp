@@ -92,6 +92,15 @@ namespace {
             ops->render_buffer(state, &slc_buffer) == VA_STATUS_SUCCESS;
     }
 
+    bool render_h264_picture_only(const VkvvEncodeOps* ops, void* state, VABufferID coded_buffer, uint8_t slice_type = 0, bool idr = false) {
+        VAEncPictureParameterBufferH264 pic = picture(coded_buffer, idr);
+        VAEncSliceParameterBufferH264   slc = slice(slice_type);
+
+        VkvvBuffer                      pic_buffer = buffer_for(VAEncPictureParameterBufferType, &pic, sizeof(pic));
+        VkvvBuffer                      slc_buffer = buffer_for(VAEncSliceParameterBufferType, &slc, sizeof(slc));
+        return ops->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS && ops->render_buffer(state, &slc_buffer) == VA_STATUS_SUCCESS;
+    }
+
     template <typename Payload>
     bool render_misc_payload(const VkvvEncodeOps* ops, void* state, VAEncMiscParameterType type, const Payload& payload) {
         std::vector<uint8_t> misc(sizeof(VAEncMiscParameterBuffer) + sizeof(Payload));
@@ -222,6 +231,15 @@ int main(void) {
                        input.hrd->buffer_size == 2000000 && input.has_quality_level && input.quality_level != nullptr && input.quality_level->quality_level == 1 &&
                        input.has_quantization && input.quantization != nullptr,
                    "H.264 encode input did not preserve frame type or misc parameters") &&
+            ok;
+
+        ops.begin_picture(state);
+        ok = check(render_h264_picture_only(&ops, state, coded_buffer, 0, false), "H.264 encode picture-only buffers were rejected") && ok;
+        ok = check_va(ops.prepare_encode(state, &drv, &vctx, &width, &height, &coded, reason, sizeof(reason)), VA_STATUS_SUCCESS, "prepare encode with retained sequence") && ok;
+        ok = check(width == 640 && height == 480 && coded == coded_buffer, "retained H.264 sequence did not supply dimensions/coded buffer") && ok;
+        ok = check_va(vkvv_h264_encode_get_input(state, &drv, &vctx, &input, reason, sizeof(reason)), VA_STATUS_SUCCESS, "get retained-sequence H.264 encode input") && ok;
+        ok = check(input.frame_type == VKVV_H264_ENCODE_FRAME_P && input.sequence != nullptr && input.sequence->picture_width_in_mbs == 40,
+                   "H.264 encode parser did not retain sequence state across pictures") &&
             ok;
 
         ops.begin_picture(state);

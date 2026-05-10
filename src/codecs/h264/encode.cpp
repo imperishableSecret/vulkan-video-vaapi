@@ -207,7 +207,6 @@ void vkvv_h264_encode_begin_picture(void* state) {
     if (h264 == nullptr) {
         return;
     }
-    h264->has_sequence      = false;
     h264->has_picture       = false;
     h264->has_slices        = false;
     h264->has_iq            = false;
@@ -217,7 +216,6 @@ void vkvv_h264_encode_begin_picture(void* state) {
     h264->has_quality_level = false;
     h264->has_quantization  = false;
     h264->has_packed_header = false;
-    h264->sequence          = {};
     h264->picture           = {};
     h264->iq                = {};
     h264->frame_rate        = {};
