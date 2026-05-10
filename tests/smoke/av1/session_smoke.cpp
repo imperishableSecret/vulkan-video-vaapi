@@ -291,6 +291,29 @@ namespace {
         return ok;
     }
 
+    bool check_av1_export_refresh_decision() {
+        VADecPictureParameterBufferAV1 pic{};
+        VkvvAV1DecodeInput             input{};
+        input.pic = &pic;
+
+        bool ok = check(!vkvv::av1_decode_needs_export_refresh(&input), "pure hidden AV1 reference frame unexpectedly refreshed export shadow");
+
+        input.header.showable_frame = true;
+        ok                          = check(vkvv::av1_decode_needs_export_refresh(&input), "showable AV1 hidden frame did not request export shadow refresh") && ok;
+
+        input.header.showable_frame = false;
+        input.header.show_frame     = true;
+        ok                          = check(vkvv::av1_decode_needs_export_refresh(&input), "AV1 header show_frame did not request export shadow refresh") && ok;
+
+        input.header.show_frame          = false;
+        input.header.show_existing_frame = true;
+        ok                               = check(vkvv::av1_decode_needs_export_refresh(&input), "AV1 show-existing frame did not request export shadow refresh") && ok;
+
+        input.header.show_existing_frame    = false;
+        pic.pic_info_fields.bits.show_frame = 1;
+        return check(vkvv::av1_decode_needs_export_refresh(&input), "VA AV1 show_frame did not request export shadow refresh") && ok;
+    }
+
     bool submit_empty_pending(vkvv::VulkanRuntime* runtime, VkvvSurface* surface, const char* operation) {
         char reason[512] = {};
         {
@@ -361,6 +384,7 @@ int main(void) {
     ok      = check_av1_surface_reconciliation() && ok;
     ok      = check_av1_target_slot_selection() && ok;
     ok      = check_av1_target_layout_selection() && ok;
+    ok      = check_av1_export_refresh_decision() && ok;
 
     char  reason[512] = {};
     void* runtime     = vkvv_vulkan_runtime_create(reason, sizeof(reason));

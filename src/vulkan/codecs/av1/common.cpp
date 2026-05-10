@@ -175,6 +175,13 @@ namespace vkvv {
         return has_setup_slot ? (VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR | VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR) : VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR;
     }
 
+    bool av1_decode_needs_export_refresh(const VkvvAV1DecodeInput* input) {
+        if (input == nullptr || input->pic == nullptr) {
+            return true;
+        }
+        return input->pic->pic_info_fields.bits.show_frame != 0 || input->header.show_existing_frame || input->header.show_frame || input->header.showable_frame;
+    }
+
     void av1_update_reference_slots_from_refresh(AV1VideoSession* session, const VkvvAV1DecodeInput* input, VASurfaceID target_surface_id, int target_slot,
                                                  const StdVideoDecodeAV1ReferenceInfo& info) {
         if (session == nullptr || input == nullptr || target_surface_id == VA_INVALID_ID || target_slot < 0) {

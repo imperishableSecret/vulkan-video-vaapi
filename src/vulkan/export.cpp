@@ -100,7 +100,7 @@ VAStatus vkvv_vulkan_prepare_surface_export(void* runtime_ptr, VkvvSurface* surf
     return VA_STATUS_SUCCESS;
 }
 
-VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surface, bool displayable, char* reason, size_t reason_size) {
+VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surface, bool refresh_export, char* reason, size_t reason_size) {
     auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
     if (runtime == nullptr || surface == nullptr || surface->vulkan == nullptr) {
         if (reason_size > 0) {
@@ -123,7 +123,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
         (void)attach_imported_export_resource_by_fd(runtime, resource);
     }
     if (resource->export_resource.image == VK_NULL_HANDLE) {
-        if (displayable && resource->content_generation != 0) {
+        if (refresh_export && resource->content_generation != 0) {
             resource->export_seed_generation = resource->content_generation;
             remember_export_seed_resource(runtime, resource);
         } else {
@@ -136,13 +136,13 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
         if (reason_size > 0) {
             reason[0] = '\0';
         }
-        vkvv_trace(
-            "export-refresh-no-backing",
-            "surface=%u driver=%llu stream=%llu codec=0x%x displayable=%u content_gen=%llu seed_gen=%llu last_skip_gen=%llu last_display_gen=%llu retained=%zu retained_mem=%llu",
-            surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
-            displayable ? 1U : 0U, static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->export_seed_generation),
-            static_cast<unsigned long long>(resource->last_nondisplay_skip_generation), static_cast<unsigned long long>(resource->last_display_refresh_generation),
-            runtime_retained_export_count(runtime), static_cast<unsigned long long>(runtime_retained_export_memory_bytes(runtime)));
+        vkvv_trace("export-refresh-no-backing",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u content_gen=%llu seed_gen=%llu last_skip_gen=%llu last_display_gen=%llu retained=%zu "
+                   "retained_mem=%llu",
+                   surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                   refresh_export ? 1U : 0U, static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->export_seed_generation),
+                   static_cast<unsigned long long>(resource->last_nondisplay_skip_generation), static_cast<unsigned long long>(resource->last_display_refresh_generation),
+                   runtime_retained_export_count(runtime), static_cast<unsigned long long>(runtime_retained_export_memory_bytes(runtime)));
         return VA_STATUS_SUCCESS;
     }
 
@@ -162,26 +162,53 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
                resource->export_resource.predecode_seeded ? 1U : 0U, resource->export_resource.seed_source_surface_id,
                static_cast<unsigned long long>(resource->export_resource.seed_source_generation));
 
-    if (!displayable) {
+    if (!refresh_export) {
         resource->export_seed_generation = 0;
         unregister_export_seed_resource(runtime, resource);
         if (resource->export_resource.content_generation == 0) {
             (void)seed_predecode_export_from_last_good(runtime, resource, reason, reason_size);
         }
+        const bool retired_predecode_export = resource->export_resource.predecode_exported || resource->export_resource.predecode_seeded ||
+            resource->export_resource.seed_source_surface_id != VA_INVALID_ID || resource->export_resource.seed_source_generation != 0;
+        if (retired_predecode_export) {
+            unregister_predecode_export_resource(runtime, &resource->export_resource);
+            vkvv_trace("export-predecode-retire-nondisplay",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu seeded=%u seed_surface=%u seed_gen=%llu", surface->id,
+                       static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                       static_cast<unsigned long long>(resource->content_generation), vkvv_trace_handle(resource->export_resource.memory),
+                       static_cast<unsigned long long>(resource->export_resource.content_generation), resource->export_resource.predecode_seeded ? 1U : 0U,
+                       resource->export_resource.seed_source_surface_id, static_cast<unsigned long long>(resource->export_resource.seed_source_generation));
+            resource->export_resource.predecode_exported     = false;
+            resource->export_resource.predecode_seeded       = false;
+            resource->export_resource.black_placeholder      = false;
+            resource->export_resource.seed_source_surface_id = VA_INVALID_ID;
+            resource->export_resource.seed_source_generation = 0;
+        }
         resource->last_nondisplay_skip_generation        = resource->content_generation;
         resource->last_nondisplay_skip_shadow_generation = resource->export_resource.content_generation;
         resource->last_nondisplay_skip_shadow_memory     = resource->export_resource.memory;
         const bool skipped_shadow_stale                  = resource->content_generation != 0 && resource->export_resource.content_generation != resource->content_generation;
+        if (skipped_shadow_stale && resource->export_resource.exported && resource->last_display_refresh_generation != 0) {
+            vkvv_trace("export-stale-visible-nondisplay",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu last_display_gen=%llu exported=%u imported=%u fd_stat=%u "
+                       "fd_dev=%llu fd_ino=%llu retained=%zu retained_mem=%llu",
+                       surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                       static_cast<unsigned long long>(resource->content_generation), vkvv_trace_handle(resource->export_resource.memory),
+                       static_cast<unsigned long long>(resource->export_resource.content_generation), static_cast<unsigned long long>(resource->last_display_refresh_generation),
+                       resource->exported ? 1U : 0U, resource->import.external ? 1U : 0U, resource->export_resource.fd_stat_valid ? 1U : 0U,
+                       static_cast<unsigned long long>(resource->export_resource.fd_dev), static_cast<unsigned long long>(resource->export_resource.fd_ino),
+                       runtime_retained_export_count(runtime), static_cast<unsigned long long>(runtime_retained_export_memory_bytes(runtime)));
+        }
         vkvv_trace("export-refresh-skip-nondisplay",
                    "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu seed_gen=%llu shadow_mem=0x%llx shadow_gen=%llu shadow_stale=%u exported=%u shadow_exported=%u "
-                   "predecode=%u seeded=%u fd_stat=%u fd_dev=%llu fd_ino=%llu last_display_gen=%llu",
+                   "predecode=%u seeded=%u retired_predecode=%u fd_stat=%u fd_dev=%llu fd_ino=%llu last_display_gen=%llu",
                    surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                    static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->export_seed_generation),
                    vkvv_trace_handle(resource->export_resource.memory), static_cast<unsigned long long>(resource->export_resource.content_generation),
                    skipped_shadow_stale ? 1U : 0U, resource->exported ? 1U : 0U, resource->export_resource.exported ? 1U : 0U,
-                   resource->export_resource.predecode_exported ? 1U : 0U, resource->export_resource.predecode_seeded ? 1U : 0U, resource->export_resource.fd_stat_valid ? 1U : 0U,
-                   static_cast<unsigned long long>(resource->export_resource.fd_dev), static_cast<unsigned long long>(resource->export_resource.fd_ino),
-                   static_cast<unsigned long long>(resource->last_display_refresh_generation));
+                   resource->export_resource.predecode_exported ? 1U : 0U, resource->export_resource.predecode_seeded ? 1U : 0U, retired_predecode_export ? 1U : 0U,
+                   resource->export_resource.fd_stat_valid ? 1U : 0U, static_cast<unsigned long long>(resource->export_resource.fd_dev),
+                   static_cast<unsigned long long>(resource->export_resource.fd_ino), static_cast<unsigned long long>(resource->last_display_refresh_generation));
         std::snprintf(reason, reason_size,
                       "preserved exported %s shadow image after non-display decode: driver=%llu surface=%u stream=%llu codec=0x%x export_mem=%llu retained=%zu retained_mem=%llu "
                       "source_generation=%llu shadow_generation=%llu",

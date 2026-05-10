@@ -353,9 +353,9 @@ namespace {
             return finish_surface(status);
         }
 
-        const bool pending_displayable = vkvv_vulkan_surface_has_pending_displayable_work(drv->vulkan, target);
-        const bool externally_visible  = vkvv_vulkan_surface_has_exported_backing(target) || target->import.external;
-        if (vkvv_surface_has_pending_work(target) && pending_displayable && externally_visible) {
+        const bool pending_export_refresh = vkvv_vulkan_surface_has_pending_export_refresh_work(drv->vulkan, target);
+        const bool externally_visible     = vkvv_vulkan_surface_has_exported_backing(target) || target->import.external;
+        if (vkvv_surface_has_pending_work(target) && pending_export_refresh && externally_visible) {
             vkvv_trace("va-end-visible-drain", "driver=%llu target=%u stream=%llu codec=0x%x exported=%u import_external=%u", (unsigned long long)drv->driver_instance_id,
                        target->id, (unsigned long long)target->stream_id, target->codec_operation, vkvv_vulkan_surface_has_exported_backing(target) ? 1U : 0U,
                        target->import.external ? 1U : 0U);

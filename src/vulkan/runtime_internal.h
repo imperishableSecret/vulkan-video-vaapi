@@ -189,7 +189,7 @@ namespace vkvv {
         VkvvSurface*                pending_surface                = nullptr;
         VkVideoSessionParametersKHR pending_parameters             = VK_NULL_HANDLE;
         VkDeviceSize                pending_upload_allocation_size = 0;
-        bool                        pending_displayable            = true;
+        bool                        pending_export_refresh         = true;
         bool                        submitted                      = false;
         char                        pending_operation[64]{};
     };
@@ -277,7 +277,7 @@ namespace vkvv {
         VkvvSurface*                                    pending_surface                = nullptr;
         VkVideoSessionParametersKHR                     pending_parameters             = VK_NULL_HANDLE;
         VkDeviceSize                                    pending_upload_allocation_size = 0;
-        bool                                            pending_displayable            = true;
+        bool                                            pending_export_refresh         = true;
         char                                            pending_operation[64]{};
         std::mutex                                      command_mutex;
         std::mutex                                      export_mutex;
@@ -354,11 +354,11 @@ namespace vkvv {
     bool     submit_command_buffer(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation);
     bool     wait_for_command_fence(VulkanRuntime* runtime, uint64_t timeout_ns, char* reason, size_t reason_size, const char* operation);
     bool     submit_command_buffer_and_wait(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation);
-    void     track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool displayable,
+    void     track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool refresh_export,
                                   const char* operation);
     size_t   runtime_pending_work_count(VulkanRuntime* runtime);
     bool     runtime_surface_has_pending_work(VulkanRuntime* runtime, const VkvvSurface* surface);
-    bool     runtime_surface_has_pending_displayable_work(VulkanRuntime* runtime, const VkvvSurface* surface);
+    bool     runtime_surface_has_pending_export_refresh_work(VulkanRuntime* runtime, const VkvvSurface* surface);
     VAStatus ensure_command_slot_capacity(VulkanRuntime* runtime, const char* operation, char* reason, size_t reason_size);
     VAStatus complete_pending_surface_work_if_needed(VulkanRuntime* runtime, VkvvSurface* surface, const char* operation, char* reason, size_t reason_size);
     VAStatus drain_pending_surface_work_before_sync_command(VulkanRuntime* runtime, VkvvSurface* surface, char* reason, size_t reason_size);

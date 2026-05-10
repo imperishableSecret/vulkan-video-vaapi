@@ -83,7 +83,7 @@ namespace {
         return true;
     }
 
-    bool submit_empty_pending(vkvv::VulkanRuntime* runtime, VkvvSurface* surface, const char* operation, bool displayable = true) {
+    bool submit_empty_pending(vkvv::VulkanRuntime* runtime, VkvvSurface* surface, const char* operation, bool refresh_export = true) {
         char reason[512] = {};
         {
             std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
@@ -116,7 +116,7 @@ namespace {
                 std::fprintf(stderr, "%s\n", reason);
                 return false;
             }
-            vkvv::track_pending_decode(runtime, surface, VK_NULL_HANDLE, 0, displayable, operation);
+            vkvv::track_pending_decode(runtime, surface, VK_NULL_HANDLE, 0, refresh_export, operation);
         }
         return true;
     }
@@ -178,27 +178,28 @@ namespace {
                      "pending ring did not drain deterministically");
     }
 
-    bool check_pending_displayable_tracking(vkvv::VulkanRuntime* runtime) {
-        VkvvSurface displayable{};
-        displayable.work_state  = VKVV_SURFACE_WORK_RENDERING;
-        displayable.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+    bool check_pending_export_refresh_tracking(vkvv::VulkanRuntime* runtime) {
+        VkvvSurface export_refresh{};
+        export_refresh.work_state  = VKVV_SURFACE_WORK_RENDERING;
+        export_refresh.sync_status = VA_STATUS_ERROR_TIMEDOUT;
         VkvvSurface nondisplay{};
         nondisplay.work_state  = VKVV_SURFACE_WORK_RENDERING;
         nondisplay.sync_status = VA_STATUS_ERROR_TIMEDOUT;
 
-        if (!submit_empty_pending(runtime, &displayable, "displayable pending smoke", true) || !submit_empty_pending(runtime, &nondisplay, "nondisplay pending smoke", false)) {
+        if (!submit_empty_pending(runtime, &export_refresh, "export-refresh pending smoke", true) ||
+            !submit_empty_pending(runtime, &nondisplay, "nondisplay pending smoke", false)) {
             return false;
         }
-        if (!check(vkvv_vulkan_surface_has_pending_displayable_work(runtime, &displayable), "displayable pending surface was not tracked as displayable")) {
+        if (!check(vkvv_vulkan_surface_has_pending_export_refresh_work(runtime, &export_refresh), "export-refresh pending surface was not tracked")) {
             return false;
         }
-        if (!check(!vkvv_vulkan_surface_has_pending_displayable_work(runtime, &nondisplay), "non-display pending surface was tracked as displayable")) {
+        if (!check(!vkvv_vulkan_surface_has_pending_export_refresh_work(runtime, &nondisplay), "non-display pending surface was tracked for export refresh")) {
             return false;
         }
 
         char     reason[512] = {};
-        VAStatus status      = vkvv_vulkan_complete_surface_work(runtime, &displayable, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
-        if (!check(status == VA_STATUS_SUCCESS, "displayable pending tracking completion failed")) {
+        VAStatus status      = vkvv_vulkan_complete_surface_work(runtime, &export_refresh, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
+        if (!check(status == VA_STATUS_SUCCESS, "export-refresh pending tracking completion failed")) {
             std::fprintf(stderr, "%s\n", reason);
             return false;
         }
@@ -447,7 +448,7 @@ int main(void) {
     ok = check(typed_session->uploads[0].capacity > first_upload_capacity, "larger H.264 upload did not grow the reusable buffer") && ok;
     ok = check_async_completion(typed_runtime) && ok;
     ok = check_two_pending_surfaces(typed_runtime) && ok;
-    ok = check_pending_displayable_tracking(typed_runtime) && ok;
+    ok = check_pending_export_refresh_tracking(typed_runtime) && ok;
     ok = check_pending_upload_slots_are_independent(typed_runtime, typed_session) && ok;
     ok = check_full_pending_ring_backpressures(typed_runtime) && ok;
 

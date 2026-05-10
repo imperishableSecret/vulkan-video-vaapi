@@ -30,7 +30,7 @@ namespace vkvv {
             runtime->pending_surface                = nullptr;
             runtime->pending_parameters             = VK_NULL_HANDLE;
             runtime->pending_upload_allocation_size = 0;
-            runtime->pending_displayable            = true;
+            runtime->pending_export_refresh         = true;
             runtime->pending_operation[0]           = '\0';
             for (const CommandSlot& slot : runtime->command_slots) {
                 if (slot.pending_surface == nullptr) {
@@ -39,7 +39,7 @@ namespace vkvv {
                 runtime->pending_surface                = slot.pending_surface;
                 runtime->pending_parameters             = slot.pending_parameters;
                 runtime->pending_upload_allocation_size = slot.pending_upload_allocation_size;
-                runtime->pending_displayable            = slot.pending_displayable;
+                runtime->pending_export_refresh         = slot.pending_export_refresh;
                 std::snprintf(runtime->pending_operation, sizeof(runtime->pending_operation), "%s", slot.pending_operation);
                 return;
             }
@@ -97,16 +97,16 @@ namespace vkvv {
         }
 
         void clear_pending_work_locked(VulkanRuntime* runtime, CommandSlot* slot, VkvvSurface** surface, VkVideoSessionParametersKHR* parameters,
-                                       VkDeviceSize* upload_allocation_size, bool* displayable, char* operation, size_t operation_size) {
+                                       VkDeviceSize* upload_allocation_size, bool* refresh_export, char* operation, size_t operation_size) {
             *surface                = slot->pending_surface;
             *parameters             = slot->pending_parameters;
             *upload_allocation_size = slot->pending_upload_allocation_size;
-            *displayable            = slot->pending_displayable;
+            *refresh_export         = slot->pending_export_refresh;
             std::snprintf(operation, operation_size, "%s", slot->pending_operation);
             slot->pending_surface                = nullptr;
             slot->pending_parameters             = VK_NULL_HANDLE;
             slot->pending_upload_allocation_size = 0;
-            slot->pending_displayable            = true;
+            slot->pending_export_refresh         = true;
             slot->pending_operation[0]           = '\0';
             slot->submitted                      = false;
             refresh_legacy_pending_snapshot_locked(runtime);
@@ -243,26 +243,27 @@ namespace vkvv {
         return wait_for_command_fence(runtime, std::numeric_limits<uint64_t>::max(), reason, reason_size, operation);
     }
 
-    void track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool displayable,
+    void track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool refresh_export,
                               const char* operation) {
         CommandSlot& slot                   = active_slot(runtime);
         slot.pending_surface                = surface;
         slot.pending_parameters             = parameters;
         slot.pending_upload_allocation_size = upload_allocation_size;
-        slot.pending_displayable            = displayable;
+        slot.pending_export_refresh         = refresh_export;
         std::snprintf(slot.pending_operation, sizeof(slot.pending_operation), "%s", operation);
         refresh_legacy_pending_snapshot_locked(runtime);
         const auto* resource = surface != nullptr ? static_cast<const SurfaceResource*>(surface->vulkan) : nullptr;
-        vkvv_trace("pending-submit",
-                   "slot=%zu pending=%zu operation=%s surface=%u driver=%llu stream=%llu codec=0x%x displayable=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu "
-                   "predecode=%u upload_mem=%llu",
-                   runtime->active_command_slot, pending_work_count_locked(runtime), operation != nullptr ? operation : "unknown", surface != nullptr ? surface->id : VA_INVALID_ID,
-                   surface != nullptr ? static_cast<unsigned long long>(surface->driver_instance_id) : 0ULL,
-                   surface != nullptr ? static_cast<unsigned long long>(surface->stream_id) : 0ULL, surface != nullptr ? surface->codec_operation : 0U, displayable ? 1U : 0U,
-                   surface != nullptr && surface->decoded ? 1U : 0U, resource != nullptr ? static_cast<unsigned long long>(resource->content_generation) : 0ULL,
-                   resource != nullptr ? vkvv_trace_handle(resource->export_resource.memory) : 0ULL,
-                   resource != nullptr ? static_cast<unsigned long long>(resource->export_resource.content_generation) : 0ULL,
-                   resource != nullptr && resource->export_resource.predecode_exported ? 1U : 0U, static_cast<unsigned long long>(upload_allocation_size));
+        vkvv_trace(
+            "pending-submit",
+            "slot=%zu pending=%zu operation=%s surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu "
+            "predecode=%u upload_mem=%llu",
+            runtime->active_command_slot, pending_work_count_locked(runtime), operation != nullptr ? operation : "unknown", surface != nullptr ? surface->id : VA_INVALID_ID,
+            surface != nullptr ? static_cast<unsigned long long>(surface->driver_instance_id) : 0ULL,
+            surface != nullptr ? static_cast<unsigned long long>(surface->stream_id) : 0ULL, surface != nullptr ? surface->codec_operation : 0U, refresh_export ? 1U : 0U,
+            surface != nullptr && surface->decoded ? 1U : 0U, resource != nullptr ? static_cast<unsigned long long>(resource->content_generation) : 0ULL,
+            resource != nullptr ? vkvv_trace_handle(resource->export_resource.memory) : 0ULL,
+            resource != nullptr ? static_cast<unsigned long long>(resource->export_resource.content_generation) : 0ULL,
+            resource != nullptr && resource->export_resource.predecode_exported ? 1U : 0U, static_cast<unsigned long long>(upload_allocation_size));
     }
 
     VAStatus complete_pending_work(VulkanRuntime* runtime, VkvvSurface* surface, uint64_t timeout_ns, char* reason, size_t reason_size) {
@@ -276,7 +277,7 @@ namespace vkvv {
         VkvvSurface*                completed_surface      = nullptr;
         VkVideoSessionParametersKHR completed_parameters   = VK_NULL_HANDLE;
         VkDeviceSize                upload_allocation_size = 0;
-        bool                        displayable            = true;
+        bool                        refresh_export         = true;
         char                        operation[64]          = {};
         if (runtime->device_lost) {
             {
@@ -285,7 +286,7 @@ namespace vkvv {
                 CommandSlot*                slot       = find_pending_slot_locked(runtime, surface, &slot_index);
                 if (slot != nullptr) {
                     set_active_slot_locked(runtime, slot_index);
-                    clear_pending_work_locked(runtime, slot, &completed_surface, &completed_parameters, &upload_allocation_size, &displayable, operation, sizeof(operation));
+                    clear_pending_work_locked(runtime, slot, &completed_surface, &completed_parameters, &upload_allocation_size, &refresh_export, operation, sizeof(operation));
                 }
             }
             if (completed_parameters != VK_NULL_HANDLE && runtime->destroy_video_session_parameters != nullptr) {
@@ -311,23 +312,23 @@ namespace vkvv {
 
             if (!wait_for_command_fence(runtime, timeout_ns, reason, reason_size, slot->pending_operation[0] != '\0' ? slot->pending_operation : "Vulkan decode")) {
                 if (runtime->device_lost) {
-                    clear_pending_work_locked(runtime, slot, &completed_surface, &completed_parameters, &upload_allocation_size, &displayable, operation, sizeof(operation));
+                    clear_pending_work_locked(runtime, slot, &completed_surface, &completed_parameters, &upload_allocation_size, &refresh_export, operation, sizeof(operation));
                 } else {
                     return VA_STATUS_ERROR_TIMEDOUT;
                 }
             } else {
-                clear_pending_work_locked(runtime, slot, &completed_surface, &completed_parameters, &upload_allocation_size, &displayable, operation, sizeof(operation));
+                clear_pending_work_locked(runtime, slot, &completed_surface, &completed_parameters, &upload_allocation_size, &refresh_export, operation, sizeof(operation));
             }
         }
 
         const auto* completed_resource_before = completed_surface != nullptr ? static_cast<const SurfaceResource*>(completed_surface->vulkan) : nullptr;
         vkvv_trace("pending-complete-before",
-                   "operation=%s surface=%u driver=%llu stream=%llu codec=0x%x displayable=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u "
+                   "operation=%s surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u "
                    "exported=%u upload_mem=%llu",
                    operation[0] != '\0' ? operation : "Vulkan decode", completed_surface != nullptr ? completed_surface->id : VA_INVALID_ID,
                    completed_surface != nullptr ? static_cast<unsigned long long>(completed_surface->driver_instance_id) : 0ULL,
                    completed_surface != nullptr ? static_cast<unsigned long long>(completed_surface->stream_id) : 0ULL,
-                   completed_surface != nullptr ? completed_surface->codec_operation : 0U, displayable ? 1U : 0U,
+                   completed_surface != nullptr ? completed_surface->codec_operation : 0U, refresh_export ? 1U : 0U,
                    completed_surface != nullptr && completed_surface->decoded ? 1U : 0U,
                    completed_resource_before != nullptr ? static_cast<unsigned long long>(completed_resource_before->content_generation) : 0ULL,
                    completed_resource_before != nullptr ? vkvv_trace_handle(completed_resource_before->export_resource.memory) : 0ULL,
@@ -356,22 +357,22 @@ namespace vkvv {
         }
         const auto* refresh_resource = completed_surface != nullptr ? static_cast<const SurfaceResource*>(completed_surface->vulkan) : nullptr;
         vkvv_trace("pending-refresh-decision",
-                   "operation=%s surface=%u displayable=%u exported=%u predecode=%u shadow_mem=0x%llx content_gen=%llu shadow_gen=%llu action=refresh-current",
-                   operation[0] != '\0' ? operation : "Vulkan decode", completed_surface != nullptr ? completed_surface->id : VA_INVALID_ID, displayable ? 1U : 0U,
+                   "operation=%s surface=%u refresh_export=%u exported=%u predecode=%u shadow_mem=0x%llx content_gen=%llu shadow_gen=%llu action=refresh-current",
+                   operation[0] != '\0' ? operation : "Vulkan decode", completed_surface != nullptr ? completed_surface->id : VA_INVALID_ID, refresh_export ? 1U : 0U,
                    refresh_resource != nullptr && refresh_resource->export_resource.exported ? 1U : 0U,
                    refresh_resource != nullptr && refresh_resource->export_resource.predecode_exported ? 1U : 0U,
                    refresh_resource != nullptr ? vkvv_trace_handle(refresh_resource->export_resource.memory) : 0ULL,
                    refresh_resource != nullptr ? static_cast<unsigned long long>(refresh_resource->content_generation) : 0ULL,
                    refresh_resource != nullptr ? static_cast<unsigned long long>(refresh_resource->export_resource.content_generation) : 0ULL);
-        VAStatus status = ::vkvv_vulkan_refresh_surface_export(runtime, completed_surface, displayable, reason, reason_size);
+        VAStatus status = ::vkvv_vulkan_refresh_surface_export(runtime, completed_surface, refresh_export, reason, reason_size);
         if (status != VA_STATUS_SUCCESS) {
             complete_surface_status(completed_surface, status);
             return status;
         }
         const auto* completed_resource_after = completed_surface != nullptr ? static_cast<const SurfaceResource*>(completed_surface->vulkan) : nullptr;
         vkvv_trace("pending-complete-after",
-                   "operation=%s surface=%u status=%d displayable=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u exported=%u",
-                   operation[0] != '\0' ? operation : "Vulkan decode", completed_surface != nullptr ? completed_surface->id : VA_INVALID_ID, status, displayable ? 1U : 0U,
+                   "operation=%s surface=%u status=%d refresh_export=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u exported=%u",
+                   operation[0] != '\0' ? operation : "Vulkan decode", completed_surface != nullptr ? completed_surface->id : VA_INVALID_ID, status, refresh_export ? 1U : 0U,
                    completed_surface != nullptr && completed_surface->decoded ? 1U : 0U,
                    completed_resource_after != nullptr ? static_cast<unsigned long long>(completed_resource_after->content_generation) : 0ULL,
                    completed_resource_after != nullptr ? vkvv_trace_handle(completed_resource_after->export_resource.memory) : 0ULL,
@@ -402,13 +403,13 @@ namespace vkvv {
         return find_pending_slot_locked(runtime, surface, nullptr) != nullptr;
     }
 
-    bool runtime_surface_has_pending_displayable_work(VulkanRuntime* runtime, const VkvvSurface* surface) {
+    bool runtime_surface_has_pending_export_refresh_work(VulkanRuntime* runtime, const VkvvSurface* surface) {
         if (runtime == nullptr || surface == nullptr) {
             return false;
         }
         std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
         CommandSlot*                slot = find_pending_slot_locked(runtime, surface, nullptr);
-        return slot != nullptr && slot->pending_displayable;
+        return slot != nullptr && slot->pending_export_refresh;
     }
 
     VAStatus ensure_command_slot_capacity(VulkanRuntime* runtime, const char* operation, char* reason, size_t reason_size) {
@@ -510,9 +511,9 @@ VAStatus vkvv_vulkan_complete_surface_work(void* runtime_ptr, VkvvSurface* surfa
     return complete_pending_work(runtime, surface, timeout_ns, reason, reason_size);
 }
 
-bool vkvv_vulkan_surface_has_pending_displayable_work(void* runtime_ptr, const VkvvSurface* surface) {
+bool vkvv_vulkan_surface_has_pending_export_refresh_work(void* runtime_ptr, const VkvvSurface* surface) {
     auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
-    return runtime_surface_has_pending_displayable_work(runtime, surface);
+    return runtime_surface_has_pending_export_refresh_work(runtime, surface);
 }
 
 VAStatus vkvv_vulkan_drain_pending_work(void* runtime_ptr, char* reason, size_t reason_size) {

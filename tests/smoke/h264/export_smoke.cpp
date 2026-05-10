@@ -375,6 +375,9 @@ namespace {
         VkvvSurface late_export{};
         init_nv12_surface(&late_export, 917, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
 
+        VkvvSurface next_display{};
+        init_nv12_surface(&next_display, 918, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+
         auto cleanup = [&]() {
             if (nondisplay_descriptor.objects[0].fd >= 0) {
                 close(nondisplay_descriptor.objects[0].fd);
@@ -384,6 +387,7 @@ namespace {
                 close(late_descriptor.objects[0].fd);
                 late_descriptor.objects[0].fd = -1;
             }
+            vkvv_vulkan_surface_destroy(runtime, &next_display);
             vkvv_vulkan_surface_destroy(runtime, &late_export);
             vkvv_vulkan_surface_destroy(runtime, &nondisplay);
             vkvv_vulkan_surface_destroy(runtime, &decoded);
@@ -459,8 +463,33 @@ namespace {
             return false;
         }
         if (nondisplay_resource->export_resource.memory != nondisplay_shadow_memory || nondisplay_resource->export_resource.content_generation != nondisplay_shadow_generation ||
-            !vkvv_vulkan_surface_has_predecode_export(&nondisplay)) {
+            vkvv_vulkan_surface_has_predecode_export(&nondisplay) || nondisplay_resource->export_resource.predecode_seeded ||
+            nondisplay_resource->export_resource.seed_source_surface_id != VA_INVALID_ID) {
             std::fprintf(stderr, "non-display decode mutated its exported shadow instead of preserving display content\n");
+            cleanup();
+            return false;
+        }
+
+        const vkvv::DecodeImageKey next_display_key = h264_decode_key(typed_session, &next_display, {64, 64});
+        if (!vkvv::ensure_surface_resource(runtime, &next_display, next_display_key, reason, sizeof(reason))) {
+            std::fprintf(stderr, "%s\n", reason);
+            cleanup();
+            return false;
+        }
+        auto* next_display_resource = static_cast<vkvv::SurfaceResource*>(next_display.vulkan);
+        next_display.decoded        = true;
+        next_display_resource->content_generation++;
+        status = vkvv_vulkan_refresh_surface_export(runtime, &next_display, true, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            std::printf("%s\n", reason);
+        }
+        if (status != VA_STATUS_SUCCESS) {
+            cleanup();
+            return false;
+        }
+        if (nondisplay_resource->export_resource.memory != nondisplay_shadow_memory || nondisplay_resource->export_resource.content_generation != nondisplay_shadow_generation ||
+            nondisplay_resource->export_resource.seed_source_surface_id != VA_INVALID_ID) {
+            std::fprintf(stderr, "later displayable refresh incorrectly reseeded the non-display predecode export\n");
             cleanup();
             return false;
         }
@@ -475,7 +504,7 @@ namespace {
         std::printf("%s\n", reason);
         auto* late_resource = static_cast<vkvv::SurfaceResource*>(late_export.vulkan);
         if (status != VA_STATUS_SUCCESS || late_resource == nullptr || !late_resource->export_resource.predecode_seeded ||
-            late_resource->export_resource.seed_source_surface_id != decoded.id || late_resource->export_resource.seed_source_surface_id == nondisplay.id) {
+            late_resource->export_resource.seed_source_surface_id != next_display.id || late_resource->export_resource.seed_source_surface_id == nondisplay.id) {
             std::fprintf(stderr, "non-display decode replaced the displayable last-good export seed\n");
             cleanup();
             return false;

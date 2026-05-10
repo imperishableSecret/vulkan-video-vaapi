@@ -537,12 +537,12 @@ VAStatus vkvv_av1_prepare_decode(void* state, unsigned int* width, unsigned int*
     if (!av1->decode_tiles.empty()) {
         first_tile_offset = av1->decode_tiles[0].offset;
     }
-    std::snprintf(
-        reason, reason_size,
-        "captured AV1 picture: %ux%u profile=%u depth=%u fourcc=0x%x tiles=%zu bitstream=%zu decode=%zu window=%u frame=%u show=%u refresh=0x%02x header=%u tile0=%u q=%u", *width,
-        *height, av1->pic.profile, bit_depth, av1_fourcc(bit_depth), av1->decode_tiles.size(), av1->bitstream.size(), av1->decode_bitstream.size(), window_offset,
-        av1->pic.pic_info_fields.bits.frame_type, av1->pic.pic_info_fields.bits.show_frame, av1->header.refresh_frame_flags, av1->header.frame_header_offset, first_tile_offset,
-        av1->pic.base_qindex);
+    std::snprintf(reason, reason_size,
+                  "captured AV1 picture: %ux%u profile=%u depth=%u fourcc=0x%x tiles=%zu bitstream=%zu decode=%zu window=%u frame=%u show=%u hdr_existing=%u hdr_show=%u "
+                  "hdr_showable=%u refresh=0x%02x header=%u tile0=%u q=%u",
+                  *width, *height, av1->pic.profile, bit_depth, av1_fourcc(bit_depth), av1->decode_tiles.size(), av1->bitstream.size(), av1->decode_bitstream.size(), window_offset,
+                  av1->pic.pic_info_fields.bits.frame_type, av1->pic.pic_info_fields.bits.show_frame, av1->header.show_existing_frame ? 1U : 0U, av1->header.show_frame ? 1U : 0U,
+                  av1->header.showable_frame ? 1U : 0U, av1->header.refresh_frame_flags, av1->header.frame_header_offset, first_tile_offset, av1->pic.base_qindex);
     return VA_STATUS_SUCCESS;
 }
 
