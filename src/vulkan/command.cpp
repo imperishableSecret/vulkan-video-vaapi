@@ -253,7 +253,7 @@ namespace vkvv {
         std::snprintf(slot.pending_operation, sizeof(slot.pending_operation), "%s", operation);
         refresh_legacy_pending_snapshot_locked(runtime);
         const auto* resource = surface != nullptr ? static_cast<const SurfaceResource*>(surface->vulkan) : nullptr;
-        vkvv_trace(
+        VKVV_TRACE(
             "pending-submit",
             "slot=%zu pending=%zu operation=%s surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu "
             "predecode=%u upload_mem=%llu",
@@ -471,7 +471,7 @@ namespace vkvv {
         {
             std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
             if (find_pending_slot_locked(runtime, surface, nullptr) == nullptr) {
-                vkvv_trace("pending-drain-skip", "surface=%u driver=%llu stream=%llu codec=0x%x pending=%zu reason=no-slot", surface->id,
+                VKVV_TRACE("pending-drain-skip", "surface=%u driver=%llu stream=%llu codec=0x%x pending=%zu reason=no-slot", surface->id,
                            static_cast<unsigned long long>(surface->driver_instance_id), static_cast<unsigned long long>(surface->stream_id), surface->codec_operation,
                            pending_work_count_locked(runtime));
                 if (reason_size > 0) {

@@ -7,10 +7,16 @@
 namespace {
 
     int expensive_argument_evaluations = 0;
+    int expensive_string_evaluations   = 0;
 
     int expensive_argument(void) {
         expensive_argument_evaluations++;
         return 42;
+    }
+
+    const char* expensive_string_argument(void) {
+        expensive_string_evaluations++;
+        return "records";
     }
 
     bool env_is_enabled(const char* name) {
@@ -37,8 +43,10 @@ int main() {
     ok            = check(vkvv_log_enabled() == expect_log, "log env cache mismatch") && ok;
 
     VKVV_TRACE("telemetry-smoke", "value=%d", expensive_argument());
+    VKVV_TRACE("telemetry-smoke-string", "records=%s", expensive_string_argument());
 
     const int expected_evaluations = expect_trace ? 1 : 0;
     ok                             = check(expensive_argument_evaluations == expected_evaluations, "trace macro evaluated disabled arguments") && ok;
+    ok                             = check(expensive_string_evaluations == expected_evaluations, "trace macro evaluated disabled string arguments") && ok;
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
