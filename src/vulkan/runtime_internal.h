@@ -334,6 +334,7 @@ namespace vkvv {
                                             VkBufferUsageFlags usage, UploadBuffer* upload, const char* label, char* reason, size_t reason_size);
     bool     ensure_command_resources(VulkanRuntime* runtime, char* reason, size_t reason_size);
     bool     submit_command_buffer(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation);
+    bool     wait_for_command_fence(VulkanRuntime* runtime, uint64_t timeout_ns, char* reason, size_t reason_size, const char* operation);
     bool     submit_command_buffer_and_wait(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation);
     void     track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool displayable,
                                   const char* operation);

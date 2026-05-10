@@ -1131,6 +1131,22 @@ int main(void) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
+    const uint64_t export_generation_before_skip = resource->export_resource.content_generation;
+    status                                       = vkvv_vulkan_refresh_surface_export(runtime, &surface, true, reason, sizeof(reason));
+    if (reason[0] != '\0') {
+        std::printf("%s\n", reason);
+    }
+    if (status != VA_STATUS_SUCCESS || resource->export_resource.memory != first_export_memory || resource->export_resource.content_generation != export_generation_before_skip ||
+        resource->export_seed_generation != resource->content_generation) {
+        std::fprintf(stderr, "current exported shadow refresh should skip another copy and keep generation stable\n");
+        if (first_fd >= 0) {
+            close(first_fd);
+        }
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        vkvv_vulkan_h264_session_destroy(runtime, session);
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
 
     VADRMPRIMESurfaceDescriptor refreshed_descriptor{};
     status = vkvv_vulkan_export_surface(runtime, &surface, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &refreshed_descriptor, reason, sizeof(reason));

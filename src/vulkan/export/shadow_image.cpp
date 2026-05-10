@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <new>
 #include <string>
@@ -702,8 +703,38 @@ namespace vkvv {
         return targets;
     }
 
+    struct ExportCopyTargetSnapshot {
+        ExportResource* resource           = nullptr;
+        VkImage         image              = VK_NULL_HANDLE;
+        VkDeviceMemory  memory             = VK_NULL_HANDLE;
+        uint64_t        content_generation = 0;
+        bool            predecode_exported = false;
+    };
+
+    ExportCopyTargetSnapshot snapshot_export_copy_target(ExportResource* resource) {
+        ExportCopyTargetSnapshot snapshot{};
+        snapshot.resource = resource;
+        if (resource != nullptr) {
+            snapshot.image              = resource->image;
+            snapshot.memory             = resource->memory;
+            snapshot.content_generation = resource->content_generation;
+            snapshot.predecode_exported = resource->predecode_exported;
+        }
+        return snapshot;
+    }
+
+    bool export_copy_target_still_matches(const ExportCopyTargetSnapshot& snapshot) {
+        return snapshot.resource != nullptr && snapshot.resource->image == snapshot.image && snapshot.resource->memory == snapshot.memory &&
+            snapshot.resource->content_generation == snapshot.content_generation && snapshot.resource->predecode_exported == snapshot.predecode_exported;
+    }
+
+    bool export_copy_source_still_matches(const SurfaceResource* source, VkImage image, uint64_t content_generation) {
+        return source != nullptr && source->image == image && source->content_generation == content_generation;
+    }
+
     bool copy_surface_to_export_targets_locked(VulkanRuntime* runtime, SurfaceResource* source, ExportResource* owner_export, bool copy_owner_export,
-                                               const std::vector<ExportResource*>& predecode_seed_targets, char* reason, size_t reason_size) {
+                                               const std::vector<ExportResource*>& predecode_seed_targets, std::unique_lock<std::mutex>& export_lock, char* reason,
+                                               size_t reason_size) {
         if (runtime == nullptr || source == nullptr || source->image == VK_NULL_HANDLE) {
             std::snprintf(reason, reason_size, "missing surface export copy source");
             return false;
@@ -717,7 +748,16 @@ namespace vkvv {
             return false;
         }
 
-        std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+        const VkImage                         source_image              = source->image;
+        const uint64_t                        source_content_generation = source->content_generation;
+        const ExportCopyTargetSnapshot        owner_snapshot            = snapshot_export_copy_target(owner_export);
+        std::vector<ExportCopyTargetSnapshot> predecode_snapshots;
+        predecode_snapshots.reserve(predecode_seed_targets.size());
+        for (ExportResource* target : predecode_seed_targets) {
+            predecode_snapshots.push_back(snapshot_export_copy_target(target));
+        }
+
+        std::unique_lock<std::mutex> command_lock(runtime->command_mutex);
         if (!ensure_command_resources(runtime, reason, reason_size)) {
             return false;
         }
@@ -820,11 +860,27 @@ namespace vkvv {
         if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "surface export copy", reason, reason_size)) {
             return false;
         }
-        if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "surface export copy")) {
+        if (!submit_command_buffer(runtime, reason, reason_size, "surface export copy")) {
+            return false;
+        }
+        export_lock.unlock();
+        const bool waited = wait_for_command_fence(runtime, std::numeric_limits<uint64_t>::max(), reason, reason_size, "surface export copy");
+        export_lock.lock();
+        if (!waited) {
             return false;
         }
 
+        const bool source_matches = export_copy_source_still_matches(source, source_image, source_content_generation);
         if (owner_export != nullptr && copy_owner_export) {
+            if (!source_matches || !export_copy_target_still_matches(owner_snapshot)) {
+                std::snprintf(reason, reason_size, "surface export copy target changed before owner publish");
+                vkvv_trace("export-copy-publish-skip",
+                           "kind=owner source_surface=%u source_match=%u source_gen=%llu expected_gen=%llu target_owner=%u target_mem=0x%llx expected_mem=0x%llx",
+                           source->surface_id, source_matches ? 1U : 0U, static_cast<unsigned long long>(source->content_generation),
+                           static_cast<unsigned long long>(source_content_generation), owner_export->owner_surface_id, vkvv_trace_handle(owner_export->memory),
+                           vkvv_trace_handle(owner_snapshot.memory));
+                return false;
+            }
             owner_export->content_generation     = source->content_generation;
             owner_export->predecode_exported     = false;
             owner_export->predecode_seeded       = false;
@@ -832,7 +888,20 @@ namespace vkvv {
             owner_export->seed_source_surface_id = VA_INVALID_ID;
             owner_export->seed_source_generation = 0;
         }
-        for (ExportResource* target : predecode_seed_targets) {
+        for (size_t i = 0; i < predecode_seed_targets.size(); i++) {
+            ExportResource*                 target   = predecode_seed_targets[i];
+            const ExportCopyTargetSnapshot& snapshot = predecode_snapshots[i];
+            if (!source_matches || !export_copy_target_still_matches(snapshot) || !predecode_seed_target_matches(target, source)) {
+                vkvv_trace("export-copy-publish-skip",
+                           "kind=predecode source_surface=%u source_match=%u source_gen=%llu expected_gen=%llu target_owner=%u target_mem=0x%llx expected_mem=0x%llx "
+                           "target_gen=%llu expected_target_gen=%llu target_predecode=%u expected_predecode=%u",
+                           source->surface_id, source_matches ? 1U : 0U, static_cast<unsigned long long>(source->content_generation),
+                           static_cast<unsigned long long>(source_content_generation), target != nullptr ? target->owner_surface_id : VA_INVALID_ID,
+                           target != nullptr ? vkvv_trace_handle(target->memory) : 0ULL, vkvv_trace_handle(snapshot.memory),
+                           target != nullptr ? static_cast<unsigned long long>(target->content_generation) : 0ULL, static_cast<unsigned long long>(snapshot.content_generation),
+                           target != nullptr && target->predecode_exported ? 1U : 0U, snapshot.predecode_exported ? 1U : 0U);
+                continue;
+            }
             target->black_placeholder = false;
             if (target->predecode_exported) {
                 target->predecode_seeded       = true;
@@ -928,7 +997,7 @@ namespace vkvv {
                    source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
                    static_cast<unsigned long long>(source->content_generation), owner_export_current ? 0U : 1U, vkvv_trace_handle(source->export_resource.memory),
                    static_cast<unsigned long long>(source->export_resource.content_generation), predecode_seed_targets.size());
-        if (!copy_surface_to_export_targets_locked(runtime, source, export_resource, !owner_export_current, predecode_seed_targets, reason, reason_size)) {
+        if (!copy_surface_to_export_targets_locked(runtime, source, export_resource, !owner_export_current, predecode_seed_targets, export_lock, reason, reason_size)) {
             return false;
         }
         unregister_predecode_export_resource_locked(runtime, export_resource);
@@ -986,7 +1055,7 @@ namespace vkvv {
         }
 
         std::vector<ExportResource*> no_predecode_targets;
-        if (!copy_surface_to_export_targets_locked(runtime, source, &source->export_resource, true, no_predecode_targets, reason, reason_size)) {
+        if (!copy_surface_to_export_targets_locked(runtime, source, &source->export_resource, true, no_predecode_targets, export_lock, reason, reason_size)) {
             return false;
         }
         unregister_predecode_export_resource_locked(runtime, &source->export_resource);
@@ -1026,7 +1095,7 @@ namespace vkvv {
                    source->surface_id, static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(source->export_seed_generation),
                    static_cast<unsigned long long>(source->export_resource.content_generation), vkvv_trace_handle(target->export_resource.memory),
                    static_cast<unsigned long long>(target->export_resource.content_generation));
-        return copy_surface_to_export_targets_locked(runtime, source, nullptr, false, targets, reason, reason_size);
+        return copy_surface_to_export_targets_locked(runtime, source, nullptr, false, targets, export_lock, reason, reason_size);
     }
 
     void remember_export_seed_resource(VulkanRuntime* runtime, SurfaceResource* resource) {
