@@ -8,6 +8,7 @@
 bool        vkvv_log_enabled(void);
 bool        vkvv_success_reason_enabled(void);
 bool        vkvv_trace_enabled(void);
+bool        vkvv_trace_deep_enabled(void);
 void        vkvv_trace(const char* event, const char* fmt, ...);
 void        vkvv_trace_emit(const char* event, const char* fmt, ...);
 
@@ -23,6 +24,13 @@ inline void vkvv_clear_reason(char* reason, std::size_t reason_size) {
 #define VKVV_TRACE(event, fmt, ...)                                                                                                                                                \
     do {                                                                                                                                                                           \
         if (vkvv_trace_enabled()) {                                                                                                                                                \
+            vkvv_trace_emit((event), (fmt)__VA_OPT__(, ) __VA_ARGS__);                                                                                                             \
+        }                                                                                                                                                                          \
+    } while (false)
+
+#define VKVV_TRACE_DEEP(event, fmt, ...)                                                                                                                                           \
+    do {                                                                                                                                                                           \
+        if (vkvv_trace_deep_enabled()) {                                                                                                                                           \
             vkvv_trace_emit((event), (fmt)__VA_OPT__(, ) __VA_ARGS__);                                                                                                             \
         }                                                                                                                                                                          \
     } while (false)

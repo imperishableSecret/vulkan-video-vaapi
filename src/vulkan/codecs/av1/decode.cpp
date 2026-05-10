@@ -497,10 +497,10 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     std::array<bool, max_av1_dpb_slots>                    referenced_dpb_slots{};
     uint32_t                                               reference_count                                                        = 0;
     int32_t                                                reference_name_slot_indices[VK_MAX_VIDEO_AV1_REFERENCES_PER_FRAME_KHR] = {-1, -1, -1, -1, -1, -1, -1};
-    const bool                                             trace_enabled                                                          = vkvv_trace_enabled();
+    const bool                                             trace_deep_enabled                                                     = vkvv_trace_deep_enabled();
     const bool                                             refresh_export                                                         = av1_decode_needs_export_refresh(input);
 
-    if (trace_enabled) {
+    if (trace_deep_enabled) {
         const std::string ref_map              = av1_ref_frame_map_string(input->pic);
         const std::string ref_slots_before     = av1_reference_slots_string(session);
         const std::string surface_slots_before = av1_surface_slots_string(session);
@@ -528,7 +528,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
             const AV1ReferenceSlot* named_slot     = av1_reference_slot_for_index(session, static_cast<uint32_t>(reference_index));
             const AV1ReferenceSlot* surface_slot   = av1_surface_slot_for_surface(session, ref_surface_id);
             const auto*             ref_resource   = ref_surface != nullptr ? static_cast<const SurfaceResource*>(ref_surface->vulkan) : nullptr;
-            if (trace_enabled) {
+            if (trace_deep_enabled) {
                 vkvv_trace("av1-ref-resolve",
                            "driver=%llu ctx_stream=%llu target=%u ref_name=%u ref_idx=%u ref_surface=%u named_surface=%u named_slot=%d named_oh=%u surface_slot=%d surface_oh=%u "
                            "decoded=%u pending=%u ref_stream=%llu ref_codec=0x%x content_gen=%llu shadow_gen=%llu predecode=%u seeded=%u",
@@ -598,7 +598,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         std::snprintf(reason, reason_size, "no free AV1 DPB slot for current picture");
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
-    if (trace_enabled) {
+    if (trace_deep_enabled) {
         const std::string ref_slots_before       = av1_reference_slots_string(session);
         const std::string surface_slots_before   = av1_surface_slots_string(session);
         const std::string active_refs            = av1_active_refs_string(input, reference_name_slot_indices);
@@ -790,7 +790,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
 
     if (current_is_reference) {
         av1_update_reference_slots_from_refresh(session, input, target_surface_id, target_dpb_slot, setup_std_ref);
-        if (trace_enabled) {
+        if (trace_deep_enabled) {
             const std::string ref_slots_after     = av1_reference_slots_string(session);
             const std::string surface_slots_after = av1_surface_slots_string(session);
             vkvv_trace("av1-ref-update", "driver=%llu ctx_stream=%llu target=%u refresh=0x%02x target_slot=%d order_hint=%u ref_slots=\"%s\" surface_slots=\"%s\"",

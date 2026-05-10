@@ -68,14 +68,14 @@ namespace vkvv {
             descriptor->layers[i].object_index[0] = 0;
             descriptor->layers[i].offset[0]       = static_cast<uint32_t>(plane_layouts[i].offset);
             descriptor->layers[i].pitch[0]        = static_cast<uint32_t>(plane_layouts[i].rowPitch);
-            vkvv_trace("export-layer-spec",
-                       "surface=%u layer=%u drm_format=0x%x aspect=0x%x planes=%u object=%u offset=%u pitch=%u layout_size=%llu row_pitch=%llu array_pitch=%llu depth_pitch=%llu "
-                       "divisor=%ux%u",
-                       surface != nullptr ? surface->id : VA_INVALID_ID, i, descriptor->layers[i].drm_format, format->layers[i].aspect, descriptor->layers[i].num_planes,
-                       descriptor->layers[i].object_index[0], descriptor->layers[i].offset[0], descriptor->layers[i].pitch[0],
-                       static_cast<unsigned long long>(plane_layouts[i].size), static_cast<unsigned long long>(plane_layouts[i].rowPitch),
-                       static_cast<unsigned long long>(plane_layouts[i].arrayPitch), static_cast<unsigned long long>(plane_layouts[i].depthPitch), format->layers[i].width_divisor,
-                       format->layers[i].height_divisor);
+            VKVV_TRACE_DEEP(
+                "export-layer-spec",
+                "surface=%u layer=%u drm_format=0x%x aspect=0x%x planes=%u object=%u offset=%u pitch=%u layout_size=%llu row_pitch=%llu array_pitch=%llu depth_pitch=%llu "
+                "divisor=%ux%u",
+                surface != nullptr ? surface->id : VA_INVALID_ID, i, descriptor->layers[i].drm_format, format->layers[i].aspect, descriptor->layers[i].num_planes,
+                descriptor->layers[i].object_index[0], descriptor->layers[i].offset[0], descriptor->layers[i].pitch[0], static_cast<unsigned long long>(plane_layouts[i].size),
+                static_cast<unsigned long long>(plane_layouts[i].rowPitch), static_cast<unsigned long long>(plane_layouts[i].arrayPitch),
+                static_cast<unsigned long long>(plane_layouts[i].depthPitch), format->layers[i].width_divisor, format->layers[i].height_divisor);
         }
 
         return VA_STATUS_SUCCESS;

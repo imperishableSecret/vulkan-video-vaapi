@@ -1044,7 +1044,11 @@ namespace vkvv {
         std::unique_lock<std::mutex> export_lock(runtime->export_mutex);
         SurfaceResource*             source = find_export_seed_source_locked(runtime, target);
         if (source == nullptr || source == target) {
-            if (vkvv_trace_enabled()) {
+            VKVV_TRACE("export-seed-miss", "surface=%u driver=%llu stream=%llu codec=0x%x format=%d fourcc=0x%x extent=%ux%u target_gen=%llu shadow_gen=%llu", target->surface_id,
+                       static_cast<unsigned long long>(target->driver_instance_id), static_cast<unsigned long long>(target->stream_id), target->codec_operation, target->format,
+                       target->va_fourcc, target->coded_extent.width, target->coded_extent.height, static_cast<unsigned long long>(target->content_generation),
+                       static_cast<unsigned long long>(target->export_resource.content_generation));
+            if (vkvv_trace_deep_enabled()) {
                 const std::string records = export_seed_records_string(runtime);
                 vkvv_trace_emit(
                     "export-seed-miss", "surface=%u driver=%llu stream=%llu codec=0x%x format=%d fourcc=0x%x extent=%ux%u target_gen=%llu shadow_gen=%llu records=\"%s\"",

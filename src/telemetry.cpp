@@ -17,6 +17,11 @@ namespace {
         return value != nullptr && std::strcmp(value, "0") != 0;
     }
 
+    bool trace_deep_env_enabled(void) {
+        const char* value = std::getenv("VKVV_TRACE");
+        return value != nullptr && (std::strcmp(value, "2") == 0 || std::strcmp(value, "deep") == 0 || std::strcmp(value, "verbose") == 0);
+    }
+
     void trace_vemit(const char* event, const char* fmt, va_list args) {
         const unsigned long long    seq = trace_sequence.fetch_add(1, std::memory_order_relaxed);
         std::lock_guard<std::mutex> lock(trace_mutex);
@@ -41,6 +46,11 @@ bool vkvv_success_reason_enabled(void) {
 
 bool vkvv_trace_enabled(void) {
     static const bool enabled = env_enabled("VKVV_TRACE");
+    return enabled;
+}
+
+bool vkvv_trace_deep_enabled(void) {
+    static const bool enabled = trace_deep_env_enabled();
     return enabled;
 }
 
