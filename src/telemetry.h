@@ -19,9 +19,11 @@ inline void vkvv_clear_reason(char* reason, std::size_t reason_size) {
     }
 }
 
-// Use VKVV_TRACE in hot paths so trace arguments are not evaluated unless tracing
-// is enabled. vkvv_trace() remains for cold/compatibility paths where arguments
-// are already cheap or explicitly pre-gated.
+// Use VKVV_TRACE/VKVV_TRACE_DEEP in hot paths so trace arguments are not
+// evaluated unless tracing is enabled. vkvv_trace() remains for cold paths where
+// arguments are already cheap or explicitly pre-gated. Do not build strings,
+// walk containers, or call syscalls for trace arguments outside one of these
+// guards. VKVV_PERF is aggregate only; keep it out of per-frame text logging.
 #define VKVV_TRACE(event, fmt, ...)                                                                                                                                                \
     do {                                                                                                                                                                           \
         if (vkvv_trace_enabled()) {                                                                                                                                                \

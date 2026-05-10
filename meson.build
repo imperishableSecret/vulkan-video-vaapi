@@ -13,6 +13,7 @@ project(
 )
 
 cpp = meson.get_compiler('cpp')
+python3 = find_program('python3')
 
 libva_dep = dependency('libva')
 libva_drm_dep = dependency('libva-drm')
@@ -327,3 +328,4 @@ test('smoke-telemetry-log-on', telemetry_smoke, env: telemetry_log_on_env, is_pa
 test('smoke-telemetry-deep', telemetry_smoke, env: telemetry_trace_deep_env, is_parallel: false, timeout: 30)
 test('smoke-telemetry-perf-on', telemetry_smoke, env: telemetry_perf_on_env, is_parallel: false, timeout: 30)
 test('smoke-perf-counters', perf_counters_smoke, is_parallel: false, timeout: 30)
+test('smoke-telemetry-patterns', python3, args: [files('tests/smoke/generic/telemetry_patterns.py'), meson.current_source_dir()], is_parallel: false, timeout: 30)

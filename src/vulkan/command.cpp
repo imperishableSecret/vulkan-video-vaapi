@@ -370,7 +370,7 @@ namespace vkvv {
         }
 
         const auto* completed_resource_before = completed_surface != nullptr ? static_cast<const SurfaceResource*>(completed_surface->vulkan) : nullptr;
-        vkvv_trace("pending-complete-before",
+        VKVV_TRACE("pending-complete-before",
                    "operation=%s surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u "
                    "exported=%u upload_mem=%llu",
                    operation[0] != '\0' ? operation : "Vulkan decode", completed_surface != nullptr ? completed_surface->id : VA_INVALID_ID,
@@ -405,7 +405,7 @@ namespace vkvv {
             resource->content_generation++;
         }
         const auto* refresh_resource = completed_surface != nullptr ? static_cast<const SurfaceResource*>(completed_surface->vulkan) : nullptr;
-        vkvv_trace("pending-refresh-decision",
+        VKVV_TRACE("pending-refresh-decision",
                    "operation=%s surface=%u refresh_export=%u exported=%u predecode=%u shadow_mem=0x%llx content_gen=%llu shadow_gen=%llu action=refresh-current",
                    operation[0] != '\0' ? operation : "Vulkan decode", completed_surface != nullptr ? completed_surface->id : VA_INVALID_ID, refresh_export ? 1U : 0U,
                    refresh_resource != nullptr && refresh_resource->export_resource.exported ? 1U : 0U,
@@ -419,7 +419,7 @@ namespace vkvv {
             return status;
         }
         const auto* completed_resource_after = completed_surface != nullptr ? static_cast<const SurfaceResource*>(completed_surface->vulkan) : nullptr;
-        vkvv_trace("pending-complete-after",
+        VKVV_TRACE("pending-complete-after",
                    "operation=%s surface=%u status=%d refresh_export=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u exported=%u",
                    operation[0] != '\0' ? operation : "Vulkan decode", completed_surface != nullptr ? completed_surface->id : VA_INVALID_ID, status, refresh_export ? 1U : 0U,
                    completed_surface != nullptr && completed_surface->decoded ? 1U : 0U,
@@ -468,10 +468,10 @@ namespace vkvv {
 
         while (runtime_pending_work_count(runtime) >= command_slot_count) {
             const size_t pending_before = runtime_pending_work_count(runtime);
-            vkvv_trace("pending-backpressure-drain", "operation=%s pending=%zu slots=%zu", operation != nullptr ? operation : "Vulkan decode", pending_before, command_slot_count);
+            VKVV_TRACE("pending-backpressure-drain", "operation=%s pending=%zu slots=%zu", operation != nullptr ? operation : "Vulkan decode", pending_before, command_slot_count);
             char     completion_reason[512] = {};
             VAStatus status                 = complete_pending_work(runtime, nullptr, std::numeric_limits<uint64_t>::max(), completion_reason, sizeof(completion_reason));
-            vkvv_trace("pending-backpressure-drain-done", "operation=%s status=%d pending_before=%zu pending_after=%zu reason=\"%s\"",
+            VKVV_TRACE("pending-backpressure-drain-done", "operation=%s status=%d pending_before=%zu pending_after=%zu reason=\"%s\"",
                        operation != nullptr ? operation : "Vulkan decode", status, pending_before, runtime_pending_work_count(runtime), completion_reason);
             if (status != VA_STATUS_SUCCESS) {
                 std::snprintf(reason, reason_size, "%s", completion_reason);
@@ -502,10 +502,10 @@ namespace vkvv {
             }
         }
 
-        vkvv_trace("pending-reference-drain", "operation=%s surface=%u driver=%llu stream=%llu codec=0x%x", operation != nullptr ? operation : "pending reference", surface->id,
+        VKVV_TRACE("pending-reference-drain", "operation=%s surface=%u driver=%llu stream=%llu codec=0x%x", operation != nullptr ? operation : "pending reference", surface->id,
                    static_cast<unsigned long long>(surface->driver_instance_id), static_cast<unsigned long long>(surface->stream_id), surface->codec_operation);
         VAStatus status = complete_pending_work(runtime, surface, std::numeric_limits<uint64_t>::max(), reason, reason_size);
-        vkvv_trace("pending-reference-drain-done", "operation=%s surface=%u status=%d decoded=%u pending=%u", operation != nullptr ? operation : "pending reference", surface->id,
+        VKVV_TRACE("pending-reference-drain-done", "operation=%s surface=%u status=%d decoded=%u pending=%u", operation != nullptr ? operation : "pending reference", surface->id,
                    status, surface->decoded ? 1U : 0U, surface->work_state == VKVV_SURFACE_WORK_RENDERING ? 1U : 0U);
         return status;
     }
@@ -590,7 +590,7 @@ namespace vkvv {
                 runtime->destroy_video_session_parameters(runtime->device, record.parameters, nullptr);
             }
             complete_surface_status(record.surface, status);
-            vkvv_trace("pending-teardown-discard", "operation=%s surface=%u status=%d reason=\"%s\"", record.operation[0] != '\0' ? record.operation : "Vulkan decode",
+            VKVV_TRACE("pending-teardown-discard", "operation=%s surface=%u status=%d reason=\"%s\"", record.operation[0] != '\0' ? record.operation : "Vulkan decode",
                        record.surface != nullptr ? record.surface->id : VA_INVALID_ID, status, reason != nullptr ? reason : "");
         }
     }

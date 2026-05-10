@@ -118,7 +118,7 @@ namespace vkvv {
             return false;
         }
 
-        vkvv_trace("decode-format-select",
+        VKVV_TRACE("decode-format-select",
                    "usage=0x%x preferred=%d prefer_export=%u properties=%u export_tiling=%u preferred_export_tiling=%u selected_format=%d selected_tiling=%s "
                    "direct_export=%u create_flags=0x%x",
                    query_usage, preferred_format, prefer_export_tiling ? 1U : 0U, selection->format_property_count, selection->export_tiling_candidate_count,

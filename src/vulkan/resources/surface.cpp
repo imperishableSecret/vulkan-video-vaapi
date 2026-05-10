@@ -56,7 +56,7 @@ namespace vkvv {
             char     reason[512] = {};
             VAStatus status      = drain_pending_work_before_sync_command(this, reason, sizeof(reason));
             if (status != VA_STATUS_SUCCESS) {
-                vkvv_trace("pending-teardown-drain-failed", "status=%d reason=\"%s\"", status, reason);
+                VKVV_TRACE("pending-teardown-drain-failed", "status=%d reason=\"%s\"", status, reason);
                 discard_pending_work_for_teardown(this, status, reason);
             }
         }
@@ -226,7 +226,7 @@ namespace vkvv {
         try {
             runtime->predecode_exports.push_back(record);
         } catch (const std::bad_alloc&) {
-            vkvv_trace("predecode-export-register-failed", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx reason=allocation-failed", resource->owner_surface_id,
+            VKVV_TRACE("predecode-export-register-failed", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx reason=allocation-failed", resource->owner_surface_id,
                        static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                        vkvv_trace_handle(resource->memory));
         }
@@ -277,7 +277,7 @@ namespace vkvv {
         }
 
         const TransitionRetentionWindow closed = runtime->transition_retention;
-        vkvv_trace("retained-export-window-close", "driver=%llu stream=%llu codec=0x%x retained=%zu retained_mem=%llu attached=%zu target=%zu budget=%llu reason=%s",
+        VKVV_TRACE("retained-export-window-close", "driver=%llu stream=%llu codec=0x%x retained=%zu retained_mem=%llu attached=%zu target=%zu budget=%llu reason=%s",
                    static_cast<unsigned long long>(closed.driver_instance_id), static_cast<unsigned long long>(closed.stream_id), closed.codec_operation, closed.retained_count,
                    static_cast<unsigned long long>(closed.retained_bytes), closed.attached_count, closed.budget.target_count,
                    static_cast<unsigned long long>(closed.budget.target_bytes), reason != nullptr ? reason : "unknown");
@@ -295,7 +295,7 @@ namespace vkvv {
             const bool                 same_window = retained_export_matches_window(*seed, window);
             if (!same_window) {
                 if (!retained_export_seed_can_replace_window(window, *seed)) {
-                    vkvv_trace("retained-export-window-keep", "driver=%llu stream=%llu codec=0x%x seed_owner=%u seed_driver=%llu seed_stream=%llu seed_codec=0x%x reason=%s",
+                    VKVV_TRACE("retained-export-window-keep", "driver=%llu stream=%llu codec=0x%x seed_owner=%u seed_driver=%llu seed_stream=%llu seed_codec=0x%x reason=%s",
                                static_cast<unsigned long long>(window.driver_instance_id), static_cast<unsigned long long>(window.stream_id), window.codec_operation,
                                seed->owner_surface_id, static_cast<unsigned long long>(seed->driver_instance_id), static_cast<unsigned long long>(seed->stream_id),
                                seed->codec_operation, reason != nullptr ? reason : "unknown");
@@ -308,7 +308,7 @@ namespace vkvv {
                     window.format             = seed->format;
                     window.va_fourcc          = seed->va_fourcc;
                     window.coded_extent       = seed->extent;
-                    vkvv_trace("retained-export-window-open", "driver=%llu stream=%llu codec=0x%x fourcc=0x%x format=%d extent=%ux%u reason=%s",
+                    VKVV_TRACE("retained-export-window-open", "driver=%llu stream=%llu codec=0x%x fourcc=0x%x format=%d extent=%ux%u reason=%s",
                                static_cast<unsigned long long>(window.driver_instance_id), static_cast<unsigned long long>(window.stream_id), window.codec_operation,
                                window.va_fourcc, window.format, window.coded_extent.width, window.coded_extent.height, reason != nullptr ? reason : "unknown");
                 }
@@ -339,7 +339,7 @@ namespace vkvv {
         window.budget                          = retained_export_budget_from_expected(retained_count, retained_bytes, global_cap);
         runtime->retained_export_count_limit   = std::max<size_t>(4, window.budget.target_count);
         runtime->retained_export_memory_budget = std::max<VkDeviceSize>(64ull * 1024ull * 1024ull, window.budget.target_bytes);
-        vkvv_trace("retained-export-budget",
+        VKVV_TRACE("retained-export-budget",
                    "driver=%llu stream=%llu codec=0x%x retained=%zu retained_mem=%llu average=%llu headroom=%zu target=%zu budget=%llu global_cap=%llu reason=%s",
                    static_cast<unsigned long long>(window.driver_instance_id), static_cast<unsigned long long>(window.stream_id), window.codec_operation, window.retained_count,
                    static_cast<unsigned long long>(window.retained_bytes), static_cast<unsigned long long>(window.budget.average_bytes), window.budget.headroom_count,
@@ -368,7 +368,7 @@ namespace vkvv {
             const VkDeviceSize     bytes          = oldest.allocation_size;
             const bool             window_match   = retained_export_matches_window(oldest, runtime->transition_retention);
             oldest_backing.state                  = RetainedExportState::Expired;
-            vkvv_trace("retained-export-prune",
+            VKVV_TRACE("retained-export-prune",
                        "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx bytes=%llu fd_stat=%u fd_dev=%llu fd_ino=%llu retained=%zu retained_mem=%llu limit=%zu budget=%llu "
                        "window_match=%u",
                        oldest.owner_surface_id, static_cast<unsigned long long>(oldest.driver_instance_id), static_cast<unsigned long long>(oldest.stream_id),
@@ -467,7 +467,7 @@ namespace vkvv {
             try {
                 runtime->retained_exports.reserve(runtime->retained_exports.size() + 1);
             } catch (const std::bad_alloc&) {
-                vkvv_trace("retained-export-add-failed", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx bytes=%llu reason=allocation-failed",
+                VKVV_TRACE("retained-export-add-failed", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx bytes=%llu reason=allocation-failed",
                            resource->export_resource.owner_surface_id, static_cast<unsigned long long>(resource->export_resource.driver_instance_id),
                            static_cast<unsigned long long>(resource->export_resource.stream_id), resource->export_resource.codec_operation,
                            vkvv_trace_handle(resource->export_resource.memory), static_cast<unsigned long long>(resource->export_resource.allocation_size));
@@ -513,7 +513,7 @@ namespace vkvv {
             runtime->retained_export_sequence++;
             RetainedExportBacking& retained = runtime->retained_exports.back();
             runtime->retained_export_memory_bytes += detached_bytes;
-            vkvv_trace("retained-export-add",
+            VKVV_TRACE("retained-export-add",
                        "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx bytes=%llu fd_stat=%u fd_dev=%llu fd_ino=%llu retained=%zu retained_mem=%llu seq=%llu",
                        retained.resource.owner_surface_id, static_cast<unsigned long long>(retained.resource.driver_instance_id),
                        static_cast<unsigned long long>(retained.resource.stream_id), retained.resource.codec_operation, vkvv_trace_handle(retained.resource.memory),
@@ -615,7 +615,7 @@ namespace vkvv {
             existing->surface_id         = surface->id;
             existing->visible_extent     = {surface->width, surface->height};
             existing->import             = surface->import;
-            vkvv_trace("surface-resource-reuse",
+            VKVV_TRACE("surface-resource-reuse",
                        "surface=%u driver=%llu stream=%llu surface_codec=0x%x key_codec=0x%x resource_codec=0x%x content_gen=%llu shadow_gen=%llu predecode=%u imported=%u "
                        "import_fd_stat=%u import_fd_dev=%llu import_fd_ino=%llu",
                        surface->id, static_cast<unsigned long long>(surface->driver_instance_id), static_cast<unsigned long long>(stream_id), surface->codec_operation,
@@ -837,7 +837,7 @@ namespace vkvv {
         if (new_resource) {
             surface->vulkan = resource;
         }
-        vkvv_trace("surface-resource-create",
+        VKVV_TRACE("surface-resource-create",
                    "surface=%u driver=%llu stream=%llu surface_codec=0x%x key_codec=0x%x resource_codec=0x%x extent=%ux%u exportable=%u decode_mem=%llu shadow_mem=0x%llx "
                    "imported=%u import_fd_stat=%u import_fd_dev=%llu import_fd_ino=%llu",
                    surface->id, static_cast<unsigned long long>(surface->driver_instance_id), static_cast<unsigned long long>(surface->stream_id), surface->codec_operation,

@@ -23,7 +23,7 @@ namespace vkvv {
         }
         if (runtime == nullptr) {
             if (upload->buffer != VK_NULL_HANDLE || upload->memory != VK_NULL_HANDLE || upload->mapped != nullptr) {
-                vkvv_trace("upload-destroy-null-runtime", "buffer=0x%llx memory=0x%llx mapped=%u allocation=%llu", vkvv_trace_handle(upload->buffer),
+                VKVV_TRACE("upload-destroy-null-runtime", "buffer=0x%llx memory=0x%llx mapped=%u allocation=%llu", vkvv_trace_handle(upload->buffer),
                            vkvv_trace_handle(upload->memory), upload->mapped != nullptr ? 1U : 0U, static_cast<unsigned long long>(upload->allocation_size));
             }
             *upload = {};
@@ -98,7 +98,7 @@ namespace vkvv {
                 if (upload->underused_frames >= upload_shrink_frame_count) {
                     const VkDeviceSize old_capacity   = upload->capacity;
                     const VkDeviceSize old_allocation = upload->allocation_size;
-                    vkvv_trace("upload-buffer-shrink", "label=%s old_capacity=%llu old_allocation=%llu new_capacity=%llu underused_frames=%u", label != nullptr ? label : "unknown",
+                    VKVV_TRACE("upload-buffer-shrink", "label=%s old_capacity=%llu old_allocation=%llu new_capacity=%llu underused_frames=%u", label != nullptr ? label : "unknown",
                                static_cast<unsigned long long>(old_capacity), static_cast<unsigned long long>(old_allocation), static_cast<unsigned long long>(upload_size),
                                upload->underused_frames);
                     destroy_upload_buffer(runtime, upload);

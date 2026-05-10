@@ -58,7 +58,7 @@ namespace vkvv {
         descriptor->objects[0].size                = static_cast<uint32_t>(allocation_size);
         descriptor->objects[0].drm_format_modifier = has_modifier ? modifier : DRM_FORMAT_MOD_INVALID;
         descriptor->num_layers                     = format->layer_count;
-        vkvv_trace("export-descriptor-object", "surface=%u fourcc=0x%x format=%s fd=%d size=%u modifier=0x%llx has_modifier=%u layers=%u planes=%u visible=%ux%u",
+        VKVV_TRACE("export-descriptor-object", "surface=%u fourcc=0x%x format=%s fd=%d size=%u modifier=0x%llx has_modifier=%u layers=%u planes=%u visible=%ux%u",
                    surface != nullptr ? surface->id : VA_INVALID_ID, format->va_fourcc, format->name, fd, descriptor->objects[0].size,
                    static_cast<unsigned long long>(descriptor->objects[0].drm_format_modifier), has_modifier ? 1U : 0U, descriptor->num_layers, plane_count,
                    surface != nullptr ? surface->width : 0U, surface != nullptr ? surface->height : 0U);
