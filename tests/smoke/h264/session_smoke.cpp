@@ -83,11 +83,7 @@ namespace {
         return true;
     }
 
-    bool check_async_completion(vkvv::VulkanRuntime* runtime) {
-        VkvvSurface surface{};
-        surface.work_state  = VKVV_SURFACE_WORK_RENDERING;
-        surface.sync_status = VA_STATUS_ERROR_TIMEDOUT;
-
+    bool submit_empty_pending(vkvv::VulkanRuntime* runtime, VkvvSurface* surface, const char* operation) {
         char reason[512] = {};
         {
             std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
@@ -97,11 +93,11 @@ namespace {
             }
 
             VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
-            if (!check(result == VK_SUCCESS, "vkResetFences failed for async smoke")) {
+            if (!check(result == VK_SUCCESS, "vkResetFences failed for pending smoke")) {
                 return false;
             }
             result = vkResetCommandBuffer(runtime->command_buffer, 0);
-            if (!check(result == VK_SUCCESS, "vkResetCommandBuffer failed for async smoke")) {
+            if (!check(result == VK_SUCCESS, "vkResetCommandBuffer failed for pending smoke")) {
                 return false;
             }
 
@@ -109,21 +105,33 @@ namespace {
             begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             result           = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
-            if (!check(result == VK_SUCCESS, "vkBeginCommandBuffer failed for async smoke")) {
+            if (!check(result == VK_SUCCESS, "vkBeginCommandBuffer failed for pending smoke")) {
                 return false;
             }
             result = vkEndCommandBuffer(runtime->command_buffer);
-            if (!check(result == VK_SUCCESS, "vkEndCommandBuffer failed for async smoke")) {
+            if (!check(result == VK_SUCCESS, "vkEndCommandBuffer failed for pending smoke")) {
                 return false;
             }
-            if (!check(vkvv::submit_command_buffer(runtime, reason, sizeof(reason), "async smoke"), "submit_command_buffer failed for async smoke")) {
+            if (!check(vkvv::submit_command_buffer(runtime, reason, sizeof(reason), operation), "submit_command_buffer failed for pending smoke")) {
                 std::fprintf(stderr, "%s\n", reason);
                 return false;
             }
-            vkvv::track_pending_decode(runtime, &surface, VK_NULL_HANDLE, 0, true, "async smoke");
+            vkvv::track_pending_decode(runtime, surface, VK_NULL_HANDLE, 0, true, operation);
+        }
+        return true;
+    }
+
+    bool check_async_completion(vkvv::VulkanRuntime* runtime) {
+        VkvvSurface surface{};
+        surface.work_state  = VKVV_SURFACE_WORK_RENDERING;
+        surface.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+
+        if (!submit_empty_pending(runtime, &surface, "async smoke")) {
+            return false;
         }
 
-        VAStatus status = vkvv_vulkan_complete_surface_work(runtime, &surface, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
+        char     reason[512] = {};
+        VAStatus status      = vkvv_vulkan_complete_surface_work(runtime, &surface, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
         if (!check(status == VA_STATUS_SUCCESS, "async surface completion failed")) {
             std::fprintf(stderr, "%s\n", reason);
             return false;
@@ -132,20 +140,54 @@ namespace {
                      "async surface completion did not mark the surface ready");
     }
 
+    bool check_two_pending_surfaces(vkvv::VulkanRuntime* runtime) {
+        VkvvSurface first{};
+        first.work_state  = VKVV_SURFACE_WORK_RENDERING;
+        first.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+        VkvvSurface second{};
+        second.work_state  = VKVV_SURFACE_WORK_RENDERING;
+        second.sync_status = VA_STATUS_ERROR_TIMEDOUT;
+
+        if (!submit_empty_pending(runtime, &first, "first pending smoke") || !submit_empty_pending(runtime, &second, "second pending smoke")) {
+            return false;
+        }
+        if (!check(vkvv::runtime_pending_work_count(runtime) == 2 && vkvv::runtime_surface_has_pending_work(runtime, &first) &&
+                       vkvv::runtime_surface_has_pending_work(runtime, &second),
+                   "runtime did not keep two pending command slots")) {
+            return false;
+        }
+
+        char     reason[512] = {};
+        VAStatus status      = vkvv_vulkan_complete_surface_work(runtime, &first, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
+        if (!check(status == VA_STATUS_SUCCESS, "first pending surface completion failed")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        if (!check(vkvv::runtime_pending_work_count(runtime) == 1 && !vkvv::runtime_surface_has_pending_work(runtime, &first) &&
+                       vkvv::runtime_surface_has_pending_work(runtime, &second) && second.work_state == VKVV_SURFACE_WORK_RENDERING,
+                   "completing one surface drained or disturbed another pending slot")) {
+            return false;
+        }
+
+        status = vkvv_vulkan_complete_surface_work(runtime, &second, VA_TIMEOUT_INFINITE, reason, sizeof(reason));
+        if (!check(status == VA_STATUS_SUCCESS, "second pending surface completion failed")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        return check(vkvv::runtime_pending_work_count(runtime) == 0 && first.decoded && second.decoded && second.work_state == VKVV_SURFACE_WORK_READY,
+                     "pending ring did not drain deterministically");
+    }
+
     bool check_device_lost_fast_fail(vkvv::VulkanRuntime* runtime) {
         VkvvSurface surface{};
         surface.work_state  = VKVV_SURFACE_WORK_RENDERING;
         surface.sync_status = VA_STATUS_ERROR_TIMEDOUT;
 
-        char reason[512] = {};
-        {
-            std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
-            runtime->pending_surface                = &surface;
-            runtime->pending_parameters             = VK_NULL_HANDLE;
-            runtime->pending_upload_allocation_size = 0;
-            std::snprintf(runtime->pending_operation, sizeof(runtime->pending_operation), "device-lost smoke");
+        if (!submit_empty_pending(runtime, &surface, "device-lost smoke")) {
+            return false;
         }
 
+        char reason[512]     = {};
         runtime->device_lost = true;
         if (!check(!vkvv::ensure_command_resources(runtime, reason, sizeof(reason)), "device-lost runtime accepted new command resources")) {
             return false;
@@ -156,7 +198,8 @@ namespace {
             std::fprintf(stderr, "%s\n", reason);
             return false;
         }
-        return check(runtime->pending_surface == nullptr && surface.work_state == VKVV_SURFACE_WORK_READY && surface.sync_status == VA_STATUS_ERROR_OPERATION_FAILED,
+        return check(vkvv::runtime_pending_work_count(runtime) == 0 && runtime->pending_surface == nullptr && surface.work_state == VKVV_SURFACE_WORK_READY &&
+                         surface.sync_status == VA_STATUS_ERROR_OPERATION_FAILED,
                      "device-lost pending work was not cleared deterministically");
     }
 
@@ -231,6 +274,7 @@ int main(void) {
     ok = check_upload_contents(typed_session->upload, larger_upload, "larger H.264 upload contents mismatch") && ok;
     ok = check(typed_session->upload.capacity > first_upload_capacity, "larger H.264 upload did not grow the reusable buffer") && ok;
     ok = check_async_completion(typed_runtime) && ok;
+    ok = check_two_pending_surfaces(typed_runtime) && ok;
 
     ok                                    = ensure_session(runtime, session, 640, 360, 640, 368) && ok;
     const VkVideoSessionKHR grown_session = typed_session->video.session;

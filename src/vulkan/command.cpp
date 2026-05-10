@@ -16,18 +16,100 @@ namespace vkvv {
             runtime->destroy_detached_export_resources();
         }
 
-        void clear_pending_work_locked(VulkanRuntime* runtime, VkvvSurface** surface, VkVideoSessionParametersKHR* parameters, VkDeviceSize* upload_allocation_size,
-                                       bool* displayable, char* operation, size_t operation_size) {
-            *surface                = runtime->pending_surface;
-            *parameters             = runtime->pending_parameters;
-            *upload_allocation_size = runtime->pending_upload_allocation_size;
-            *displayable            = runtime->pending_displayable;
-            std::snprintf(operation, operation_size, "%s", runtime->pending_operation);
+        CommandSlot& active_slot(VulkanRuntime* runtime) {
+            return runtime->command_slots[runtime->active_command_slot];
+        }
+
+        void set_active_slot_locked(VulkanRuntime* runtime, size_t index) {
+            runtime->active_command_slot = index;
+            runtime->command_buffer      = runtime->command_slots[index].command_buffer;
+            runtime->fence               = runtime->command_slots[index].fence;
+        }
+
+        void refresh_legacy_pending_snapshot_locked(VulkanRuntime* runtime) {
             runtime->pending_surface                = nullptr;
             runtime->pending_parameters             = VK_NULL_HANDLE;
             runtime->pending_upload_allocation_size = 0;
             runtime->pending_displayable            = true;
             runtime->pending_operation[0]           = '\0';
+            for (const CommandSlot& slot : runtime->command_slots) {
+                if (slot.pending_surface == nullptr) {
+                    continue;
+                }
+                runtime->pending_surface                = slot.pending_surface;
+                runtime->pending_parameters             = slot.pending_parameters;
+                runtime->pending_upload_allocation_size = slot.pending_upload_allocation_size;
+                runtime->pending_displayable            = slot.pending_displayable;
+                std::snprintf(runtime->pending_operation, sizeof(runtime->pending_operation), "%s", slot.pending_operation);
+                return;
+            }
+        }
+
+        size_t pending_work_count_locked(const VulkanRuntime* runtime) {
+            size_t count = 0;
+            for (const CommandSlot& slot : runtime->command_slots) {
+                if (slot.pending_surface != nullptr) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        CommandSlot* find_pending_slot_locked(VulkanRuntime* runtime, const VkvvSurface* surface, size_t* index) {
+            for (size_t i = 0; i < command_slot_count; i++) {
+                CommandSlot& slot = runtime->command_slots[i];
+                if (slot.pending_surface == nullptr) {
+                    continue;
+                }
+                if (surface != nullptr && slot.pending_surface != surface) {
+                    continue;
+                }
+                if (index != nullptr) {
+                    *index = i;
+                }
+                return &slot;
+            }
+            return nullptr;
+        }
+
+        bool select_idle_command_slot_locked(VulkanRuntime* runtime, char* reason, size_t reason_size) {
+            for (size_t attempt = 0; attempt < command_slot_count; attempt++) {
+                const size_t index = (runtime->active_command_slot + attempt) % command_slot_count;
+                CommandSlot& slot  = runtime->command_slots[index];
+                if (slot.pending_surface != nullptr) {
+                    continue;
+                }
+                if (slot.submitted) {
+                    const VkResult status = vkGetFenceStatus(runtime->device, slot.fence);
+                    if (status == VK_NOT_READY) {
+                        continue;
+                    }
+                    if (!record_vk_result(runtime, status, "vkGetFenceStatus", "command slot selection", reason, reason_size)) {
+                        return false;
+                    }
+                    slot.submitted = false;
+                }
+                set_active_slot_locked(runtime, index);
+                return true;
+            }
+            std::snprintf(reason, reason_size, "no free Vulkan command slot");
+            return false;
+        }
+
+        void clear_pending_work_locked(VulkanRuntime* runtime, CommandSlot* slot, VkvvSurface** surface, VkVideoSessionParametersKHR* parameters,
+                                       VkDeviceSize* upload_allocation_size, bool* displayable, char* operation, size_t operation_size) {
+            *surface                = slot->pending_surface;
+            *parameters             = slot->pending_parameters;
+            *upload_allocation_size = slot->pending_upload_allocation_size;
+            *displayable            = slot->pending_displayable;
+            std::snprintf(operation, operation_size, "%s", slot->pending_operation);
+            slot->pending_surface                = nullptr;
+            slot->pending_parameters             = VK_NULL_HANDLE;
+            slot->pending_upload_allocation_size = 0;
+            slot->pending_displayable            = true;
+            slot->pending_operation[0]           = '\0';
+            slot->submitted                      = false;
+            refresh_legacy_pending_snapshot_locked(runtime);
         }
 
     } // namespace
@@ -59,8 +141,8 @@ namespace vkvv {
         if (!ensure_runtime_usable(runtime, reason, reason_size, "video command resources")) {
             return false;
         }
-        if (runtime->command_buffer != VK_NULL_HANDLE && runtime->fence != VK_NULL_HANDLE) {
-            return true;
+        if (runtime->command_pool != VK_NULL_HANDLE && runtime->command_slots[0].command_buffer != VK_NULL_HANDLE && runtime->command_slots[0].fence != VK_NULL_HANDLE) {
+            return select_idle_command_slot_locked(runtime, reason, reason_size);
         }
 
         VkCommandPoolCreateInfo pool_info{};
@@ -77,22 +159,29 @@ namespace vkvv {
         allocate_info.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         allocate_info.commandPool        = runtime->command_pool;
         allocate_info.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocate_info.commandBufferCount = 1;
-        result                           = vkAllocateCommandBuffers(runtime->device, &allocate_info, &runtime->command_buffer);
+        allocate_info.commandBufferCount = command_slot_count;
+        VkCommandBuffer command_buffers[command_slot_count]{};
+        result = vkAllocateCommandBuffers(runtime->device, &allocate_info, command_buffers);
         if (!record_vk_result(runtime, result, "vkAllocateCommandBuffers", "video command", reason, reason_size)) {
             runtime->destroy_command_resources();
             return false;
         }
-
-        VkFenceCreateInfo fence_info{};
-        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        result           = vkCreateFence(runtime->device, &fence_info, nullptr, &runtime->fence);
-        if (!record_vk_result(runtime, result, "vkCreateFence", "video command", reason, reason_size)) {
-            runtime->destroy_command_resources();
-            return false;
+        for (size_t i = 0; i < command_slot_count; i++) {
+            runtime->command_slots[i].command_buffer = command_buffers[i];
         }
 
-        return true;
+        for (size_t i = 0; i < command_slot_count; i++) {
+            VkFenceCreateInfo fence_info{};
+            fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            result           = vkCreateFence(runtime->device, &fence_info, nullptr, &runtime->command_slots[i].fence);
+            if (!record_vk_result(runtime, result, "vkCreateFence", "video command", reason, reason_size)) {
+                runtime->destroy_command_resources();
+                return false;
+            }
+        }
+
+        set_active_slot_locked(runtime, 0);
+        return select_idle_command_slot_locked(runtime, reason, reason_size);
     }
 
     bool submit_command_buffer(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation) {
@@ -108,6 +197,7 @@ namespace vkvv {
         if (!record_vk_result(runtime, result, "vkQueueSubmit", operation, reason, reason_size)) {
             return false;
         }
+        active_slot(runtime).submitted = true;
 
         return true;
     }
@@ -133,6 +223,7 @@ namespace vkvv {
         if (!record_vk_result(runtime, result, "vkWaitForFences", operation, reason, reason_size)) {
             return false;
         }
+        active_slot(runtime).submitted = false;
 
         return true;
     }
@@ -154,22 +245,24 @@ namespace vkvv {
 
     void track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool displayable,
                               const char* operation) {
-        runtime->pending_surface                = surface;
-        runtime->pending_parameters             = parameters;
-        runtime->pending_upload_allocation_size = upload_allocation_size;
-        runtime->pending_displayable            = displayable;
-        std::snprintf(runtime->pending_operation, sizeof(runtime->pending_operation), "%s", operation);
+        CommandSlot& slot                   = active_slot(runtime);
+        slot.pending_surface                = surface;
+        slot.pending_parameters             = parameters;
+        slot.pending_upload_allocation_size = upload_allocation_size;
+        slot.pending_displayable            = displayable;
+        std::snprintf(slot.pending_operation, sizeof(slot.pending_operation), "%s", operation);
+        refresh_legacy_pending_snapshot_locked(runtime);
         const auto* resource = surface != nullptr ? static_cast<const SurfaceResource*>(surface->vulkan) : nullptr;
-        vkvv_trace(
-            "pending-submit",
-            "operation=%s surface=%u driver=%llu stream=%llu codec=0x%x displayable=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u upload_mem=%llu",
-            operation != nullptr ? operation : "unknown", surface != nullptr ? surface->id : VA_INVALID_ID,
-            surface != nullptr ? static_cast<unsigned long long>(surface->driver_instance_id) : 0ULL,
-            surface != nullptr ? static_cast<unsigned long long>(surface->stream_id) : 0ULL, surface != nullptr ? surface->codec_operation : 0U, displayable ? 1U : 0U,
-            surface != nullptr && surface->decoded ? 1U : 0U, resource != nullptr ? static_cast<unsigned long long>(resource->content_generation) : 0ULL,
-            resource != nullptr ? vkvv_trace_handle(resource->export_resource.memory) : 0ULL,
-            resource != nullptr ? static_cast<unsigned long long>(resource->export_resource.content_generation) : 0ULL,
-            resource != nullptr && resource->export_resource.predecode_exported ? 1U : 0U, static_cast<unsigned long long>(upload_allocation_size));
+        vkvv_trace("pending-submit",
+                   "slot=%zu pending=%zu operation=%s surface=%u driver=%llu stream=%llu codec=0x%x displayable=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu "
+                   "predecode=%u upload_mem=%llu",
+                   runtime->active_command_slot, pending_work_count_locked(runtime), operation != nullptr ? operation : "unknown", surface != nullptr ? surface->id : VA_INVALID_ID,
+                   surface != nullptr ? static_cast<unsigned long long>(surface->driver_instance_id) : 0ULL,
+                   surface != nullptr ? static_cast<unsigned long long>(surface->stream_id) : 0ULL, surface != nullptr ? surface->codec_operation : 0U, displayable ? 1U : 0U,
+                   surface != nullptr && surface->decoded ? 1U : 0U, resource != nullptr ? static_cast<unsigned long long>(resource->content_generation) : 0ULL,
+                   resource != nullptr ? vkvv_trace_handle(resource->export_resource.memory) : 0ULL,
+                   resource != nullptr ? static_cast<unsigned long long>(resource->export_resource.content_generation) : 0ULL,
+                   resource != nullptr && resource->export_resource.predecode_exported ? 1U : 0U, static_cast<unsigned long long>(upload_allocation_size));
     }
 
     VAStatus complete_pending_work(VulkanRuntime* runtime, VkvvSurface* surface, uint64_t timeout_ns, char* reason, size_t reason_size) {
@@ -188,8 +281,11 @@ namespace vkvv {
         if (runtime->device_lost) {
             {
                 std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
-                if (runtime->pending_surface != nullptr) {
-                    clear_pending_work_locked(runtime, &completed_surface, &completed_parameters, &upload_allocation_size, &displayable, operation, sizeof(operation));
+                size_t                      slot_index = 0;
+                CommandSlot*                slot       = find_pending_slot_locked(runtime, surface, &slot_index);
+                if (slot != nullptr) {
+                    set_active_slot_locked(runtime, slot_index);
+                    clear_pending_work_locked(runtime, slot, &completed_surface, &completed_parameters, &upload_allocation_size, &displayable, operation, sizeof(operation));
                 }
             }
             if (completed_parameters != VK_NULL_HANDLE && runtime->destroy_video_session_parameters != nullptr) {
@@ -201,7 +297,9 @@ namespace vkvv {
         }
         {
             std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
-            if (runtime->pending_surface == nullptr || (surface != nullptr && runtime->pending_surface != surface)) {
+            size_t                      slot_index = 0;
+            CommandSlot*                slot       = find_pending_slot_locked(runtime, surface, &slot_index);
+            if (slot == nullptr) {
                 if (surface == nullptr && reason_size > 0) {
                     reason[0] = '\0';
                     return VA_STATUS_SUCCESS;
@@ -209,15 +307,16 @@ namespace vkvv {
                 std::snprintf(reason, reason_size, "no matching pending Vulkan work");
                 return VA_STATUS_ERROR_TIMEDOUT;
             }
+            set_active_slot_locked(runtime, slot_index);
 
-            if (!wait_for_command_fence(runtime, timeout_ns, reason, reason_size, runtime->pending_operation[0] != '\0' ? runtime->pending_operation : "Vulkan decode")) {
+            if (!wait_for_command_fence(runtime, timeout_ns, reason, reason_size, slot->pending_operation[0] != '\0' ? slot->pending_operation : "Vulkan decode")) {
                 if (runtime->device_lost) {
-                    clear_pending_work_locked(runtime, &completed_surface, &completed_parameters, &upload_allocation_size, &displayable, operation, sizeof(operation));
+                    clear_pending_work_locked(runtime, slot, &completed_surface, &completed_parameters, &upload_allocation_size, &displayable, operation, sizeof(operation));
                 } else {
                     return VA_STATUS_ERROR_TIMEDOUT;
                 }
             } else {
-                clear_pending_work_locked(runtime, &completed_surface, &completed_parameters, &upload_allocation_size, &displayable, operation, sizeof(operation));
+                clear_pending_work_locked(runtime, slot, &completed_surface, &completed_parameters, &upload_allocation_size, &displayable, operation, sizeof(operation));
             }
         }
 
@@ -242,6 +341,12 @@ namespace vkvv {
         if (runtime->device_lost) {
             complete_surface_status(completed_surface, VA_STATUS_ERROR_OPERATION_FAILED);
             return VA_STATUS_ERROR_OPERATION_FAILED;
+        }
+        if (completed_surface == nullptr) {
+            if (reason_size > 0) {
+                reason[0] = '\0';
+            }
+            return VA_STATUS_SUCCESS;
         }
 
         completed_surface->decoded = true;
@@ -281,8 +386,49 @@ namespace vkvv {
         return VA_STATUS_SUCCESS;
     }
 
+    size_t runtime_pending_work_count(VulkanRuntime* runtime) {
+        if (runtime == nullptr) {
+            return 0;
+        }
+        std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+        return pending_work_count_locked(runtime);
+    }
+
+    bool runtime_surface_has_pending_work(VulkanRuntime* runtime, const VkvvSurface* surface) {
+        if (runtime == nullptr || surface == nullptr) {
+            return false;
+        }
+        std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+        return find_pending_slot_locked(runtime, surface, nullptr) != nullptr;
+    }
+
+    VAStatus drain_pending_surface_work_before_sync_command(VulkanRuntime* runtime, VkvvSurface* surface, char* reason, size_t reason_size) {
+        if (surface == nullptr || surface->work_state != VKVV_SURFACE_WORK_RENDERING) {
+            if (reason_size > 0) {
+                reason[0] = '\0';
+            }
+            return VA_STATUS_SUCCESS;
+        }
+        return complete_pending_work(runtime, surface, std::numeric_limits<uint64_t>::max(), reason, reason_size);
+    }
+
     VAStatus drain_pending_work_before_sync_command(VulkanRuntime* runtime, char* reason, size_t reason_size) {
-        return complete_pending_work(runtime, nullptr, std::numeric_limits<uint64_t>::max(), reason, reason_size);
+        VAStatus final_status = VA_STATUS_SUCCESS;
+        if (reason_size > 0) {
+            reason[0] = '\0';
+        }
+        while (runtime_pending_work_count(runtime) > 0) {
+            char     completion_reason[512] = {};
+            VAStatus status                 = complete_pending_work(runtime, nullptr, std::numeric_limits<uint64_t>::max(), completion_reason, sizeof(completion_reason));
+            if (completion_reason[0] != '\0') {
+                std::snprintf(reason, reason_size, "%s", completion_reason);
+            }
+            if (status != VA_STATUS_SUCCESS) {
+                return status;
+            }
+            final_status = status;
+        }
+        return final_status;
     }
 
 } // namespace vkvv

@@ -42,7 +42,7 @@ VAStatus vkvv_vulkan_prepare_surface_export(void* runtime_ptr, VkvvSurface* surf
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
     char     drain_reason[512] = {};
-    VAStatus drain_status      = drain_pending_work_before_sync_command(runtime, drain_reason, sizeof(drain_reason));
+    VAStatus drain_status      = drain_pending_surface_work_before_sync_command(runtime, surface, drain_reason, sizeof(drain_reason));
     if (drain_status != VA_STATUS_SUCCESS) {
         std::snprintf(reason, reason_size, "%s", drain_reason);
         return drain_status;
@@ -150,7 +150,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
     if (format == nullptr) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
-    VAStatus drain_status = drain_pending_work_before_sync_command(runtime, reason, reason_size);
+    VAStatus drain_status = drain_pending_surface_work_before_sync_command(runtime, surface, reason, reason_size);
     if (drain_status != VA_STATUS_SUCCESS) {
         return drain_status;
     }
@@ -267,7 +267,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
     if (format == nullptr) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
-    VAStatus drain_status = drain_pending_work_before_sync_command(runtime, reason, reason_size);
+    VAStatus drain_status = drain_pending_surface_work_before_sync_command(runtime, const_cast<VkvvSurface*>(surface), reason, reason_size);
     if (drain_status != VA_STATUS_SUCCESS) {
         return drain_status;
     }

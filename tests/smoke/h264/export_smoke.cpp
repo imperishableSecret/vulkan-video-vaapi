@@ -73,7 +73,7 @@ namespace {
         return false;
     }
 
-    bool check_export_preparation_drains_unrelated_pending_work(vkvv::VulkanRuntime* runtime) {
+    bool check_export_preparation_leaves_unrelated_pending_work(vkvv::VulkanRuntime* runtime) {
         VkvvSurface pending_surface{};
         pending_surface.id                 = 901;
         pending_surface.driver_instance_id = 1;
@@ -132,8 +132,8 @@ namespace {
         VAStatus status                   = vkvv_vulkan_prepare_surface_export(runtime, &export_surface, reason, sizeof(reason));
         std::printf("%s\n", reason);
 
-        const bool drained_pending = runtime->pending_surface == nullptr && pending_surface.work_state == VKVV_SURFACE_WORK_READY &&
-            pending_surface.sync_status == VA_STATUS_SUCCESS && pending_surface.decoded;
+        const bool preserved_pending = vkvv::runtime_pending_work_count(runtime) == 1 && vkvv::runtime_surface_has_pending_work(runtime, &pending_surface) &&
+            pending_surface.work_state == VKVV_SURFACE_WORK_RENDERING && pending_surface.sync_status == VA_STATUS_ERROR_TIMEDOUT && !pending_surface.decoded;
         if (pending_surface.work_state == VKVV_SURFACE_WORK_RENDERING) {
             char completion_reason[512] = {};
             (void)vkvv_vulkan_complete_surface_work(runtime, &pending_surface, VA_TIMEOUT_INFINITE, completion_reason, sizeof(completion_reason));
@@ -147,8 +147,8 @@ namespace {
             std::fprintf(stderr, "export preparation failed during pending-work smoke\n");
             return false;
         }
-        if (!drained_pending) {
-            std::fprintf(stderr, "export preparation used command resources while unrelated decode work was still pending\n");
+        if (!preserved_pending) {
+            std::fprintf(stderr, "export preparation drained or disturbed unrelated pending decode work\n");
             return false;
         }
         return true;
@@ -892,7 +892,7 @@ int main(void) {
 
     auto* typed_runtime = static_cast<vkvv::VulkanRuntime*>(runtime);
     std::printf("surface_export=%d\n", typed_runtime->surface_export);
-    if (!check_export_preparation_drains_unrelated_pending_work(typed_runtime)) {
+    if (!check_export_preparation_leaves_unrelated_pending_work(typed_runtime)) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }

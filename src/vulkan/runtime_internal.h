@@ -15,6 +15,7 @@
 namespace vkvv {
 
     inline constexpr uint32_t invalid_queue_family = UINT32_MAX;
+    inline constexpr size_t   command_slot_count   = 4;
 
     struct ExportResource {
         VkImage                       image              = VK_NULL_HANDLE;
@@ -182,6 +183,17 @@ namespace vkvv {
         bool           coherent        = true;
     };
 
+    struct CommandSlot {
+        VkCommandBuffer             command_buffer                 = VK_NULL_HANDLE;
+        VkFence                     fence                          = VK_NULL_HANDLE;
+        VkvvSurface*                pending_surface                = nullptr;
+        VkVideoSessionParametersKHR pending_parameters             = VK_NULL_HANDLE;
+        VkDeviceSize                pending_upload_allocation_size = 0;
+        bool                        pending_displayable            = true;
+        bool                        submitted                      = false;
+        char                        pending_operation[64]{};
+    };
+
     struct VideoSessionKey {
         VkVideoCodecOperationFlagsKHR    codec_operation          = 0;
         uint32_t                         codec_profile            = 0;
@@ -257,9 +269,11 @@ namespace vkvv {
         bool                                            video_decode_vp9   = false;
         bool                                            video_maintenance2 = false;
 
-        VkCommandPool                                   command_pool                   = VK_NULL_HANDLE;
-        VkCommandBuffer                                 command_buffer                 = VK_NULL_HANDLE;
-        VkFence                                         fence                          = VK_NULL_HANDLE;
+        VkCommandPool                                   command_pool   = VK_NULL_HANDLE;
+        VkCommandBuffer                                 command_buffer = VK_NULL_HANDLE;
+        VkFence                                         fence          = VK_NULL_HANDLE;
+        CommandSlot                                     command_slots[command_slot_count];
+        size_t                                          active_command_slot            = 0;
         VkvvSurface*                                    pending_surface                = nullptr;
         VkVideoSessionParametersKHR                     pending_parameters             = VK_NULL_HANDLE;
         VkDeviceSize                                    pending_upload_allocation_size = 0;
@@ -277,15 +291,19 @@ namespace vkvv {
         TransitionRetentionWindow                       transition_retention{};
 
         void                                            destroy_command_resources() {
-            if (fence != VK_NULL_HANDLE) {
-                vkDestroyFence(device, fence, nullptr);
-                fence = VK_NULL_HANDLE;
+            for (CommandSlot& slot : command_slots) {
+                if (slot.fence != VK_NULL_HANDLE) {
+                    vkDestroyFence(device, slot.fence, nullptr);
+                }
+                slot = {};
             }
             if (command_pool != VK_NULL_HANDLE) {
                 vkDestroyCommandPool(device, command_pool, nullptr);
                 command_pool   = VK_NULL_HANDLE;
                 command_buffer = VK_NULL_HANDLE;
             }
+            fence               = VK_NULL_HANDLE;
+            active_command_slot = 0;
         }
         void destroy_detached_export_resources();
     };
@@ -338,6 +356,9 @@ namespace vkvv {
     bool     submit_command_buffer_and_wait(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation);
     void     track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool displayable,
                                   const char* operation);
+    size_t   runtime_pending_work_count(VulkanRuntime* runtime);
+    bool     runtime_surface_has_pending_work(VulkanRuntime* runtime, const VkvvSurface* surface);
+    VAStatus drain_pending_surface_work_before_sync_command(VulkanRuntime* runtime, VkvvSurface* surface, char* reason, size_t reason_size);
     VAStatus drain_pending_work_before_sync_command(VulkanRuntime* runtime, char* reason, size_t reason_size);
     void     add_image_layout_barrier(std::vector<VkImageMemoryBarrier2>* barriers, SurfaceResource* resource, VkImageLayout new_layout, VkAccessFlags2 dst_access);
     VkVideoPictureResourceInfoKHR make_picture_resource(SurfaceResource* resource, VkExtent2D coded_extent);
