@@ -127,7 +127,8 @@ unsigned int vkvv_query_image_formats(const VkvvDriver* drv, VAImageFormat* form
         if (cap->direction != VKVV_CODEC_DIRECTION_DECODE) {
             continue;
         }
-        for (unsigned int j = 0; j < cap->format_count && count < max_formats; j++) {
+        const unsigned int format_count = cap->format_count < VKVV_MAX_FORMAT_VARIANTS ? cap->format_count : VKVV_MAX_FORMAT_VARIANTS;
+        for (unsigned int j = 0; j < format_count && count < max_formats; j++) {
             const VkvvFormatVariant* format = &cap->formats[j];
             if (!format->hardware_supported || !format->export_wired) {
                 continue;
