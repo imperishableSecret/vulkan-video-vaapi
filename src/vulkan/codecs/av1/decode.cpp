@@ -593,8 +593,8 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     av1_mark_retained_reference_slots(session, input, used_slots);
 
     const bool current_updates_reference_map = input->header.refresh_frame_flags != 0;
-    const bool needs_setup_slot              = session->max_dpb_slots != 0;
-    int        target_dpb_slot               = needs_setup_slot ? av1_select_current_setup_slot(session, target_surface_id, used_slots) : -1;
+    const bool needs_setup_slot              = session->max_dpb_slots != 0 && current_updates_reference_map;
+    int        target_dpb_slot               = needs_setup_slot ? av1_select_current_setup_slot(session, target_surface_id, used_slots, current_updates_reference_map) : -1;
     if (needs_setup_slot && target_dpb_slot < 0) {
         std::snprintf(reason, reason_size, "no free AV1 setup DPB slot for current picture");
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
