@@ -4,6 +4,10 @@
 
 namespace {
 
+    bool profile_capability_advertised(const VkvvProfileCapability* cap) {
+        return vkvv_profile_capability_stage(cap) == VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED;
+    }
+
     bool profile_seen(const VAProfile* profile_list, unsigned int count, VAProfile profile) {
         for (unsigned int i = 0; i < count; i++) {
             if (profile_list[i] == profile) {
@@ -19,7 +23,7 @@ VAStatus vkvvQueryConfigProfiles(VADriverContextP ctx, VAProfile* profile_list, 
     VkvvDriver*  drv   = vkvv_driver_from_ctx(ctx);
     unsigned int count = 0;
     for (unsigned int i = 0; i < drv->profile_cap_count; i++) {
-        if (!drv->profile_caps[i].advertise || profile_seen(profile_list, count, drv->profile_caps[i].profile)) {
+        if (!profile_capability_advertised(&drv->profile_caps[i]) || profile_seen(profile_list, count, drv->profile_caps[i].profile)) {
             continue;
         }
         profile_list[count++] = drv->profile_caps[i].profile;
@@ -38,7 +42,7 @@ VAStatus vkvvQueryConfigEntrypoints(VADriverContextP ctx, VAProfile profile, VAE
     unsigned int count = 0;
     for (unsigned int i = 0; i < drv->profile_cap_count; i++) {
         const VkvvProfileCapability* cap = &drv->profile_caps[i];
-        if (!cap->advertise || cap->profile != profile) {
+        if (!profile_capability_advertised(cap) || cap->profile != profile) {
             continue;
         }
         entrypoint_list[count++] = cap->entrypoint;

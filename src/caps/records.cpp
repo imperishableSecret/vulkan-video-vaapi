@@ -1,5 +1,6 @@
 #include "va/private.h"
 
+#include <cstdio>
 #include <va/va_dec_av1.h>
 #include <vulkan/vulkan.h>
 
@@ -168,7 +169,7 @@ const VkvvProfileCapability* vkvv_profile_capability(const VkvvDriver* drv, VAPr
         return NULL;
     }
     for (unsigned int i = 0; i < drv->profile_cap_count; i++) {
-        if (drv->profile_caps[i].advertise && drv->profile_caps[i].profile == profile) {
+        if (vkvv_profile_capability_stage(&drv->profile_caps[i]) == VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED && drv->profile_caps[i].profile == profile) {
             return &drv->profile_caps[i];
         }
     }
@@ -181,7 +182,7 @@ const VkvvProfileCapability* vkvv_profile_capability_for_entrypoint(const VkvvDr
     }
     for (unsigned int i = 0; i < drv->profile_cap_count; i++) {
         const VkvvProfileCapability* cap = &drv->profile_caps[i];
-        if (cap->advertise && cap->profile == profile && cap->entrypoint == entrypoint) {
+        if (vkvv_profile_capability_stage(cap) == VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED && cap->profile == profile && cap->entrypoint == entrypoint) {
             return cap;
         }
     }
@@ -199,6 +200,58 @@ const VkvvProfileCapability* vkvv_profile_capability_record(const VkvvDriver* dr
         }
     }
     return NULL;
+}
+
+VkvvProfileCapabilityStage vkvv_profile_capability_stage(const VkvvProfileCapability* cap) {
+    if (cap == NULL || !cap->hardware_supported) {
+        return VKVV_PROFILE_CAPABILITY_STAGE_MISSING;
+    }
+    if (!cap->parser_wired) {
+        return VKVV_PROFILE_CAPABILITY_STAGE_PROBED;
+    }
+    if (!cap->runtime_wired) {
+        return VKVV_PROFILE_CAPABILITY_STAGE_PARSER;
+    }
+    if (!cap->surface_wired) {
+        return VKVV_PROFILE_CAPABILITY_STAGE_RUNTIME;
+    }
+    if (!cap->export_wired) {
+        return VKVV_PROFILE_CAPABILITY_STAGE_SURFACE;
+    }
+    if (!cap->advertise) {
+        return VKVV_PROFILE_CAPABILITY_STAGE_EXPORT;
+    }
+    return VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED;
+}
+
+const char* vkvv_profile_capability_stage_name(VkvvProfileCapabilityStage stage) {
+    switch (stage) {
+        case VKVV_PROFILE_CAPABILITY_STAGE_MISSING: return "missing";
+        case VKVV_PROFILE_CAPABILITY_STAGE_PROBED: return "probed";
+        case VKVV_PROFILE_CAPABILITY_STAGE_PARSER: return "parser";
+        case VKVV_PROFILE_CAPABILITY_STAGE_RUNTIME: return "runtime";
+        case VKVV_PROFILE_CAPABILITY_STAGE_SURFACE: return "surface";
+        case VKVV_PROFILE_CAPABILITY_STAGE_EXPORT: return "export";
+        case VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED: return "advertised";
+    }
+    return "unknown";
+}
+
+void vkvv_profile_capability_debug_string(const VkvvProfileCapability* cap, char* out, size_t out_size) {
+    if (out == NULL || out_size == 0) {
+        return;
+    }
+    if (cap == NULL) {
+        std::snprintf(out, out_size, "profile=unknown stage=missing");
+        return;
+    }
+
+    const VkvvProfileCapabilityStage stage = vkvv_profile_capability_stage(cap);
+    std::snprintf(out, out_size,
+                  "profile=%d entrypoint=%d direction=%d codec=0x%x stage=%s hw=%u parser=%u runtime=%u surface=%u export=%u advertise=%u formats=%u rt=0x%x fourcc=0x%x",
+                  cap->profile, cap->entrypoint, cap->direction, cap->vulkan_codec_operation, vkvv_profile_capability_stage_name(stage), cap->hardware_supported ? 1U : 0U,
+                  cap->parser_wired ? 1U : 0U, cap->runtime_wired ? 1U : 0U, cap->surface_wired ? 1U : 0U, cap->export_wired ? 1U : 0U, cap->advertise ? 1U : 0U, cap->format_count,
+                  cap->rt_format, cap->fourcc);
 }
 
 unsigned int vkvv_config_attribute_count(void) {
