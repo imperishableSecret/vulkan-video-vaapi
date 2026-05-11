@@ -189,6 +189,64 @@ namespace {
         return ok;
     }
 
+    bool expect_unimplemented(VAStatus status, const char* operation) {
+        return expect_status(status, VA_STATUS_ERROR_UNIMPLEMENTED, operation);
+    }
+
+    bool check_unsupported_image_entrypoints(VADisplay display) {
+        bool          ok = true;
+        VAImageFormat image_format{};
+        image_format.fourcc         = VA_FOURCC_NV12;
+        image_format.byte_order     = VA_LSB_FIRST;
+        image_format.bits_per_pixel = 12;
+
+        VAImage image{};
+        ok = expect_unimplemented(vaCreateImage(display, &image_format, 64, 64, &image), "vaCreateImage unsupported") && ok;
+        ok = expect_unimplemented(vaDeriveImage(display, VA_INVALID_SURFACE, &image), "vaDeriveImage unsupported") && ok;
+        ok = expect_unimplemented(vaDestroyImage(display, VA_INVALID_ID), "vaDestroyImage unsupported") && ok;
+
+        unsigned char palette[4] = {};
+        ok                       = expect_unimplemented(vaSetImagePalette(display, VA_INVALID_ID, palette), "vaSetImagePalette unsupported") && ok;
+        ok                       = expect_unimplemented(vaGetImage(display, VA_INVALID_SURFACE, 0, 0, 64, 64, VA_INVALID_ID), "vaGetImage unsupported") && ok;
+        ok                       = expect_unimplemented(vaPutImage(display, VA_INVALID_SURFACE, VA_INVALID_ID, 0, 0, 64, 64, 0, 0, 64, 64), "vaPutImage unsupported") && ok;
+        return ok;
+    }
+
+    bool check_unsupported_videoproc_entrypoints(VADisplay display, VAConfigID config) {
+        bool          ok = true;
+
+        VAImageFormat subpicture_formats[4] = {};
+        unsigned int  subpicture_flags[4]   = {};
+        unsigned int  subpicture_count      = 4;
+        ok = expect_unimplemented(vaQuerySubpictureFormats(display, subpicture_formats, subpicture_flags, &subpicture_count), "vaQuerySubpictureFormats unsupported") && ok;
+
+        VASubpictureID subpicture = VA_INVALID_ID;
+        VASurfaceID    surface    = VA_INVALID_SURFACE;
+        ok                        = expect_unimplemented(vaCreateSubpicture(display, VA_INVALID_ID, &subpicture), "vaCreateSubpicture unsupported") && ok;
+        ok                        = expect_unimplemented(vaDestroySubpicture(display, VA_INVALID_ID), "vaDestroySubpicture unsupported") && ok;
+        ok                        = expect_unimplemented(vaSetSubpictureImage(display, VA_INVALID_ID, VA_INVALID_ID), "vaSetSubpictureImage unsupported") && ok;
+        ok                        = expect_unimplemented(vaSetSubpictureChromakey(display, VA_INVALID_ID, 0, 0, 0), "vaSetSubpictureChromakey unsupported") && ok;
+        ok                        = expect_unimplemented(vaSetSubpictureGlobalAlpha(display, VA_INVALID_ID, 1.0F), "vaSetSubpictureGlobalAlpha unsupported") && ok;
+        ok = expect_unimplemented(vaAssociateSubpicture(display, VA_INVALID_ID, &surface, 1, 0, 0, 64, 64, 0, 0, 64, 64, 0), "vaAssociateSubpicture unsupported") && ok;
+        ok = expect_unimplemented(vaDeassociateSubpicture(display, VA_INVALID_ID, &surface, 1), "vaDeassociateSubpicture unsupported") && ok;
+
+        VADisplayAttribute display_attributes[4]   = {};
+        int                display_attribute_count = 4;
+        ok = expect_unimplemented(vaQueryDisplayAttributes(display, display_attributes, &display_attribute_count), "vaQueryDisplayAttributes unsupported") && ok;
+        ok = expect_unimplemented(vaGetDisplayAttributes(display, display_attributes, 1), "vaGetDisplayAttributes unsupported") && ok;
+        ok = expect_unimplemented(vaSetDisplayAttributes(display, display_attributes, 1), "vaSetDisplayAttributes unsupported") && ok;
+
+        VAProcessingRateParameter processing_rate_params{};
+        unsigned int              processing_rate = 0;
+        ok = expect_unimplemented(vaQueryProcessingRate(display, config, &processing_rate_params, &processing_rate), "vaQueryProcessingRate unsupported") && ok;
+
+        VACopyObject dst{};
+        VACopyObject src{};
+        VACopyOption option{};
+        ok = expect_unimplemented(vaCopy(display, &dst, &src, option), "vaCopy unsupported") && ok;
+        return ok;
+    }
+
     bool check_buffer_mapping(VADisplay display) {
         VAConfigAttrib create_attrib{};
         create_attrib.type  = VAConfigAttribRTFormat;
@@ -209,6 +267,25 @@ namespace {
             ok = check_va(vaCreateBuffer(display, context, VAPictureParameterBufferType, 16, 1, nullptr, &param_buffer), "vaCreateBuffer(parameter)") && ok;
             ok = check_va(vaCreateBuffer(display, context, VAEncCodedBufferType, 16, 1, nullptr, &coded_buffer), "vaCreateBuffer(coded)") && ok;
         }
+
+        unsigned int unit_size      = 0;
+        unsigned int pitch          = 0;
+        VABufferID   buffer2        = VA_INVALID_ID;
+        VABufferInfo buffer_info    = {};
+        buffer_info.mem_type        = VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2;
+        VAMFContextID mf_context    = VA_INVALID_ID;
+        VAContextID   mf_contexts[] = {context};
+        if (ok) {
+            ok = expect_unimplemented(vaCreateBuffer2(display, context, VAImageBufferType, 64, 64, &unit_size, &pitch, &buffer2), "vaCreateBuffer2 unsupported") && ok;
+            ok = expect_unimplemented(vaAcquireBufferHandle(display, param_buffer, &buffer_info), "vaAcquireBufferHandle unsupported") && ok;
+            ok = expect_unimplemented(vaReleaseBufferHandle(display, param_buffer), "vaReleaseBufferHandle unsupported") && ok;
+            ok = expect_unimplemented(vaSyncBuffer(display, param_buffer, 0), "vaSyncBuffer unsupported") && ok;
+            ok = expect_unimplemented(vaCreateMFContext(display, &mf_context), "vaCreateMFContext unsupported") && ok;
+            ok = expect_unimplemented(vaMFAddContext(display, VA_INVALID_ID, context), "vaMFAddContext unsupported") && ok;
+            ok = expect_unimplemented(vaMFReleaseContext(display, VA_INVALID_ID, context), "vaMFReleaseContext unsupported") && ok;
+            ok = expect_unimplemented(vaMFSubmit(display, VA_INVALID_ID, mf_contexts, 1), "vaMFSubmit unsupported") && ok;
+        }
+        ok = check_unsupported_videoproc_entrypoints(display, config) && ok;
 
         void* mapped = nullptr;
         if (ok) {
@@ -304,6 +381,7 @@ int main(void) {
         ok = check_va(vaDestroySurfaces(display, &p010_surface, 1), "vaDestroySurfaces(P010)") && ok;
     }
     ok = check_buffer_mapping(display) && ok;
+    ok = check_unsupported_image_entrypoints(display) && ok;
 
     ok = check_va(vaTerminate(display), "vaTerminate") && ok;
     close(fd);
