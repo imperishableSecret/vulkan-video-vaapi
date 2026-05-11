@@ -675,6 +675,13 @@ int main(void) {
     const VkvvProfileCapability* h264_decode = vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointVLD);
     ok = check(h264_decode != nullptr && h264_decode->advertise && h264_decode->direction == VKVV_CODEC_DIRECTION_DECODE, "H.264 VLD should be an advertised decode capability") &&
         ok;
+    ok = check(vkvv_profile_capability_stage(h264_decode) == VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED, "H.264 decode stage should be advertised") && ok;
+    ok = check(std::strcmp(vkvv_profile_capability_stage_name(VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED), "advertised") == 0, "profile stage name should be stable") && ok;
+    char h264_debug[256]{};
+    vkvv_profile_capability_debug_string(h264_decode, h264_debug, sizeof(h264_debug));
+    ok = check(std::strstr(h264_debug, "stage=advertised") != nullptr && std::strstr(h264_debug, "formats=1") != nullptr,
+               "H.264 capability debug string did not include stage and format count") &&
+        ok;
     ok = check(h264_decode != nullptr && h264_decode->format_count == 1 && h264_decode->formats[0].fourcc == VA_FOURCC_NV12,
                "H.264 decode capability should expose one NV12 format variant") &&
         ok;
@@ -690,6 +697,11 @@ int main(void) {
                    vp9_profile2_decode->format_count == 2 && vp9_profile2_decode->formats[0].fourcc == VA_FOURCC_P010 && vp9_profile2_decode->formats[0].advertise &&
                    vp9_profile2_decode->formats[1].fourcc == VA_FOURCC_P012 && !vp9_profile2_decode->formats[1].advertise,
                "VP9 Profile2 should advertise P010 while keeping P012 hidden") &&
+        ok;
+    VAImageFormat      image_formats[4]{};
+    const unsigned int image_format_count = vkvv_query_image_formats(&drv, image_formats, 4);
+    ok                                    = check(image_format_count == 2 && image_formats[0].fourcc == VA_FOURCC_NV12 && image_formats[1].fourcc == VA_FOURCC_P010,
+                                                  "image format query should expose only advertised export formats") &&
         ok;
 
     const VkvvProfileCapability* vp9_profile2_record = vkvv_profile_capability_record(&drv, VAProfileVP9Profile2, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
@@ -735,6 +747,12 @@ int main(void) {
     ok = check(h264_encode != nullptr && h264_encode->hardware_supported && !h264_encode->parser_wired && !h264_encode->runtime_wired && !h264_encode->surface_wired &&
                    !h264_encode->advertise,
                "H.264 encode descriptor should be present but inert") &&
+        ok;
+    ok = check(vkvv_profile_capability_stage(h264_encode) == VKVV_PROFILE_CAPABILITY_STAGE_PROBED, "inert H.264 encode stage should stop at probed") && ok;
+    char encode_debug[256]{};
+    vkvv_profile_capability_debug_string(h264_encode, encode_debug, sizeof(encode_debug));
+    ok = check(std::strstr(encode_debug, "stage=probed") != nullptr && std::strstr(encode_debug, "advertise=0") != nullptr,
+               "encode capability debug string did not expose inert state") &&
         ok;
     ok = check(vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointEncSlice) == nullptr, "H.264 encode entrypoint must not be advertised") && ok;
 
