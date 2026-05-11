@@ -463,8 +463,7 @@ namespace {
             std::fprintf(stderr, "%s\n", reason);
             return false;
         }
-        return check(vkvv::runtime_pending_work_count(runtime) == 0 && runtime->pending_surface == nullptr && surface.work_state == VKVV_SURFACE_WORK_READY &&
-                         surface.sync_status == VA_STATUS_ERROR_OPERATION_FAILED,
+        return check(vkvv::runtime_pending_work_count(runtime) == 0 && surface.work_state == VKVV_SURFACE_WORK_READY && surface.sync_status == VA_STATUS_ERROR_OPERATION_FAILED,
                      "device-lost pending work was not cleared deterministically");
     }
 

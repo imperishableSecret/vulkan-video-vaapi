@@ -217,17 +217,35 @@ namespace vkvv {
         }
     }
 
+    struct PendingWork {
+        VkvvSurface*                surface                = nullptr;
+        VkVideoSessionParametersKHR parameters             = VK_NULL_HANDLE;
+        VkDeviceSize                upload_allocation_size = 0;
+        bool                        refresh_export         = true;
+        CommandUse                  use                    = CommandUse::Idle;
+        char                        operation[64]{};
+    };
+
+    inline bool pending_work_has_payload(const PendingWork& work) {
+        return work.surface != nullptr || work.parameters != VK_NULL_HANDLE;
+    }
+
+    inline bool pending_work_surface_is_destroying(const PendingWork& work) {
+        return work.surface != nullptr && work.surface->destroying;
+    }
+
+    inline void reset_pending_work(PendingWork* work) {
+        if (work != nullptr) {
+            *work = {};
+        }
+    }
+
     struct CommandSlot {
-        VkCommandBuffer             command_buffer                 = VK_NULL_HANDLE;
-        VkFence                     fence                          = VK_NULL_HANDLE;
-        VkvvSurface*                pending_surface                = nullptr;
-        VkVideoSessionParametersKHR pending_parameters             = VK_NULL_HANDLE;
-        VkDeviceSize                pending_upload_allocation_size = 0;
-        bool                        pending_export_refresh         = true;
-        bool                        submitted                      = false;
-        CommandUse                  submitted_use                  = CommandUse::Idle;
-        CommandUse                  pending_use                    = CommandUse::Idle;
-        char                        pending_operation[64]{};
+        VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+        VkFence         fence          = VK_NULL_HANDLE;
+        PendingWork     pending{};
+        bool            submitted     = false;
+        CommandUse      submitted_use = CommandUse::Idle;
     };
 
     struct VideoSessionKey {
@@ -360,12 +378,7 @@ namespace vkvv {
         VkCommandBuffer                                 command_buffer = VK_NULL_HANDLE;
         VkFence                                         fence          = VK_NULL_HANDLE;
         CommandSlot                                     command_slots[command_slot_count];
-        size_t                                          active_command_slot            = 0;
-        VkvvSurface*                                    pending_surface                = nullptr;
-        VkVideoSessionParametersKHR                     pending_parameters             = VK_NULL_HANDLE;
-        VkDeviceSize                                    pending_upload_allocation_size = 0;
-        bool                                            pending_export_refresh         = true;
-        char                                            pending_operation[64]{};
+        size_t                                          active_command_slot = 0;
         // Locking model:
         // - command_mutex protects command slots and pending-work state.
         // - export_mutex protects retained/predecode/seed export registries.
