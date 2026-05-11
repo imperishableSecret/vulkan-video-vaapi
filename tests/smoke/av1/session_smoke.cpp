@@ -271,7 +271,7 @@ namespace {
 
         used_slots[4]               = false;
         const int display_only_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false);
-        if (!check(display_only_slot == -1, "display-only AV1 frame claimed an available scratch setup slot")) {
+        if (!check(display_only_slot == -1, "display-only AV1 frame claimed a real DPB setup slot")) {
             return false;
         }
         if (!check(session.next_dpb_slot == 0, "display-only AV1 frame advanced DPB slot allocation state")) {
