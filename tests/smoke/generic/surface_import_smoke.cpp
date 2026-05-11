@@ -75,7 +75,12 @@ namespace {
         ok &= check(import.external, "external buffer import should be marked external");
         ok &= check(import.fourcc == fourcc_nv12, "external buffer import fourcc mismatch");
         ok &= check(import.width == 1280 && import.height == 720, "external buffer import size mismatch");
+        ok &= check(import.has_drm_format_modifier && import.drm_format_modifier == modifier_linear, "linear external buffer import modifier mismatch");
         ok &= check(fd_identity_matches(import.fd, fd), "external buffer fd identity mismatch");
+
+        descriptor.flags                                     = VA_SURFACE_EXTBUF_DESC_ENABLE_TILING;
+        const VkvvExternalSurfaceImport tiled_unknown_import = vkvv_surface_import_from_attribs(attribs, 2, 0);
+        ok &= check(!tiled_unknown_import.has_drm_format_modifier, "tiled external buffer import should not invent a modifier");
         return ok;
     }
 

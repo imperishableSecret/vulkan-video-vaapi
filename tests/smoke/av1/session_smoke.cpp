@@ -94,9 +94,15 @@ namespace {
 
     bool check_av1_dpb_slots() {
         vkvv::AV1VideoSession session{};
+        session.max_dpb_slots                                     = vkvv::max_av1_dpb_slots;
         bool                  used_slots[vkvv::max_av1_dpb_slots] = {};
 
-        const int             first_slot = vkvv::allocate_av1_dpb_slot(&session, used_slots);
+        vkvv::AV1VideoSession zero_dpb_session{};
+        if (!check(vkvv::allocate_av1_dpb_slot(&zero_dpb_session, used_slots) == -1, "AV1 zero-DPB session claimed a slot")) {
+            return false;
+        }
+
+        const int first_slot = vkvv::allocate_av1_dpb_slot(&session, used_slots);
         if (!check(first_slot == 0, "first AV1 DPB slot allocation did not start at zero")) {
             return false;
         }
@@ -176,6 +182,9 @@ namespace {
                    "AV1 refresh=0 frame incorrectly updated an existing reference")) {
             return false;
         }
+        if (!check(vkvv::av1_surface_slot_for_surface(&session, 999) == nullptr, "AV1 refresh=0 frame incorrectly persisted scratch surface history")) {
+            return false;
+        }
 
         input.header.refresh_frame_flags = 1U << 3;
         for (bool& used : used_slots) {
@@ -249,37 +258,33 @@ namespace {
             used = true;
         }
 
-        const int display_only_full_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false);
-        if (!check(display_only_full_slot == -1, "display-only AV1 frame claimed a DPB setup slot")) {
+        vkvv::AV1VideoSession zero_dpb_session{};
+        const int             zero_dpb_slot = vkvv::av1_select_current_setup_slot(&zero_dpb_session, 77, used_slots);
+        if (!check(zero_dpb_slot == -1, "zero-DPB AV1 session claimed a setup slot")) {
             return false;
         }
 
-        const int full_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
+        const int full_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots);
         if (!check(full_slot == -1, "AV1 target selection claimed a DPB setup slot under full slot pressure")) {
             return false;
         }
 
-        used_slots[4]               = false;
-        const int display_only_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false);
-        if (!check(display_only_slot == -1, "display-only AV1 frame claimed an available scratch setup slot")) {
+        used_slots[4]        = false;
+        const int setup_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots);
+        if (!check(setup_slot == 4, "display-only AV1 frame did not claim an available scratch setup slot")) {
             return false;
         }
-        if (!check(session.next_dpb_slot == 0, "display-only AV1 frame advanced DPB slot allocation state")) {
-            return false;
-        }
-
-        const int reference_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
-        if (!check(reference_slot == 4, "reference AV1 frame did not select the available DPB setup slot")) {
+        if (!check(session.next_dpb_slot == 5, "display-only AV1 setup slot did not advance DPB slot allocation state")) {
             return false;
         }
 
-        vkvv::av1_set_surface_slot(&session, 77, reference_slot, {});
+        vkvv::av1_set_surface_slot(&session, 77, setup_slot, {});
         for (bool& used : used_slots) {
             used = false;
         }
-        used_slots[reference_slot] = true;
-        const int conflicting_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true);
-        return check(conflicting_slot != reference_slot, "AV1 target slot selection reused an already-used target slot");
+        used_slots[setup_slot]     = true;
+        const int conflicting_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots);
+        return check(conflicting_slot != setup_slot, "AV1 target slot selection reused an already-used target slot");
     }
 
     bool check_av1_target_layout_selection() {

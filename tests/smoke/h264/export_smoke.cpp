@@ -570,9 +570,11 @@ namespace {
         }
         status = vkvv_vulkan_export_surface(runtime, &vp9_decoded, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &descriptor, reason, sizeof(reason));
         std::printf("%s\n", reason);
-        const VkvvFdIdentity retained_fd         = vkvv::retained_export_fd_identity(vp9_resource->export_resource);
-        const VkDeviceMemory retained_memory     = vp9_resource->export_resource.memory;
-        const uint64_t       retained_generation = vp9_resource->export_resource.content_generation;
+        const VkvvFdIdentity retained_fd           = vkvv::retained_export_fd_identity(vp9_resource->export_resource);
+        const VkDeviceMemory retained_memory       = vp9_resource->export_resource.memory;
+        const uint64_t       retained_generation   = vp9_resource->export_resource.content_generation;
+        const bool           retained_has_modifier = vp9_resource->export_resource.has_drm_format_modifier;
+        const uint64_t       retained_modifier     = vp9_resource->export_resource.drm_format_modifier;
         if (status != VA_STATUS_SUCCESS || !retained_fd.valid) {
             std::fprintf(stderr, "VP9 source export did not produce a retained fd identity\n");
             cleanup();
@@ -585,11 +587,13 @@ namespace {
             return false;
         }
 
-        imported_nondisplay.import.external = true;
-        imported_nondisplay.import.fd       = retained_fd;
-        imported_nondisplay.import.fourcc   = imported_nondisplay.fourcc;
-        imported_nondisplay.import.width    = imported_nondisplay.width;
-        imported_nondisplay.import.height   = imported_nondisplay.height;
+        imported_nondisplay.import.external                = true;
+        imported_nondisplay.import.fd                      = retained_fd;
+        imported_nondisplay.import.fourcc                  = imported_nondisplay.fourcc;
+        imported_nondisplay.import.width                   = imported_nondisplay.width;
+        imported_nondisplay.import.height                  = imported_nondisplay.height;
+        imported_nondisplay.import.has_drm_format_modifier = retained_has_modifier;
+        imported_nondisplay.import.drm_format_modifier     = retained_modifier;
 
         h264_session = vkvv_vulkan_h264_session_create();
         if (h264_session == nullptr) {

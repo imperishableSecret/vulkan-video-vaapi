@@ -275,11 +275,11 @@ VAStatus vkvvCreateSurfaces2(VADriverContextP ctx, unsigned int format, unsigned
         }
         vkvv_trace("surface-create",
                    "driver=%llu surface=%u stream=%llu codec=0x%x %ux%u fourcc=0x%x rt=0x%x role=0x%x import_mem=0x%x import_external=%u import_fd_stat=%u import_fd_dev=%llu "
-                   "import_fd_ino=%llu import_fourcc=0x%x import_size=%ux%u",
+                   "import_fd_ino=%llu import_fourcc=0x%x import_size=%ux%u import_modifier_valid=%u import_modifier=0x%llx",
                    (unsigned long long)surface->driver_instance_id, surfaces[i], (unsigned long long)surface->stream_id, surface->codec_operation, width, height, surface->fourcc,
                    surface->rt_format, surface->role_flags, surface->import.memory_type, surface->import.external ? 1U : 0U, surface->import.fd.valid ? 1U : 0U,
                    static_cast<unsigned long long>(surface->import.fd.dev), static_cast<unsigned long long>(surface->import.fd.ino), surface->import.fourcc, surface->import.width,
-                   surface->import.height);
+                   surface->import.height, surface->import.has_drm_format_modifier ? 1U : 0U, static_cast<unsigned long long>(surface->import.drm_format_modifier));
         vkvv_log("created surface %u: driver=%llu stream=%llu codec=0x%x %ux%u fourcc=0x%x rt=0x%x", surfaces[i], (unsigned long long)surface->driver_instance_id,
                  (unsigned long long)surface->stream_id, surface->codec_operation, width, height, surface->fourcc, surface->rt_format);
     }
