@@ -234,7 +234,7 @@ void vkvv_surface_complete_work(VkvvSurface* surface, VAStatus status) {
 }
 
 bool vkvv_surface_has_pending_work(const VkvvSurface* surface) {
-    return surface != NULL && surface->work_state == VKVV_SURFACE_WORK_RENDERING;
+    return surface != NULL && !surface->destroying && surface->work_state == VKVV_SURFACE_WORK_RENDERING;
 }
 
 VAStatus vkvvCreateSurfaces2(VADriverContextP ctx, unsigned int format, unsigned int width, unsigned int height, VASurfaceID* surfaces, unsigned int num_surfaces,
@@ -302,16 +302,18 @@ VAStatus vkvvDestroySurfaces(VADriverContextP ctx, VASurfaceID* surface_list, in
         vkvv_trace("surface-destroy", "driver=%llu surface=%u stream=%llu codec=0x%x decoded=%u pending=%u destroying=%u", (unsigned long long)surface->driver_instance_id,
                    surface->id, (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U, vkvv_surface_has_pending_work(surface) ? 1U : 0U,
                    surface->destroying ? 1U : 0U);
-        surface->destroying = true;
         if (drv->vulkan != NULL) {
             if (vkvv_surface_has_pending_work(surface)) {
                 (void)complete_vulkan_surface_work(drv, surface, VA_TIMEOUT_INFINITE);
             }
-            vkvv_vulkan_surface_destroy(drv->vulkan, surface);
         }
         if (vkvv_surface_has_pending_work(surface)) {
             surface->work_state  = VKVV_SURFACE_WORK_READY;
             surface->sync_status = VA_STATUS_ERROR_OPERATION_FAILED;
+        }
+        surface->destroying = true;
+        if (drv->vulkan != NULL) {
+            vkvv_vulkan_surface_destroy(drv->vulkan, surface);
         }
         locked_surface.unlock();
         surface = NULL;

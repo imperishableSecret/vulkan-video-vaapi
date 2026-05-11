@@ -1,5 +1,6 @@
 #include "vulkan/runtime_internal.h"
 
+#include <cstdint>
 #include <cstring>
 #include <cstdlib>
 #include <iostream>
@@ -47,7 +48,21 @@ int main() {
 
     vkvv::CommandSlot slot{};
     ok = check(slot.submitted_use == vkvv::CommandUse::Idle, "command slot submitted-use should default idle") && ok;
-    ok = check(slot.pending_use == vkvv::CommandUse::Idle, "command slot pending-use should default idle") && ok;
+    ok = check(slot.pending.use == vkvv::CommandUse::Idle, "command slot pending-use should default idle") && ok;
+    ok = check(!vkvv::pending_work_has_payload(slot.pending), "empty command slot should not carry pending payload") && ok;
+
+    VkvvSurface surface{};
+    slot.pending.surface    = &surface;
+    slot.pending.parameters = reinterpret_cast<VkVideoSessionParametersKHR>(static_cast<uintptr_t>(1));
+    slot.pending.use        = vkvv::CommandUse::Decode;
+    ok                      = check(vkvv::pending_work_has_payload(slot.pending), "pending-work payload helper missed active work") && ok;
+    ok                      = check(!vkvv::pending_work_surface_is_destroying(slot.pending), "fresh pending surface should not be marked destroying") && ok;
+    surface.destroying      = true;
+    ok                      = check(vkvv::pending_work_surface_is_destroying(slot.pending), "pending-work helper missed destroying surface") && ok;
+    vkvv::reset_pending_work(&slot.pending);
+    ok = check(!vkvv::pending_work_has_payload(slot.pending) && slot.pending.use == vkvv::CommandUse::Idle && slot.pending.refresh_export,
+               "pending-work reset did not restore defaults") &&
+        ok;
 
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
