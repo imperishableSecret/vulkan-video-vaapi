@@ -449,7 +449,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if ((session->decode_flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR) == 0) {
-        std::snprintf(reason, reason_size, "AV1 decode requires coincident DPB/output support in this prototype");
+        std::snprintf(reason, reason_size, "AV1 decode requires coincident DPB/output support");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
 
