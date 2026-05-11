@@ -1,5 +1,6 @@
 #include "vulkan/runtime_internal.h"
 
+#include <cstring>
 #include <cstdlib>
 #include <iostream>
 
@@ -37,6 +38,16 @@ int main() {
     h264->completed.fetch_add(1, std::memory_order_relaxed);
     ok = check(counters.h264_decode.submitted.load(std::memory_order_relaxed) == 1, "codec submitted counter failed") && ok;
     ok = check(counters.h264_decode.completed.load(std::memory_order_relaxed) == 1, "codec completed counter failed") && ok;
+
+    ok = check(std::strcmp(vkvv::command_use_name(vkvv::CommandUse::Idle), "idle") == 0, "idle command-use label failed") && ok;
+    ok = check(std::strcmp(vkvv::command_use_name(vkvv::CommandUse::Decode), "decode") == 0, "decode command-use label failed") && ok;
+    ok = check(std::strcmp(vkvv::command_use_name(vkvv::CommandUse::Export), "export") == 0, "export command-use label failed") && ok;
+    ok = check(std::strcmp(vkvv::command_use_name(vkvv::CommandUse::SessionReset), "session-reset") == 0, "session-reset command-use label failed") && ok;
+    ok = check(std::strcmp(vkvv::command_use_name(vkvv::CommandUse::Encode), "encode") == 0, "encode command-use label failed") && ok;
+
+    vkvv::CommandSlot slot{};
+    ok = check(slot.submitted_use == vkvv::CommandUse::Idle, "command slot submitted-use should default idle") && ok;
+    ok = check(slot.pending_use == vkvv::CommandUse::Idle, "command slot pending-use should default idle") && ok;
 
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -226,7 +226,7 @@ namespace vkvv {
             if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "export shadow init", reason, reason_size)) {
                 return false;
             }
-            if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "export shadow init")) {
+            if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "export shadow init", CommandUse::Export)) {
                 return false;
             }
 
@@ -885,7 +885,7 @@ namespace vkvv {
         if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "surface export copy", reason, reason_size)) {
             return false;
         }
-        if (!submit_command_buffer(runtime, reason, reason_size, "surface export copy")) {
+        if (!submit_command_buffer(runtime, reason, reason_size, "surface export copy", CommandUse::Export)) {
             return false;
         }
         const bool perf_enabled = vkvv_perf_enabled();

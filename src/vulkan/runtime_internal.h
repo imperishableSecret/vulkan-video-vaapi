@@ -198,6 +198,25 @@ namespace vkvv {
         bool           coherent         = true;
     };
 
+    enum class CommandUse {
+        Idle,
+        Decode,
+        Export,
+        SessionReset,
+        Encode,
+    };
+
+    inline const char* command_use_name(CommandUse use) {
+        switch (use) {
+            case CommandUse::Idle: return "idle";
+            case CommandUse::Decode: return "decode";
+            case CommandUse::Export: return "export";
+            case CommandUse::SessionReset: return "session-reset";
+            case CommandUse::Encode: return "encode";
+            default: return "unknown";
+        }
+    }
+
     struct CommandSlot {
         VkCommandBuffer             command_buffer                 = VK_NULL_HANDLE;
         VkFence                     fence                          = VK_NULL_HANDLE;
@@ -206,6 +225,8 @@ namespace vkvv {
         VkDeviceSize                pending_upload_allocation_size = 0;
         bool                        pending_export_refresh         = true;
         bool                        submitted                      = false;
+        CommandUse                  submitted_use                  = CommandUse::Idle;
+        CommandUse                  pending_use                    = CommandUse::Idle;
         char                        pending_operation[64]{};
     };
 
@@ -427,9 +448,9 @@ namespace vkvv {
     bool     ensure_bitstream_upload_buffer(VulkanRuntime* runtime, const VideoProfileSpec& profile_spec, const void* data, size_t data_size, VkDeviceSize size_alignment,
                                             VkBufferUsageFlags usage, UploadBuffer* upload, const char* label, char* reason, size_t reason_size);
     bool     ensure_command_resources(VulkanRuntime* runtime, char* reason, size_t reason_size);
-    bool     submit_command_buffer(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation);
+    bool     submit_command_buffer(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation, CommandUse use = CommandUse::Decode);
     bool     wait_for_command_fence(VulkanRuntime* runtime, uint64_t timeout_ns, char* reason, size_t reason_size, const char* operation);
-    bool     submit_command_buffer_and_wait(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation);
+    bool     submit_command_buffer_and_wait(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation, CommandUse use = CommandUse::Decode);
     void     track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool refresh_export,
                                   const char* operation);
     size_t   runtime_pending_work_count(VulkanRuntime* runtime);
