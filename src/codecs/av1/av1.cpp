@@ -1,5 +1,6 @@
 #include "av1.h"
 #include "codecs/storage.h"
+#include "telemetry.h"
 
 #ifndef GST_USE_UNSTABLE_API
 #define GST_USE_UNSTABLE_API
@@ -484,44 +485,44 @@ VAStatus vkvv_av1_render_buffer(void* state, const VkvvBuffer* buffer) {
 VAStatus vkvv_av1_prepare_decode(void* state, unsigned int* width, unsigned int* height, char* reason, size_t reason_size) {
     auto* av1 = static_cast<AV1State*>(state);
     if (av1 == nullptr) {
-        std::snprintf(reason, reason_size, "missing AV1 state");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_CONTEXT, "missing AV1 state");
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
     if (!av1->has_pic) {
-        std::snprintf(reason, reason_size, "missing AV1 picture parameters");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing AV1 picture parameters");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (!av1->has_slice_data) {
-        std::snprintf(reason, reason_size, "missing AV1 slice data");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing AV1 slice data");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (!av1->pending_slices.empty()) {
-        std::snprintf(reason, reason_size, "missing AV1 slice data for pending tile parameters");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing AV1 slice data for pending tile parameters");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (av1->pic.profile != 0) {
-        std::snprintf(reason, reason_size, "AV1 path currently supports only Profile0/Main");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_PROFILE, "AV1 path currently supports only Profile0/Main");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
     const uint8_t bit_depth = av1_bit_depth(av1->pic);
     if (!av1_supported_bit_depth(bit_depth)) {
-        std::snprintf(reason, reason_size, "AV1 path currently supports only 8-bit NV12 and 10-bit P010 decode");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_PROFILE, "AV1 path currently supports only 8-bit NV12 and 10-bit P010 decode");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
     if (av1->pic.seq_info_fields.fields.mono_chrome || !av1->pic.seq_info_fields.fields.subsampling_x || !av1->pic.seq_info_fields.fields.subsampling_y) {
-        std::snprintf(reason, reason_size, "AV1 path currently supports only 4:2:0");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT, "AV1 path currently supports only 4:2:0");
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
     if (av1->pic.pic_info_fields.bits.large_scale_tile) {
-        std::snprintf(reason, reason_size, "AV1 large-scale tile mode is not implemented");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNIMPLEMENTED, "AV1 large-scale tile mode is not implemented");
         return VA_STATUS_ERROR_UNIMPLEMENTED;
     }
     if (av1->pic.film_grain_info.film_grain_info_fields.bits.apply_grain) {
-        std::snprintf(reason, reason_size, "AV1 film grain output is not implemented yet");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNIMPLEMENTED, "AV1 film grain output is not implemented yet");
         return VA_STATUS_ERROR_UNIMPLEMENTED;
     }
     if (av1->pic.frame_width_minus1 == std::numeric_limits<uint16_t>::max() || av1->pic.frame_height_minus1 == std::numeric_limits<uint16_t>::max()) {
-        std::snprintf(reason, reason_size, "AV1 picture dimensions are invalid");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "AV1 picture dimensions are invalid");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (!sort_and_validate_tiles(av1, reason, reason_size)) {
@@ -531,7 +532,7 @@ VAStatus vkvv_av1_prepare_decode(void* state, unsigned int* width, unsigned int*
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (av1->header.show_existing_frame) {
-        std::snprintf(reason, reason_size, "AV1 show-existing-frame is not implemented yet");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNIMPLEMENTED, "AV1 show-existing-frame is not implemented yet");
         return VA_STATUS_ERROR_UNIMPLEMENTED;
     }
     uint32_t window_offset = 0;
@@ -545,12 +546,13 @@ VAStatus vkvv_av1_prepare_decode(void* state, unsigned int* width, unsigned int*
     if (!av1->decode_tiles.empty()) {
         first_tile_offset = av1->decode_tiles[0].offset;
     }
-    std::snprintf(reason, reason_size,
-                  "captured AV1 picture: %ux%u profile=%u depth=%u fourcc=0x%x tiles=%zu bitstream=%zu decode=%zu window=%u frame=%u show=%u hdr_existing=%u hdr_show=%u "
-                  "hdr_showable=%u refresh=0x%02x header=%u tile0=%u q=%u",
-                  *width, *height, av1->pic.profile, bit_depth, av1_fourcc(bit_depth), av1->decode_tiles.size(), av1->bitstream.size(), av1->decode_window_size, window_offset,
-                  av1->pic.pic_info_fields.bits.frame_type, av1->pic.pic_info_fields.bits.show_frame, av1->header.show_existing_frame ? 1U : 0U, av1->header.show_frame ? 1U : 0U,
-                  av1->header.showable_frame ? 1U : 0U, av1->header.refresh_frame_flags, av1->header.frame_header_offset, first_tile_offset, av1->pic.base_qindex);
+    VKVV_SUCCESS_REASON(reason, reason_size,
+                        "captured AV1 picture: %ux%u profile=%u depth=%u fourcc=0x%x tiles=%zu bitstream=%zu decode=%zu window=%u frame=%u show=%u hdr_existing=%u hdr_show=%u "
+                        "hdr_showable=%u refresh=0x%02x header=%u tile0=%u q=%u",
+                        *width, *height, av1->pic.profile, bit_depth, av1_fourcc(bit_depth), av1->decode_tiles.size(), av1->bitstream.size(), av1->decode_window_size,
+                        window_offset, av1->pic.pic_info_fields.bits.frame_type, av1->pic.pic_info_fields.bits.show_frame, av1->header.show_existing_frame ? 1U : 0U,
+                        av1->header.show_frame ? 1U : 0U, av1->header.showable_frame ? 1U : 0U, av1->header.refresh_frame_flags, av1->header.frame_header_offset, first_tile_offset,
+                        av1->pic.base_qindex);
     return VA_STATUS_SUCCESS;
 }
 
