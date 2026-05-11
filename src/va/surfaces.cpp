@@ -241,6 +241,9 @@ VAStatus vkvvCreateSurfaces2(VADriverContextP ctx, unsigned int format, unsigned
                              VASurfaceAttrib* attrib_list, unsigned int num_attribs) {
     VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
     trace_create_surface_attribs(drv != NULL ? drv->driver_instance_id : 0, format, width, height, num_surfaces, attrib_list, num_attribs);
+    if (drv == NULL) {
+        return VA_STATUS_ERROR_INVALID_CONTEXT;
+    }
     const unsigned int selected_format = vkvv_select_driver_rt_format(drv, format);
     if (selected_format == 0) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;

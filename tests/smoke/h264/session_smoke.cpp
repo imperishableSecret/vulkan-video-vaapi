@@ -495,7 +495,9 @@ namespace {
 int main(void) {
     bool ok = check_h264_dpb_slots();
     ok      = check_null_runtime_upload_destroy_clears_state() && ok;
-    ok      = check_predecode_record_validation() && ok;
+    if (!check_predecode_record_validation()) {
+        ok = false;
+    }
 
     char  reason[512] = {};
     void* runtime     = vkvv_vulkan_runtime_create(reason, sizeof(reason));
@@ -504,7 +506,7 @@ int main(void) {
         return 1;
     }
     auto* typed_runtime = static_cast<vkvv::VulkanRuntime*>(runtime);
-    ok                  = check(typed_runtime->decode_queue_family != vkvv::invalid_queue_family, "runtime did not select a decode queue family");
+    ok                  = check(typed_runtime->decode_queue_family != vkvv::invalid_queue_family, "runtime did not select a decode queue family") && ok;
     ok = check((typed_runtime->enabled_decode_operations & VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) != 0, "runtime did not enable H.264 through codec-driven selection") && ok;
     ok = check((typed_runtime->probed_decode_operations & VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) != 0, "runtime did not record probed H.264 decode support") && ok;
     ok = check(typed_runtime->enabled_encode_operations == 0 && typed_runtime->probed_encode_operations == 0,
