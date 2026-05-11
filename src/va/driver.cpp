@@ -96,7 +96,7 @@ static VAStatus vkvvTerminate(VADriverContextP ctx) {
 }
 
 enum class UnsupportedVADomain {
-    DecodeMvp,
+    DecodeSurfaceInterop,
     Encode,
     VideoProc,
     Legacy,
@@ -136,7 +136,7 @@ static struct VADriverVTable make_vtable(void) {
     vt.vaSyncSurface              = vkvvSyncSurface;
     vt.vaQuerySurfaceStatus       = vkvvQuerySurfaceStatus;
     vt.vaQuerySurfaceError        = vkvvQuerySurfaceError;
-    vt.vaPutSurface               = unsupported_callback<UnsupportedVADomain::DecodeMvp>(vt.vaPutSurface);
+    vt.vaPutSurface               = unsupported_callback<UnsupportedVADomain::DecodeSurfaceInterop>(vt.vaPutSurface);
     vt.vaQueryImageFormats        = vkvvQueryImageFormats;
     vt.vaCreateImage              = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaCreateImage);
     vt.vaDeriveImage              = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaDeriveImage);
@@ -156,8 +156,8 @@ static struct VADriverVTable make_vtable(void) {
     vt.vaGetDisplayAttributes     = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaGetDisplayAttributes);
     vt.vaSetDisplayAttributes     = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaSetDisplayAttributes);
     vt.vaBufferInfo               = vkvvBufferInfo;
-    vt.vaLockSurface              = unsupported_callback<UnsupportedVADomain::DecodeMvp>(vt.vaLockSurface);
-    vt.vaUnlockSurface            = unsupported_callback<UnsupportedVADomain::DecodeMvp>(vt.vaUnlockSurface);
+    vt.vaLockSurface              = unsupported_callback<UnsupportedVADomain::DecodeSurfaceInterop>(vt.vaLockSurface);
+    vt.vaUnlockSurface            = unsupported_callback<UnsupportedVADomain::DecodeSurfaceInterop>(vt.vaUnlockSurface);
     vt.vaCreateSurfaces2          = vkvvCreateSurfaces2;
     vt.vaQuerySurfaceAttributes   = vkvvQuerySurfaceAttributes;
     vt.vaAcquireBufferHandle      = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaAcquireBufferHandle);
@@ -225,7 +225,7 @@ static VAStatus              vkvvDriverInit(VADriverContextP ctx) {
     ctx->max_image_formats      = VKVV_MAX_IMAGE_FORMATS;
     ctx->max_subpic_formats     = VKVV_MAX_SUBPIC_FORMATS;
     ctx->max_display_attributes = VKVV_MAX_DISPLAY_ATTRIBUTES;
-    ctx->str_vendor             = "NVIDIA Vulkan Video VA-API prototype " VKVV_VERSION;
+    ctx->str_vendor             = "NVIDIA Vulkan Video VA-API driver " VKVV_VERSION;
 
     vkvv_log("%s", drv->caps.summary);
     return VA_STATUS_SUCCESS;

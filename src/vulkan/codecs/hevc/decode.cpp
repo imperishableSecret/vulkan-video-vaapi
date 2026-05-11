@@ -81,7 +81,7 @@ VAStatus vkvv_vulkan_decode_hevc(void* runtime_ptr, void* session_ptr, VkvvDrive
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
     if ((session->decode_flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR) == 0) {
-        std::snprintf(reason, reason_size, "HEVC decode requires coincident DPB/output support in this prototype");
+        std::snprintf(reason, reason_size, "HEVC decode requires coincident DPB/output support");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
 
