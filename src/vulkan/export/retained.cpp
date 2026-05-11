@@ -1,4 +1,5 @@
 #include "vulkan/runtime_internal.h"
+#include "va/surface_import.h"
 
 #include <algorithm>
 #include <mutex>
@@ -29,26 +30,44 @@ namespace vkvv {
         return identity;
     }
 
+    VkvvExternalImageIdentity retained_export_image_identity(const ExportResource& resource) {
+        VkvvExternalImageIdentity identity{};
+        identity.fd                      = retained_export_fd_identity(resource);
+        identity.fourcc                  = resource.va_fourcc;
+        identity.width                   = resource.extent.width;
+        identity.height                  = resource.extent.height;
+        identity.has_drm_format_modifier = resource.has_drm_format_modifier;
+        identity.drm_format_modifier     = resource.drm_format_modifier;
+        return identity;
+    }
+
     RetainedExportMatch retained_export_match_import(const RetainedExportBacking& backing, const VkvvExternalSurfaceImport& import, unsigned int va_fourcc, VkFormat format,
                                                      VkExtent2D coded_extent) {
         if (!import.external) {
             return RetainedExportMatch::MissingImport;
         }
-        if (!import.fd.valid || !backing.fd.valid) {
+        const ExportResource&           resource     = backing.resource;
+        const VkvvExternalImageIdentity import_key   = vkvv_external_image_identity_from_import(import);
+        const VkvvExternalImageIdentity retained_key = retained_export_image_identity(resource);
+
+        if (!import_key.fd.valid || !retained_key.fd.valid) {
             return RetainedExportMatch::MissingFd;
         }
-        if (backing.fd.dev != import.fd.dev || backing.fd.ino != import.fd.ino) {
+        if (!vkvv_fd_identity_equal(retained_key.fd, import_key.fd)) {
             return RetainedExportMatch::FdMismatch;
         }
 
-        const ExportResource& resource = backing.resource;
-        if (resource.va_fourcc != va_fourcc) {
+        if ((import_key.fourcc != 0 && import_key.fourcc != va_fourcc) || retained_key.fourcc != va_fourcc) {
             return RetainedExportMatch::FourccMismatch;
+        }
+        if (retained_key.has_drm_format_modifier != import_key.has_drm_format_modifier ||
+            (retained_key.has_drm_format_modifier && retained_key.drm_format_modifier != import_key.drm_format_modifier)) {
+            return RetainedExportMatch::ModifierMismatch;
         }
         if (resource.format != format) {
             return RetainedExportMatch::FormatMismatch;
         }
-        if (resource.extent.width < coded_extent.width || resource.extent.height < coded_extent.height) {
+        if (retained_key.width < coded_extent.width || retained_key.height < coded_extent.height) {
             return RetainedExportMatch::ExtentMismatch;
         }
         return RetainedExportMatch::Match;
@@ -61,6 +80,7 @@ namespace vkvv {
             case RetainedExportMatch::MissingFd: return "missing-fd";
             case RetainedExportMatch::FdMismatch: return "fd-mismatch";
             case RetainedExportMatch::FourccMismatch: return "fourcc-mismatch";
+            case RetainedExportMatch::ModifierMismatch: return "modifier-mismatch";
             case RetainedExportMatch::FormatMismatch: return "format-mismatch";
             case RetainedExportMatch::ExtentMismatch: return "extent-mismatch";
         }

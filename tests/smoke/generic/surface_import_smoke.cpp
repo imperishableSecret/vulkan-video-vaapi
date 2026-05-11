@@ -7,8 +7,9 @@
 
 namespace {
 
-    constexpr unsigned int fourcc_nv12 = 0x3231564e;
-    constexpr unsigned int fourcc_p010 = 0x30313050;
+    constexpr unsigned int fourcc_nv12     = 0x3231564e;
+    constexpr unsigned int fourcc_p010     = 0x30313050;
+    constexpr uint64_t     modifier_linear = 0;
 
     bool                   check(bool condition, const char* message) {
         if (!condition) {
@@ -80,11 +81,12 @@ namespace {
 
     bool check_drm_prime2_import_index(int fd) {
         VADRMPRIMESurfaceDescriptor descriptors[2]{};
-        descriptors[1].fourcc        = fourcc_p010;
-        descriptors[1].width         = 3840;
-        descriptors[1].height        = 2160;
-        descriptors[1].num_objects   = 1;
-        descriptors[1].objects[0].fd = fd;
+        descriptors[1].fourcc                         = fourcc_p010;
+        descriptors[1].width                          = 3840;
+        descriptors[1].height                         = 2160;
+        descriptors[1].num_objects                    = 1;
+        descriptors[1].objects[0].fd                  = fd;
+        descriptors[1].objects[0].drm_format_modifier = modifier_linear;
 
         VASurfaceAttrib attribs[2]{};
         set_integer_attrib(&attribs[0], VASurfaceAttribMemoryType, VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2);
@@ -96,7 +98,12 @@ namespace {
         ok &= check(import.memory_type == VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2, "DRM_PRIME_2 memory type mismatch");
         ok &= check(import.fourcc == fourcc_p010, "DRM_PRIME_2 fourcc mismatch");
         ok &= check(import.width == 3840 && import.height == 2160, "DRM_PRIME_2 indexed descriptor size mismatch");
+        ok &= check(import.has_drm_format_modifier && import.drm_format_modifier == modifier_linear, "DRM_PRIME_2 modifier identity mismatch");
         ok &= check(fd_identity_matches(import.fd, fd), "DRM_PRIME_2 fd identity mismatch");
+        const VkvvExternalImageIdentity identity = vkvv_external_image_identity_from_import(import);
+        ok &= check(identity.fourcc == import.fourcc && identity.width == import.width && identity.height == import.height &&
+                        identity.has_drm_format_modifier == import.has_drm_format_modifier && identity.drm_format_modifier == import.drm_format_modifier,
+                    "external image identity did not preserve import key fields");
         return ok;
     }
 

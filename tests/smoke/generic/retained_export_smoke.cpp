@@ -1,4 +1,5 @@
 #include "vulkan/runtime_internal.h"
+#include "va/surface_import.h"
 
 #include <cstdio>
 #include <string_view>
@@ -11,10 +12,12 @@ namespace vkvv {
 
 namespace {
 
-    constexpr unsigned int                  fourcc_nv12 = 0x3231564e;
-    constexpr unsigned int                  fourcc_p010 = 0x30313050;
-    constexpr VkVideoCodecOperationFlagsKHR codec_vp9   = VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR;
-    constexpr VkVideoCodecOperationFlagsKHR codec_av1   = VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR;
+    constexpr unsigned int                  fourcc_nv12       = 0x3231564e;
+    constexpr unsigned int                  fourcc_p010       = 0x30313050;
+    constexpr uint64_t                      modifier_linear   = 0;
+    constexpr uint64_t                      modifier_mismatch = 1;
+    constexpr VkVideoCodecOperationFlagsKHR codec_vp9         = VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR;
+    constexpr VkVideoCodecOperationFlagsKHR codec_av1         = VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR;
 
     bool                                    check(bool condition, const char* message) {
         if (!condition) {
@@ -25,26 +28,30 @@ namespace {
 
     vkvv::RetainedExportBacking make_backing() {
         vkvv::RetainedExportBacking backing{};
-        backing.resource.fd_stat_valid   = true;
-        backing.resource.fd_dev          = 100;
-        backing.resource.fd_ino          = 200;
-        backing.resource.va_fourcc       = fourcc_nv12;
-        backing.resource.format          = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
-        backing.resource.extent          = {1920, 1088};
-        backing.resource.allocation_size = 1920 * 1088 * 3 / 2;
-        backing.fd                       = vkvv::retained_export_fd_identity(backing.resource);
+        backing.resource.fd_stat_valid           = true;
+        backing.resource.fd_dev                  = 100;
+        backing.resource.fd_ino                  = 200;
+        backing.resource.va_fourcc               = fourcc_nv12;
+        backing.resource.format                  = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+        backing.resource.extent                  = {1920, 1088};
+        backing.resource.allocation_size         = 1920 * 1088 * 3 / 2;
+        backing.resource.has_drm_format_modifier = true;
+        backing.resource.drm_format_modifier     = modifier_linear;
+        backing.fd                               = vkvv::retained_export_fd_identity(backing.resource);
         return backing;
     }
 
     VkvvExternalSurfaceImport make_import() {
         VkvvExternalSurfaceImport import{};
-        import.external = true;
-        import.fd.valid = true;
-        import.fd.dev   = 100;
-        import.fd.ino   = 200;
-        import.fourcc   = fourcc_nv12;
-        import.width    = 1920;
-        import.height   = 1080;
+        import.external                = true;
+        import.fd.valid                = true;
+        import.fd.dev                  = 100;
+        import.fd.ino                  = 200;
+        import.fourcc                  = fourcc_nv12;
+        import.width                   = 1920;
+        import.height                  = 1080;
+        import.has_drm_format_modifier = true;
+        import.drm_format_modifier     = modifier_linear;
         return import;
     }
 
@@ -149,6 +156,13 @@ namespace {
         ok &= check(!vkvv::retained_export_matches_window(placeholder_seed, decode_window), "placeholder seed should not match active decode window");
         ok &= check(!vkvv::retained_export_seed_can_replace_window(decode_window, placeholder_seed), "placeholder seed should not replace active decode window");
 
+        vkvv::ExportResource same_extent_different_codec = make_window_seed(codec_av1, 1);
+        ok &= check(!vkvv::retained_export_matches_window(same_extent_different_codec, decode_window), "same extent with different codec should not match retention window");
+
+        vkvv::ExportResource same_surface_different_extent = make_window_seed(codec_vp9, 1);
+        same_surface_different_extent.extent               = {1920, 1080};
+        ok &= check(!vkvv::retained_export_matches_window(same_surface_different_extent, decode_window), "same stream with different extent should not match retention window");
+
         vkvv::ExportResource av1_seed = make_window_seed(codec_av1, 2);
         av1_seed.driver_instance_id   = 3;
         ok &= check(vkvv::retained_export_seed_can_replace_window(decode_window, av1_seed), "new decode stream should be allowed to replace active retention window");
@@ -207,6 +221,10 @@ int main() {
 
     bool                              ok = true;
     ok &= check(backing.fd.valid && backing.fd.dev == 100 && backing.fd.ino == 200, "retained fd identity was not copied from export resource");
+    const VkvvExternalImageIdentity retained_key = vkvv::retained_export_image_identity(backing.resource);
+    ok &= check(vkvv_fd_identity_equal(retained_key.fd, backing.fd) && retained_key.fourcc == fourcc_nv12 && retained_key.width == 1920 && retained_key.height == 1088 &&
+                    retained_key.has_drm_format_modifier && retained_key.drm_format_modifier == modifier_linear,
+                "retained export image identity did not preserve key fields");
     ok &= expect_match(backing, import, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088}, vkvv::RetainedExportMatch::Match, "matching import");
 
     import.external = false;
@@ -219,6 +237,22 @@ int main() {
     import = make_import();
     ok &= expect_match(backing, import, fourcc_p010, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088}, vkvv::RetainedExportMatch::FourccMismatch, "wrong fourcc");
 
+    import        = make_import();
+    import.fourcc = fourcc_p010;
+    ok &= expect_match(backing, import, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088}, vkvv::RetainedExportMatch::FourccMismatch,
+                       "same fd with mismatched import fourcc");
+
+    import                     = make_import();
+    import.drm_format_modifier = modifier_mismatch;
+    ok &= expect_match(backing, import, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088}, vkvv::RetainedExportMatch::ModifierMismatch,
+                       "same fd with mismatched modifier");
+
+    import                         = make_import();
+    import.has_drm_format_modifier = false;
+    ok &=
+        expect_match(backing, import, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088}, vkvv::RetainedExportMatch::ModifierMismatch, "same fd with missing modifier");
+
+    import = make_import();
     ok &= expect_match(backing, import, fourcc_nv12, VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16, {1920, 1088}, vkvv::RetainedExportMatch::FormatMismatch,
                        "wrong Vulkan format");
 
