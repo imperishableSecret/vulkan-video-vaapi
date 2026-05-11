@@ -163,9 +163,20 @@ struct VkvvExternalSurfaceImport {
     bool           external    = false;
     uint32_t       memory_type = 0;
     VkvvFdIdentity fd;
-    unsigned int   fourcc = 0;
-    unsigned int   width  = 0;
-    unsigned int   height = 0;
+    unsigned int   fourcc                  = 0;
+    unsigned int   width                   = 0;
+    unsigned int   height                  = 0;
+    bool           has_drm_format_modifier = false;
+    uint64_t       drm_format_modifier     = 0;
+};
+
+struct VkvvExternalImageIdentity {
+    VkvvFdIdentity fd;
+    unsigned int   fourcc                  = 0;
+    unsigned int   width                   = 0;
+    unsigned int   height                  = 0;
+    bool           has_drm_format_modifier = false;
+    uint64_t       drm_format_modifier     = 0;
 };
 
 typedef struct VkvvSurface {

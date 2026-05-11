@@ -242,6 +242,7 @@ retained_export_smoke = executable(
   'vkvv-retained-export-smoke',
   files(
     'tests/smoke/generic/retained_export_smoke.cpp',
+    'src/va/surface_import.cpp',
     'src/vulkan/export/retained.cpp',
   ),
   include_directories: src_inc,

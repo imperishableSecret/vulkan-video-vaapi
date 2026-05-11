@@ -4,6 +4,7 @@
 #include "codecs/hevc/hevc.h"
 #include "codecs/vp9/vp9.h"
 #include "vulkan/formats.h"
+#include "vulkan/runtime_internal.h"
 
 #include <cstdio>
 #include <cstring>
@@ -80,6 +81,51 @@ namespace {
             ok;
 
         ok = check(!vkvv::choose_decode_format_from_properties(nullptr, 0, preferred, true, &selection), "decode format selection accepted an empty property list") && ok;
+        return ok;
+    }
+
+    vkvv::DecodeImageKey make_decode_key(VkVideoCodecOperationFlagsKHR codec, VkFormat format, unsigned int fourcc, VkExtent2D extent) {
+        vkvv::DecodeImageKey key{};
+        key.codec_operation          = codec;
+        key.codec_profile            = 0;
+        key.picture_format           = format;
+        key.reference_picture_format = format;
+        key.va_rt_format             = fourcc == VA_FOURCC_P010 ? VA_RT_FORMAT_YUV420_10 : VA_RT_FORMAT_YUV420;
+        key.va_fourcc                = fourcc;
+        key.coded_extent             = extent;
+        key.usage                    = VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR;
+        key.tiling                   = VK_IMAGE_TILING_OPTIMAL;
+        key.chroma_subsampling       = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR;
+        key.luma_bit_depth           = fourcc == VA_FOURCC_P010 ? VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR : VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
+        key.chroma_bit_depth         = key.luma_bit_depth;
+        return key;
+    }
+
+    bool check_decode_image_key_matching() {
+        const vkvv::DecodeImageKey h264 = make_decode_key(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, VA_FOURCC_NV12, {1920, 1088});
+
+        bool                       ok = check(vkvv::decode_image_key_matches(h264, h264), "identical decode image keys should match");
+
+        vkvv::DecodeImageKey       vp9_same_extent = h264;
+        vp9_same_extent.codec_operation            = VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR;
+        ok &= check(!vkvv::decode_image_key_matches(h264, vp9_same_extent), "same extent with different codec should not reuse a decode image");
+
+        vkvv::DecodeImageKey p010_same_extent     = h264;
+        p010_same_extent.picture_format           = VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
+        p010_same_extent.reference_picture_format = p010_same_extent.picture_format;
+        p010_same_extent.va_rt_format             = VA_RT_FORMAT_YUV420_10;
+        p010_same_extent.va_fourcc                = VA_FOURCC_P010;
+        p010_same_extent.luma_bit_depth           = VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR;
+        p010_same_extent.chroma_bit_depth         = VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR;
+        ok &= check(!vkvv::decode_image_key_matches(h264, p010_same_extent), "same extent with different format should not reuse a decode image");
+
+        vkvv::DecodeImageKey larger_extent = h264;
+        larger_extent.coded_extent         = {3840, 2160};
+        ok &= check(!vkvv::decode_image_key_matches(h264, larger_extent), "smaller decode image should not match larger requested extent");
+
+        vkvv::DecodeImageKey smaller_extent = h264;
+        smaller_extent.coded_extent         = {1280, 720};
+        ok &= check(vkvv::decode_image_key_matches(h264, smaller_extent), "larger decode image should be reusable for a smaller requested extent");
         return ok;
     }
 
@@ -548,6 +594,7 @@ int main(void) {
     bool ok = true;
 
     ok = check_decode_format_selection() && ok;
+    ok = check_decode_image_key_matching() && ok;
 
     const VkvvDecodeOps* h264 = vkvv_decode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointVLD);
     ok                        = check(ops_complete(h264), "H.264 decode ops are incomplete") && ok;
