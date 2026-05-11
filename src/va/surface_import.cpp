@@ -1,6 +1,7 @@
 #include "va/surface_import.h"
 
 #include <cstdint>
+#include <drm/drm_fourcc.h>
 #include <sys/stat.h>
 
 namespace {
@@ -98,6 +99,10 @@ VkvvExternalSurfaceImport vkvv_surface_import_from_attribs(const VASurfaceAttrib
         info.fourcc                                        = descriptor.pixel_format;
         info.width                                         = descriptor.width;
         info.height                                        = descriptor.height;
+        if ((descriptor.flags & VA_SURFACE_EXTBUF_DESC_ENABLE_TILING) == 0) {
+            info.has_drm_format_modifier = true;
+            info.drm_format_modifier     = DRM_FORMAT_MOD_LINEAR;
+        }
     }
 
     info.fd = vkvv_fd_identity_from_fd(fd);

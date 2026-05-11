@@ -150,7 +150,10 @@ namespace vkvv {
         }
 
         uint32_t slot_count = session->max_dpb_slots;
-        if (slot_count == 0 || slot_count > max_av1_dpb_slots) {
+        if (slot_count == 0) {
+            return -1;
+        }
+        if (slot_count > max_av1_dpb_slots) {
             slot_count = max_av1_dpb_slots;
         }
         int target_slot = av1_dpb_slot_for_surface(session, target_surface_id);
@@ -160,11 +163,8 @@ namespace vkvv {
         return target_slot;
     }
 
-    int av1_select_current_setup_slot(AV1VideoSession* session, VASurfaceID target_surface_id, const bool used_slots[max_av1_dpb_slots], bool current_is_reference) {
-        if (current_is_reference) {
-            return av1_select_target_dpb_slot(session, target_surface_id, used_slots);
-        }
-        return -1;
+    int av1_select_current_setup_slot(AV1VideoSession* session, VASurfaceID target_surface_id, const bool used_slots[max_av1_dpb_slots]) {
+        return av1_select_target_dpb_slot(session, target_surface_id, used_slots);
     }
 
     VkImageLayout av1_target_layout(bool has_setup_slot) {
@@ -187,6 +187,9 @@ namespace vkvv {
         if (session == nullptr || input == nullptr || target_surface_id == VA_INVALID_ID || target_slot < 0) {
             return;
         }
+        if (input->header.refresh_frame_flags == 0) {
+            return;
+        }
         av1_set_surface_slot(session, target_surface_id, target_slot, info);
         for (uint32_t i = 0; i < max_av1_reference_slots; i++) {
             if ((input->header.refresh_frame_flags & (1U << i)) != 0) {
@@ -200,7 +203,10 @@ namespace vkvv {
             return -1;
         }
         uint32_t slot_count = session->max_dpb_slots;
-        if (slot_count == 0 || slot_count > max_av1_dpb_slots) {
+        if (slot_count == 0) {
+            return -1;
+        }
+        if (slot_count > max_av1_dpb_slots) {
             slot_count = max_av1_dpb_slots;
         }
         for (uint32_t attempt = 0; attempt < slot_count; attempt++) {

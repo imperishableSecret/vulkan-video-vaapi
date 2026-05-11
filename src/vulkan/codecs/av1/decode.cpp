@@ -592,10 +592,11 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
 
     av1_mark_retained_reference_slots(session, input, used_slots);
 
-    const bool current_is_reference = input->header.refresh_frame_flags != 0;
-    int        target_dpb_slot      = av1_select_current_setup_slot(session, target_surface_id, used_slots, current_is_reference);
-    if (current_is_reference && target_dpb_slot < 0) {
-        std::snprintf(reason, reason_size, "no free AV1 DPB slot for current picture");
+    const bool current_updates_reference_map = input->header.refresh_frame_flags != 0;
+    const bool needs_setup_slot              = session->max_dpb_slots != 0;
+    int        target_dpb_slot               = needs_setup_slot ? av1_select_current_setup_slot(session, target_surface_id, used_slots) : -1;
+    if (needs_setup_slot && target_dpb_slot < 0) {
+        std::snprintf(reason, reason_size, "no free AV1 setup DPB slot for current picture");
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
     if (trace_deep_enabled) {
@@ -603,23 +604,24 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         const std::string surface_slots_before   = av1_surface_slots_string(session);
         const std::string active_refs            = av1_active_refs_string(input, reference_name_slot_indices);
         const auto*       target_resource_before = static_cast<const SurfaceResource*>(target->vulkan);
-        VKVV_TRACE("av1-decode-plan",
-                   "driver=%llu ctx_stream=%llu target=%u surface_stream=%llu surface_codec=0x%x frame_type=%u show=%u hdr_existing=%u hdr_show=%u hdr_showable=%u "
-                   "refresh_export=%u current_frame=%u order_hint=%u primary_ref=%u "
-                   "refresh=0x%02x depth=%u fourcc=0x%x "
-                   "refs=%u current_ref=%u target_slot=%d used_mask=0x%03x content_gen=%llu shadow_gen=%llu exported=%u last_display_gen=%llu predecode=%u active_refs=\"%s\" "
-                   "ref_slots=\"%s\" surface_slots=\"%s\"",
-                   static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id), target_surface_id,
-                   static_cast<unsigned long long>(target->stream_id), target->codec_operation, input->pic->pic_info_fields.bits.frame_type,
-                   input->pic->pic_info_fields.bits.show_frame, input->header.show_existing_frame ? 1U : 0U, input->header.show_frame ? 1U : 0U,
-                   input->header.showable_frame ? 1U : 0U, refresh_export ? 1U : 0U, input->pic->current_frame, input->pic->order_hint, input->pic->primary_ref_frame,
-                   input->header.refresh_frame_flags, input->bit_depth, input->fourcc, reference_count, current_is_reference ? 1U : 0U, target_dpb_slot, used_slot_mask(used_slots),
-                   target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->content_generation) : 0ULL,
-                   target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->export_resource.content_generation) : 0ULL,
-                   target_resource_before != nullptr && target_resource_before->export_resource.exported ? 1U : 0U,
-                   target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->last_display_refresh_generation) : 0ULL,
-                   target_resource_before != nullptr && target_resource_before->export_resource.predecode_exported ? 1U : 0U, active_refs.c_str(), ref_slots_before.c_str(),
-                   surface_slots_before.c_str());
+        VKVV_TRACE(
+            "av1-decode-plan",
+            "driver=%llu ctx_stream=%llu target=%u surface_stream=%llu surface_codec=0x%x frame_type=%u show=%u hdr_existing=%u hdr_show=%u hdr_showable=%u "
+            "refresh_export=%u current_frame=%u order_hint=%u primary_ref=%u "
+            "refresh=0x%02x depth=%u fourcc=0x%x "
+            "refs=%u current_ref=%u setup=%u target_slot=%d used_mask=0x%03x content_gen=%llu shadow_gen=%llu exported=%u last_display_gen=%llu predecode=%u active_refs=\"%s\" "
+            "ref_slots=\"%s\" surface_slots=\"%s\"",
+            static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id), target_surface_id,
+            static_cast<unsigned long long>(target->stream_id), target->codec_operation, input->pic->pic_info_fields.bits.frame_type, input->pic->pic_info_fields.bits.show_frame,
+            input->header.show_existing_frame ? 1U : 0U, input->header.show_frame ? 1U : 0U, input->header.showable_frame ? 1U : 0U, refresh_export ? 1U : 0U,
+            input->pic->current_frame, input->pic->order_hint, input->pic->primary_ref_frame, input->header.refresh_frame_flags, input->bit_depth, input->fourcc, reference_count,
+            current_updates_reference_map ? 1U : 0U, needs_setup_slot ? 1U : 0U, target_dpb_slot, used_slot_mask(used_slots),
+            target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->content_generation) : 0ULL,
+            target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->export_resource.content_generation) : 0ULL,
+            target_resource_before != nullptr && target_resource_before->export_resource.exported ? 1U : 0U,
+            target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->last_display_refresh_generation) : 0ULL,
+            target_resource_before != nullptr && target_resource_before->export_resource.predecode_exported ? 1U : 0U, active_refs.c_str(), ref_slots_before.c_str(),
+            surface_slots_before.c_str());
     }
     if (target_dpb_slot >= 0) {
         used_slots[target_dpb_slot] = true;
@@ -793,7 +795,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
-    if (current_is_reference) {
+    if (current_updates_reference_map) {
         av1_update_reference_slots_from_refresh(session, input, target_surface_id, target_dpb_slot, setup_std_ref);
         if (trace_deep_enabled) {
             const std::string ref_slots_after     = av1_reference_slots_string(session);
@@ -803,9 +805,12 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
                        input->header.refresh_frame_flags, target_dpb_slot, input->pic->order_hint, ref_slots_after.c_str(), surface_slots_after.c_str());
         }
     } else {
-        VKVV_TRACE("av1-ref-update-skip", "driver=%llu ctx_stream=%llu target=%u refresh=0x%02x scratch_slot=%d order_hint=%u",
-                   static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id), target_surface_id, input->header.refresh_frame_flags,
-                   target_dpb_slot, input->pic->order_hint);
+        if (trace_deep_enabled) {
+            const std::string surface_slots_after = av1_surface_slots_string(session);
+            VKVV_TRACE("av1-ref-update-skip", "driver=%llu ctx_stream=%llu target=%u refresh=0x%02x scratch_slot=%d order_hint=%u surface_slots=\"%s\"",
+                       static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id), target_surface_id,
+                       input->header.refresh_frame_flags, target_dpb_slot, input->pic->order_hint, surface_slots_after.c_str());
+        }
     }
 
     track_pending_decode(runtime, target, parameters, upload_allocation_size, refresh_export, "AV1 decode");
