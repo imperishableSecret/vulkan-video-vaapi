@@ -1,5 +1,6 @@
 #include "h264.h"
 #include "codecs/storage.h"
+#include "telemetry.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -343,27 +344,27 @@ VAStatus vkvv_h264_render_buffer(void* state, const VkvvBuffer* buffer) {
 VAStatus vkvv_h264_prepare_decode(void* state, unsigned int* width, unsigned int* height, char* reason, size_t reason_size) {
     auto* h264 = static_cast<H264State*>(state);
     if (h264 == nullptr) {
-        std::snprintf(reason, reason_size, "missing h264 state");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_CONTEXT, "missing H.264 state");
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
     if (!h264->has_pic) {
-        std::snprintf(reason, reason_size, "missing H.264 picture parameters");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing H.264 picture parameters");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (!h264->has_slice_params) {
-        std::snprintf(reason, reason_size, "missing H.264 slice parameters");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing H.264 slice parameters");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (!h264->has_slice_data) {
-        std::snprintf(reason, reason_size, "missing H.264 slice data");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing H.264 slice data");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
 
     *width  = static_cast<unsigned int>(h264->pic.picture_width_in_mbs_minus1 + 1) * 16;
     *height = static_cast<unsigned int>(h264->pic.picture_height_in_mbs_minus1 + 1) * 16;
-    std::snprintf(reason, reason_size, "captured H.264 picture: %ux%u slices=%zu bitstream=%zu bytes iq=%d slice_header=%d nal=%u pps=%u idr=%u", *width, *height,
-                  h264->slice_offsets.size(), h264->bitstream.size(), h264->has_iq, h264->has_slice_header, h264->first_nal_unit_type, h264->pic_parameter_set_id,
-                  h264->idr_pic_id);
+    VKVV_SUCCESS_REASON(reason, reason_size, "captured H.264 picture: %ux%u slices=%zu bitstream=%zu bytes iq=%d slice_header=%d nal=%u pps=%u idr=%u", *width, *height,
+                        h264->slice_offsets.size(), h264->bitstream.size(), h264->has_iq, h264->has_slice_header, h264->first_nal_unit_type, h264->pic_parameter_set_id,
+                        h264->idr_pic_id);
     return VA_STATUS_SUCCESS;
 }
 

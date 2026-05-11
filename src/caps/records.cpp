@@ -189,6 +189,27 @@ const VkvvProfileCapability* vkvv_profile_capability_for_entrypoint(const VkvvDr
     return NULL;
 }
 
+VAStatus vkvv_profile_entrypoint_status(const VkvvDriver* drv, VAProfile profile, VAEntrypoint entrypoint) {
+    if (!vkvv_profile_supported(drv, profile)) {
+        return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
+    }
+    if (vkvv_profile_capability_for_entrypoint(drv, profile, entrypoint) == NULL) {
+        return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
+    }
+    return VA_STATUS_SUCCESS;
+}
+
+const VkvvProfileCapability* vkvv_profile_capability_for_config(const VkvvDriver* drv, VAProfile profile, VAEntrypoint entrypoint, VAStatus* status) {
+    const VAStatus profile_status = vkvv_profile_entrypoint_status(drv, profile, entrypoint);
+    if (status != NULL) {
+        *status = profile_status;
+    }
+    if (profile_status != VA_STATUS_SUCCESS) {
+        return NULL;
+    }
+    return vkvv_profile_capability_for_entrypoint(drv, profile, entrypoint);
+}
+
 const VkvvProfileCapability* vkvv_profile_capability_record(const VkvvDriver* drv, VAProfile profile, VAEntrypoint entrypoint, VkvvCodecDirection direction) {
     if (drv == NULL) {
         return NULL;

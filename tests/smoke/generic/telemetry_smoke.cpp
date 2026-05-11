@@ -10,6 +10,7 @@ namespace {
     int expensive_string_evaluations   = 0;
     int deep_argument_evaluations      = 0;
     int success_reason_evaluations     = 0;
+    int error_reason_evaluations       = 0;
 
     int expensive_argument(void) {
         expensive_argument_evaluations++;
@@ -24,6 +25,11 @@ namespace {
     int success_reason_argument(void) {
         success_reason_evaluations++;
         return 7;
+    }
+
+    int error_reason_argument(void) {
+        error_reason_evaluations++;
+        return 11;
     }
 
     int deep_argument(void) {
@@ -65,6 +71,10 @@ int main() {
     VKVV_TRACE("telemetry-smoke-string", "records=%s", expensive_string_argument());
     VKVV_TRACE_DEEP("telemetry-smoke-deep", "value=%d", deep_argument());
     VKVV_SUCCESS_REASON(reason, sizeof(reason), "success=%d", success_reason_argument());
+    VKVV_ERROR_REASON(nullptr, 0, VA_STATUS_ERROR_INVALID_BUFFER, "error=%d", error_reason_argument());
+
+    char error_reason[64] = {};
+    VKVV_ERROR_REASON(error_reason, sizeof(error_reason), VA_STATUS_ERROR_INVALID_BUFFER, "error=%d", error_reason_argument());
 
     const int expected_evaluations = expect_trace ? 1 : 0;
     ok                             = check(expensive_argument_evaluations == expected_evaluations, "trace macro evaluated disabled arguments") && ok;
@@ -72,5 +82,8 @@ int main() {
     ok                             = check(deep_argument_evaluations == (expect_deep ? 1 : 0), "deep trace macro evaluated disabled arguments") && ok;
     ok                             = check(success_reason_evaluations == (expect_reason ? 1 : 0), "success reason macro evaluated disabled arguments") && ok;
     ok                             = check((reason[0] != '\0') == expect_reason, "success reason text mismatch") && ok;
+    ok                             = check(error_reason_evaluations == 1, "error reason macro evaluated disabled arguments") && ok;
+    ok                             = check(std::strcmp(vkvv_va_status_name(VA_STATUS_ERROR_UNSUPPORTED_PROFILE), "unsupported-profile") == 0, "status name mismatch") && ok;
+    ok                             = check(std::strcmp(error_reason, "invalid-buffer: error=11") == 0, "error reason text mismatch") && ok;
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

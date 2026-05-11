@@ -52,13 +52,11 @@ VAStatus vkvvQueryConfigEntrypoints(VADriverContextP ctx, VAProfile profile, VAE
 }
 
 VAStatus vkvvGetConfigAttributes(VADriverContextP ctx, VAProfile profile, VAEntrypoint entrypoint, VAConfigAttrib* attrib_list, int num_attribs) {
-    VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
-    if (!vkvv_profile_supported(drv, profile)) {
-        return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
-    }
-    const VkvvProfileCapability* cap = vkvv_profile_capability_for_entrypoint(drv, profile, entrypoint);
+    VkvvDriver*                  drv = vkvv_driver_from_ctx(ctx);
+    VAStatus                     status;
+    const VkvvProfileCapability* cap = vkvv_profile_capability_for_config(drv, profile, entrypoint, &status);
     if (cap == NULL) {
-        return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
+        return status;
     }
 
     for (int i = 0; i < num_attribs; i++) {
@@ -69,13 +67,11 @@ VAStatus vkvvGetConfigAttributes(VADriverContextP ctx, VAProfile profile, VAEntr
 }
 
 VAStatus vkvvCreateConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint entrypoint, VAConfigAttrib* attrib_list, int num_attribs, VAConfigID* config_id) {
-    VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
-    if (!vkvv_profile_supported(drv, profile)) {
-        return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
-    }
-    const VkvvProfileCapability* cap = vkvv_profile_capability_for_entrypoint(drv, profile, entrypoint);
+    VkvvDriver*                  drv = vkvv_driver_from_ctx(ctx);
+    VAStatus                     status;
+    const VkvvProfileCapability* cap = vkvv_profile_capability_for_config(drv, profile, entrypoint, &status);
     if (cap == NULL) {
-        return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
+        return status;
     }
 
     unsigned int rt_format = vkvv_select_rt_format(cap, cap->rt_format);

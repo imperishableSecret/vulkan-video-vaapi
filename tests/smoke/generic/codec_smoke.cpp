@@ -675,6 +675,12 @@ int main(void) {
     const VkvvProfileCapability* h264_decode = vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointVLD);
     ok = check(h264_decode != nullptr && h264_decode->advertise && h264_decode->direction == VKVV_CODEC_DIRECTION_DECODE, "H.264 VLD should be an advertised decode capability") &&
         ok;
+    ok = check(vkvv_profile_entrypoint_status(&drv, VAProfileJPEGBaseline, VAEntrypointVLD) == VA_STATUS_ERROR_UNSUPPORTED_PROFILE,
+               "unsupported profile should return a stable VA status") &&
+        ok;
+    ok = check(vkvv_profile_entrypoint_status(&drv, VAProfileH264High, VAEntrypointEncSlice) == VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT,
+               "unsupported entrypoint should return a stable VA status") &&
+        ok;
     ok = check(vkvv_profile_capability_stage(h264_decode) == VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED, "H.264 decode stage should be advertised") && ok;
     ok = check(std::strcmp(vkvv_profile_capability_stage_name(VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED), "advertised") == 0, "profile stage name should be stable") && ok;
     char h264_debug[256]{};
