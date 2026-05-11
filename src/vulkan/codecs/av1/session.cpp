@@ -122,7 +122,7 @@ namespace vkvv {
             return false;
         }
 
-        if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "AV1 session reset")) {
+        if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "AV1 session reset", CommandUse::SessionReset)) {
             return false;
         }
 

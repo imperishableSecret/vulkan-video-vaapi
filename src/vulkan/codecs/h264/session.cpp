@@ -74,7 +74,7 @@ namespace vkvv {
             return false;
         }
 
-        if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "H.264 session reset")) {
+        if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "H.264 session reset", CommandUse::SessionReset)) {
             return false;
         }
 

@@ -84,7 +84,7 @@ namespace vkvv {
             return false;
         }
 
-        if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "HEVC session reset")) {
+        if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "HEVC session reset", CommandUse::SessionReset)) {
             return false;
         }
 
