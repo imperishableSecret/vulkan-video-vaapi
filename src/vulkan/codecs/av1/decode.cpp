@@ -593,12 +593,12 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     av1_mark_retained_reference_slots(session, input, used_slots);
 
     const bool current_updates_reference_map = input->header.refresh_frame_flags != 0;
-    const bool needs_setup_info              = session->max_dpb_slots != 0;
     int        target_dpb_slot = current_updates_reference_map ? av1_select_current_setup_slot(session, target_surface_id, used_slots, current_updates_reference_map) : -1;
     if (current_updates_reference_map && target_dpb_slot < 0) {
         std::snprintf(reason, reason_size, "no free AV1 setup DPB slot for current picture");
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
+    const bool has_setup_slot = target_dpb_slot >= 0;
     if (trace_deep_enabled) {
         const std::string ref_slots_before       = av1_reference_slots_string(session);
         const std::string surface_slots_before   = av1_surface_slots_string(session);
@@ -615,7 +615,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
             static_cast<unsigned long long>(target->stream_id), target->codec_operation, input->pic->pic_info_fields.bits.frame_type, input->pic->pic_info_fields.bits.show_frame,
             input->header.show_existing_frame ? 1U : 0U, input->header.show_frame ? 1U : 0U, input->header.showable_frame ? 1U : 0U, refresh_export ? 1U : 0U,
             input->pic->current_frame, input->pic->order_hint, input->pic->primary_ref_frame, input->header.refresh_frame_flags, input->bit_depth, input->fourcc, reference_count,
-            current_updates_reference_map ? 1U : 0U, needs_setup_info ? 1U : 0U, target_dpb_slot, used_slot_mask(used_slots),
+            current_updates_reference_map ? 1U : 0U, has_setup_slot ? 1U : 0U, target_dpb_slot, used_slot_mask(used_slots),
             target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->content_generation) : 0ULL,
             target_resource_before != nullptr ? static_cast<unsigned long long>(target_resource_before->export_resource.content_generation) : 0ULL,
             target_resource_before != nullptr && target_resource_before->export_resource.exported ? 1U : 0U,
@@ -686,7 +686,6 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     for (uint32_t i = 0; i < reference_count; i++) {
         add_image_layout_barrier(&barriers, references[i].resource, VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR, VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR);
     }
-    const bool has_setup_slot = target_dpb_slot >= 0;
     add_image_layout_barrier(&barriers, target_resource, av1_target_layout(has_setup_slot), av1_target_access(has_setup_slot));
     if (!barriers.empty()) {
         VkDependencyInfo dependency{};
@@ -701,7 +700,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     VkVideoReferenceSlotInfoKHR        setup_slot{};
     VkVideoPictureResourceInfoKHR      setup_picture{};
     const VkVideoReferenceSlotInfoKHR* setup_slot_ptr = nullptr;
-    if (needs_setup_info) {
+    if (has_setup_slot) {
         setup_std_ref                    = build_current_reference_info(input);
         setup_picture                    = make_picture_resource(target_resource, coded_extent);
         setup_av1_slot.sType             = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_DPB_SLOT_INFO_KHR;
