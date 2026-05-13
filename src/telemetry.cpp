@@ -40,11 +40,6 @@ bool vkvv_log_enabled(void) {
     return enabled;
 }
 
-bool vkvv_perf_enabled(void) {
-    static const bool enabled = env_enabled("VKVV_PERF");
-    return enabled;
-}
-
 bool vkvv_success_reason_enabled(void) {
     return vkvv_log_enabled() || vkvv_trace_enabled();
 }

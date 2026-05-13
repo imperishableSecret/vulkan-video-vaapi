@@ -87,7 +87,6 @@ static VAStatus vkvvTerminate(VADriverContextP ctx) {
     VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
     if (drv != NULL) {
         release_owned_payloads(drv);
-        vkvv_vulkan_flush_perf_summary(drv->vulkan);
         vkvv_object_clear(drv);
         delete drv;
         ctx->pDriverData = NULL;
