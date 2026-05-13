@@ -334,9 +334,8 @@ namespace vkvv {
         resource->allocation_size    = requirements.size;
         resource->plane_count        = format->layer_count;
         resource->content_generation = 0;
-        if (vkvv_perf_enabled()) {
-            perf_update_high_water(runtime->perf.export_image_high_water, static_cast<uint64_t>(resource->allocation_size));
-        }
+        VKVV_TRACE("export-image-create", "format=%d fourcc=0x%x extent=%ux%u export_mem=%llu planes=%u", resource->format, resource->va_fourcc, resource->extent.width,
+                   resource->extent.height, static_cast<unsigned long long>(resource->allocation_size), resource->plane_count);
         if (tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
             VkImageDrmFormatModifierPropertiesEXT modifier_properties{};
             modifier_properties.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT;
@@ -888,15 +887,15 @@ namespace vkvv {
         if (!submit_command_buffer(runtime, reason, reason_size, "surface export copy", CommandUse::Export)) {
             return false;
         }
-        const bool perf_enabled = vkvv_perf_enabled();
-        const auto wait_start   = perf_enabled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        const bool trace_enabled = vkvv_trace_enabled();
+        const auto wait_start    = trace_enabled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         export_lock.unlock();
         const bool waited = wait_for_command_fence(runtime, std::numeric_limits<uint64_t>::max(), reason, reason_size, "surface export copy");
         export_lock.lock();
         if (!waited) {
             return false;
         }
-        if (perf_enabled) {
+        if (trace_enabled) {
             uint64_t copy_targets = 0;
             uint64_t copy_bytes   = 0;
             if (owner_export != nullptr && copy_owner_export) {
@@ -909,11 +908,11 @@ namespace vkvv {
                     copy_bytes += static_cast<uint64_t>(target->allocation_size);
                 }
             }
-            const auto wait_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - wait_start).count();
-            runtime->perf.export_copy_count.fetch_add(1, std::memory_order_relaxed);
-            runtime->perf.export_copy_targets.fetch_add(copy_targets, std::memory_order_relaxed);
-            runtime->perf.export_copy_bytes.fetch_add(copy_bytes, std::memory_order_relaxed);
-            runtime->perf.export_copy_wait_ns.fetch_add(static_cast<uint64_t>(wait_ns), std::memory_order_relaxed);
+            const auto wait_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - wait_start).count());
+            VKVV_TRACE("export-copy-metrics", "surface=%u driver=%llu stream=%llu codec=0x%x owner_copy=%u predecode_targets=%zu copy_targets=%llu copy_bytes=%llu wait_ns=%llu",
+                       source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
+                       owner_export != nullptr && copy_owner_export ? 1U : 0U, predecode_seed_targets.size(), static_cast<unsigned long long>(copy_targets),
+                       static_cast<unsigned long long>(copy_bytes), static_cast<unsigned long long>(wait_ns));
         }
 
         const bool source_matches = export_copy_source_still_matches(source, source_image, source_content_generation);

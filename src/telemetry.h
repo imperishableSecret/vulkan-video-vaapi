@@ -7,7 +7,6 @@
 #include <va/va.h>
 
 bool        vkvv_log_enabled(void);
-bool        vkvv_perf_enabled(void);
 bool        vkvv_success_reason_enabled(void);
 bool        vkvv_trace_enabled(void);
 bool        vkvv_trace_deep_enabled(void);
@@ -44,7 +43,7 @@ inline const char* vkvv_va_status_name(VAStatus status) {
 // evaluated unless tracing is enabled. vkvv_trace() remains for cold paths where
 // arguments are already cheap or explicitly pre-gated. Do not build strings,
 // walk containers, or call syscalls for trace arguments outside one of these
-// guards. VKVV_PERF is aggregate only; keep it out of per-frame text logging.
+// guards.
 #define VKVV_TRACE(event, fmt, ...)                                                                                                                                                \
     do {                                                                                                                                                                           \
         if (vkvv_trace_enabled()) {                                                                                                                                                \

@@ -54,32 +54,6 @@ namespace vkvv {
             return nullptr;
         }
 
-        void note_perf_decode_submitted(VulkanRuntime* runtime, const VkvvSurface* surface, VkDeviceSize upload_allocation_size, size_t pending_count) {
-            if (runtime == nullptr || !vkvv_perf_enabled()) {
-                return;
-            }
-            runtime->perf.decode_submitted.fetch_add(1, std::memory_order_relaxed);
-            runtime->perf.upload_bytes.fetch_add(static_cast<uint64_t>(upload_allocation_size), std::memory_order_relaxed);
-            perf_update_high_water(runtime->perf.upload_high_water, static_cast<uint64_t>(upload_allocation_size));
-            perf_update_high_water(runtime->perf.pending_high_water, static_cast<uint64_t>(pending_count));
-
-            VkvvCodecPerfCounters* codec_counters = perf_decode_codec_counters(&runtime->perf, surface != nullptr ? surface->codec_operation : 0);
-            if (codec_counters != nullptr) {
-                codec_counters->submitted.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-
-        void note_perf_decode_completed(VulkanRuntime* runtime, const VkvvSurface* surface) {
-            if (runtime == nullptr || !vkvv_perf_enabled()) {
-                return;
-            }
-            runtime->perf.decode_completed.fetch_add(1, std::memory_order_relaxed);
-            VkvvCodecPerfCounters* codec_counters = perf_decode_codec_counters(&runtime->perf, surface != nullptr ? surface->codec_operation : 0);
-            if (codec_counters != nullptr) {
-                codec_counters->completed.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-
         bool select_idle_command_slot_locked(VulkanRuntime* runtime, char* reason, size_t reason_size) {
             for (size_t attempt = 0; attempt < command_slot_count; attempt++) {
                 const size_t index = (runtime->active_command_slot + attempt) % command_slot_count;
@@ -216,27 +190,26 @@ namespace vkvv {
         if (!ensure_runtime_usable(runtime, reason, reason_size, operation)) {
             return false;
         }
-        VkResult   result       = VK_SUCCESS;
-        const bool perf_enabled = vkvv_perf_enabled();
-        const auto wait_start   = perf_enabled && timeout_ns != 0 ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        VkResult   result        = VK_SUCCESS;
+        const bool trace_enabled = vkvv_trace_enabled();
+        const auto wait_start    = trace_enabled && timeout_ns != 0 ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         if (timeout_ns == 0) {
-            if (perf_enabled) {
-                runtime->perf.command_fence_polls.fetch_add(1, std::memory_order_relaxed);
-            }
             result = vkGetFenceStatus(runtime->device, runtime->fence);
+            VKVV_TRACE("fence-poll", "slot=%zu use=%s operation=%s status=%d", runtime->active_command_slot, command_use_name(active_slot(runtime).submitted_use),
+                       operation != nullptr ? operation : "unknown", result);
             if (result == VK_NOT_READY) {
                 std::snprintf(reason, reason_size, "%s is still pending", operation);
                 return false;
             }
         } else {
-            if (perf_enabled) {
-                runtime->perf.command_fence_waits.fetch_add(1, std::memory_order_relaxed);
+            result           = vkWaitForFences(runtime->device, 1, &runtime->fence, VK_TRUE, timeout_ns);
+            uint64_t wait_ns = 0;
+            if (trace_enabled) {
+                wait_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - wait_start).count());
             }
-            result = vkWaitForFences(runtime->device, 1, &runtime->fence, VK_TRUE, timeout_ns);
-            if (perf_enabled) {
-                const auto wait_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - wait_start).count();
-                runtime->perf.command_fence_wait_ns.fetch_add(static_cast<uint64_t>(wait_ns), std::memory_order_relaxed);
-            }
+            VKVV_TRACE("fence-wait", "slot=%zu use=%s operation=%s timeout_ns=%llu status=%d wait_ns=%llu", runtime->active_command_slot,
+                       command_use_name(active_slot(runtime).submitted_use), operation != nullptr ? operation : "unknown", static_cast<unsigned long long>(timeout_ns), result,
+                       static_cast<unsigned long long>(wait_ns));
             if (result == VK_TIMEOUT) {
                 std::snprintf(reason, reason_size, "%s timed out", operation);
                 return false;
@@ -279,11 +252,9 @@ namespace vkvv {
         const auto* resource      = surface != nullptr ? static_cast<const SurfaceResource*>(surface->vulkan) : nullptr;
         size_t      pending_count = 0;
         const bool  trace_enabled = vkvv_trace_enabled();
-        const bool  perf_enabled  = vkvv_perf_enabled();
-        if (trace_enabled || perf_enabled) {
+        if (trace_enabled) {
             pending_count = pending_work_count_locked(runtime);
         }
-        note_perf_decode_submitted(runtime, surface, upload_allocation_size, pending_count);
         if (trace_enabled) {
             vkvv_trace_emit("pending-submit",
                             "slot=%zu use=%s pending=%zu operation=%s surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u decoded=%u content_gen=%llu "
@@ -379,7 +350,6 @@ namespace vkvv {
         }
 
         completed.surface->decoded = true;
-        note_perf_decode_completed(runtime, completed.surface);
         if (completed.surface->vulkan != nullptr) {
             auto* resource = static_cast<SurfaceResource*>(completed.surface->vulkan);
             resource->content_generation++;
@@ -512,7 +482,12 @@ namespace vkvv {
                 return VA_STATUS_SUCCESS;
             }
         }
-        return complete_pending_work(runtime, surface, std::numeric_limits<uint64_t>::max(), reason, reason_size);
+        VKVV_TRACE("pending-sync-drain", "surface=%u driver=%llu stream=%llu codec=0x%x", surface->id, static_cast<unsigned long long>(surface->driver_instance_id),
+                   static_cast<unsigned long long>(surface->stream_id), surface->codec_operation);
+        VAStatus status = complete_pending_work(runtime, surface, std::numeric_limits<uint64_t>::max(), reason, reason_size);
+        VKVV_TRACE("pending-sync-drain-done", "surface=%u status=%d decoded=%u pending=%u", surface->id, status, surface->decoded ? 1U : 0U,
+                   surface->work_state == VKVV_SURFACE_WORK_RENDERING ? 1U : 0U);
+        return status;
     }
 
     VAStatus drain_pending_work_before_sync_command(VulkanRuntime* runtime, char* reason, size_t reason_size) {
@@ -521,8 +496,12 @@ namespace vkvv {
             reason[0] = '\0';
         }
         while (runtime_pending_work_count(runtime) > 0) {
+            const size_t pending_before = runtime_pending_work_count(runtime);
+            VKVV_TRACE("pending-sync-drain", "surface=0 driver=0 stream=0 codec=0x0 pending=%zu", pending_before);
             char     completion_reason[512] = {};
             VAStatus status                 = complete_pending_work(runtime, nullptr, std::numeric_limits<uint64_t>::max(), completion_reason, sizeof(completion_reason));
+            VKVV_TRACE("pending-sync-drain-done", "surface=0 status=%d pending_before=%zu pending_after=%zu reason=\"%s\"", status, pending_before,
+                       runtime_pending_work_count(runtime), completion_reason);
             if (completion_reason[0] != '\0') {
                 std::snprintf(reason, reason_size, "%s", completion_reason);
             }

@@ -165,9 +165,6 @@ VAStatus vkvvDestroyContext(VADriverContextP ctx, VAContextID context) {
         vkvv_release_context_payload(drv, vctx);
     }
     const bool removed = vkvv_object_remove(drv, context, VKVV_OBJECT_CONTEXT);
-    if (removed) {
-        vkvv_vulkan_flush_perf_summary(drv->vulkan);
-    }
     return removed ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_INVALID_CONTEXT;
 }
 
