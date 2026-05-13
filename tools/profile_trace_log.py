@@ -116,6 +116,7 @@ class StreamStats:
     predecode_stale_drops: int = 0
     export_seed_stale_drops: int = 0
     stale_visible_nondisplay: int = 0
+    nondisplay_shadow_seeds: int = 0
 
     def remember_identity(self, fields: dict[str, str]) -> None:
         width = parse_int(fields.get("width"))
@@ -171,6 +172,7 @@ class TraceProfile:
         self.export_seed_stale_drops = 0
         self.nondisplay_refresh_skips = 0
         self.stale_visible_nondisplay = 0
+        self.nondisplay_shadow_seeds = 0
         self.export_copy_publish_skips = 0
         self.browser_dropped_frames_observed = False
         self.surfaces: dict[int, SurfaceInfo] = {}
@@ -286,6 +288,8 @@ class TraceProfile:
             stream.refresh_skipped += 1
         elif event == "export-stale-visible-nondisplay" and stream is not None:
             stream.stale_visible_nondisplay += 1
+        elif event == "export-nondisplay-shadow-seed" and stream is not None:
+            stream.nondisplay_shadow_seeds += 1
         elif event == "export-copy-done" and stream is not None:
             stream.export_copy_done += 1
             stream.export_copy_seed_targets += parse_int(fields.get("seeded_targets")) or 0
@@ -356,6 +360,8 @@ class TraceProfile:
             self.nondisplay_refresh_skips += 1
         elif event == "export-stale-visible-nondisplay":
             self.stale_visible_nondisplay += 1
+        elif event == "export-nondisplay-shadow-seed":
+            self.nondisplay_shadow_seeds += 1
         elif event == "export-copy-publish-skip":
             self.export_copy_publish_skips += 1
         elif event == "device-lost":
@@ -428,6 +434,7 @@ class TraceProfile:
             "export_seed_stale_drops": self.export_seed_stale_drops,
             "nondisplay_refresh_skips": self.nondisplay_refresh_skips,
             "stale_visible_nondisplay": self.stale_visible_nondisplay,
+            "nondisplay_shadow_seeds": self.nondisplay_shadow_seeds,
             "export_copy_publish_skips": self.export_copy_publish_skips,
             "device_lost": len(self.device_lost_pids),
             "chrome_vaapi_errors": sum(self.chrome_errors.values()),
@@ -452,6 +459,7 @@ class TraceProfile:
             total["export_seed_stale_drops"] += stream.export_seed_stale_drops
             total["nondisplay_refresh_skips"] += stream.refresh_skipped
             total["stale_visible_nondisplay"] += stream.stale_visible_nondisplay
+            total["nondisplay_shadow_seeds"] += stream.nondisplay_shadow_seeds
             total["export_copy_publish_skips"] += stream.export_copy_publish_skips
         return codecs
 
@@ -519,6 +527,7 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "export_seed_stale_drops": stream.export_seed_stale_drops,
         "nondisplay_refresh_skips": stream.refresh_skipped,
         "stale_visible_nondisplay": stream.stale_visible_nondisplay,
+        "nondisplay_shadow_seeds": stream.nondisplay_shadow_seeds,
         "export_copy_publish_skips": stream.export_copy_publish_skips,
     }
 
@@ -588,7 +597,8 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         f"retained_pruned={totals['retained_pruned']} retained_removed={totals['retained_removed']} "
         f"driver_stale_drops={totals['driver_stale_drops']} predecode_stale_drops={totals['predecode_stale_drops']} "
         f"export_seed_stale_drops={totals['export_seed_stale_drops']} nondisplay_refresh_skips={totals['nondisplay_refresh_skips']} "
-        f"stale_visible_nondisplay={totals['stale_visible_nondisplay']} export_copy_publish_skips={totals['export_copy_publish_skips']} "
+        f"stale_visible_nondisplay={totals['stale_visible_nondisplay']} nondisplay_shadow_seeds={totals['nondisplay_shadow_seeds']} "
+        f"export_copy_publish_skips={totals['export_copy_publish_skips']} "
         f"browser_dropped_frames_observed={1 if profile.browser_dropped_frames_observed else 0} "
         f"device_lost={totals['device_lost']} chrome_vaapi_errors={totals['chrome_vaapi_errors']}"
     )
@@ -602,7 +612,8 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"export_copy_wait_ms={values['export_copy_wait_ns'] / 1000000.0:.3f} upload_mb={mib(values['upload_bytes']):.2f} "
             f"driver_stale_drops={values['driver_stale_drops']} predecode_stale_drops={values['predecode_stale_drops']} "
             f"export_seed_stale_drops={values['export_seed_stale_drops']} nondisplay_refresh_skips={values['nondisplay_refresh_skips']} "
-            f"stale_visible_nondisplay={values['stale_visible_nondisplay']} export_copy_publish_skips={values['export_copy_publish_skips']}"
+            f"stale_visible_nondisplay={values['stale_visible_nondisplay']} nondisplay_shadow_seeds={values['nondisplay_shadow_seeds']} "
+            f"export_copy_publish_skips={values['export_copy_publish_skips']}"
         )
     for stream in sorted(profile.streams.values(), key=lambda item: item.key):
         copy_targets = stream.export_copy_targets if stream.export_copy_metrics else stream.export_copy_seed_targets
@@ -619,7 +630,8 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"upload_high_mb={mib(stream.upload_high):.2f} "
             f"driver_stale_drops={stream.stale_drops} predecode_stale_drops={stream.predecode_stale_drops} "
             f"export_seed_stale_drops={stream.export_seed_stale_drops} nondisplay_refresh_skips={stream.refresh_skipped} "
-            f"stale_visible_nondisplay={stream.stale_visible_nondisplay} export_copy_publish_skips={stream.export_copy_publish_skips}"
+            f"stale_visible_nondisplay={stream.stale_visible_nondisplay} nondisplay_shadow_seeds={stream.nondisplay_shadow_seeds} "
+            f"export_copy_publish_skips={stream.export_copy_publish_skips}"
         )
     for message, count in profile.chrome_errors.most_common():
         print(f"chrome-error count={count} message=\"{message}\"")

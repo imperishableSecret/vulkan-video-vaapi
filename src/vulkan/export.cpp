@@ -188,7 +188,22 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
         resource->last_nondisplay_skip_shadow_generation = resource->export_resource.content_generation;
         resource->last_nondisplay_skip_shadow_memory     = resource->export_resource.memory;
         const bool skipped_shadow_stale                  = resource->content_generation != 0 && resource->export_resource.content_generation != resource->content_generation;
+        bool       seeded_shadow                         = false;
         if (skipped_shadow_stale && resource->export_resource.exported && resource->last_display_refresh_generation != 0) {
+            const uint64_t old_shadow_generation = resource->export_resource.content_generation;
+            (void)seed_predecode_export_from_last_good(runtime, resource, reason, reason_size);
+            seeded_shadow = resource->export_resource.predecode_seeded && resource->export_resource.seed_source_surface_id != VA_INVALID_ID;
+            if (seeded_shadow) {
+                VKVV_TRACE(
+                    "export-nondisplay-shadow-seed",
+                    "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx old_shadow_gen=%llu seed_surface=%u seed_gen=%llu last_display_gen=%llu",
+                    surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                    static_cast<unsigned long long>(resource->content_generation), vkvv_trace_handle(resource->export_resource.memory),
+                    static_cast<unsigned long long>(old_shadow_generation), resource->export_resource.seed_source_surface_id,
+                    static_cast<unsigned long long>(resource->export_resource.seed_source_generation), static_cast<unsigned long long>(resource->last_display_refresh_generation));
+            }
+        }
+        if (skipped_shadow_stale && !seeded_shadow && resource->export_resource.exported && resource->last_display_refresh_generation != 0) {
             VKVV_TRACE("export-stale-visible-nondisplay",
                        "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu last_display_gen=%llu exported=%u imported=%u fd_stat=%u "
                        "fd_dev=%llu fd_ino=%llu retained=%zu retained_mem=%llu",

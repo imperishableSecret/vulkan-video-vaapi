@@ -579,9 +579,9 @@ namespace vkvv {
 
     bool predecode_seed_target_matches(const ExportResource* target, const SurfaceResource* source) {
         return target != nullptr && source != nullptr && target != &source->export_resource && target->image != VK_NULL_HANDLE && target->memory != VK_NULL_HANDLE &&
-            target->predecode_exported && target->content_generation == 0 && target->driver_instance_id == source->driver_instance_id && target->stream_id != 0 &&
-            target->stream_id == source->stream_id && target->codec_operation != 0 && target->codec_operation == source->codec_operation && target->format == source->format &&
-            target->va_fourcc == source->va_fourcc && target->extent.width == source->coded_extent.width && target->extent.height == source->coded_extent.height;
+            target->predecode_exported && target->driver_instance_id == source->driver_instance_id && target->stream_id != 0 && target->stream_id == source->stream_id &&
+            target->codec_operation != 0 && target->codec_operation == source->codec_operation && target->format == source->format && target->va_fourcc == source->va_fourcc &&
+            target->extent.width == source->coded_extent.width && target->extent.height == source->coded_extent.height;
     }
 
     bool export_seed_source_valid(const SurfaceResource* source) {
