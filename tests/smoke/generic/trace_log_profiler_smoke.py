@@ -47,6 +47,15 @@ def main() -> int:
         log.write_text(FIXTURE, encoding="utf-8")
         result = subprocess.run([sys.executable, str(script), "--json", str(log)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         text_result = subprocess.run([sys.executable, str(script), str(log)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        stdin_result = subprocess.run([sys.executable, str(script), "--json", "-"], input=FIXTURE, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        live_result = subprocess.run(
+            [sys.executable, str(script), "--live", "--live-interval-lines", "5", "-"],
+            input=FIXTURE,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
     if result.returncode != 0:
         print(result.stdout, file=sys.stderr)
         print(result.stderr, file=sys.stderr)
@@ -55,10 +64,20 @@ def main() -> int:
         print(text_result.stdout, file=sys.stderr)
         print(text_result.stderr, file=sys.stderr)
         return text_result.returncode
+    if stdin_result.returncode != 0:
+        print(stdin_result.stdout, file=sys.stderr)
+        print(stdin_result.stderr, file=sys.stderr)
+        return stdin_result.returncode
+    if live_result.returncode != 0:
+        print(live_result.stdout, file=sys.stderr)
+        print(live_result.stderr, file=sys.stderr)
+        return live_result.returncode
 
     data = json.loads(result.stdout)
+    stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
     check(data["trace_records"] == 15, "trace record count mismatch")
+    check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 1, "stream count mismatch")
     check(totals["decode_submitted"] == 1 and totals["decode_completed"] == 1, "decode aggregate mismatch")
@@ -88,6 +107,8 @@ def main() -> int:
     check(stream["export_copy_publish_skips"] == 1, "stream publish skip mismatch")
     check("driver_stale_drops=2" in text_result.stdout, "text stale drop aggregate missing")
     check("browser_dropped_frames_observed=0" in text_result.stdout, "text browser dropped-frame warning missing")
+    check("live-summary path=-" in live_result.stderr, "live summary missing")
+    check("trace-profile path=-" in live_result.stdout, "live final summary missing")
     return 0
 
 

@@ -7,7 +7,7 @@ import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 
 TRACE_RE = re.compile(r"nvidia-vulkan-vaapi: trace seq=(?P<seq>\d+) event=(?P<event>\S+)(?: (?P<body>.*))?$")
@@ -446,9 +446,9 @@ class TraceProfile:
             total["export_copy_publish_skips"] += stream.export_copy_publish_skips
         return codecs
 
-    def to_json(self, path: Path) -> dict[str, Any]:
+    def to_json(self, source: str) -> dict[str, Any]:
         return {
-            "path": str(path),
+            "path": source,
             "lines": self.lines,
             "trace_records": self.trace_records,
             "trace_sequence": {
@@ -509,31 +509,49 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
     }
 
 
-def profile_log(path: Path) -> TraceProfile:
+def print_live_summary(source: str, profile: TraceProfile, output: TextIO = sys.stderr) -> None:
+    totals = profile.totals()
+    print(
+        "live-summary "
+        f"path={source} lines={profile.lines} trace_records={profile.trace_records} "
+        f"submitted={totals['decode_submitted']} completed={totals['decode_completed']} "
+        f"driver_stale_drops={totals['driver_stale_drops']} chrome_vaapi_errors={totals['chrome_vaapi_errors']}",
+        file=output,
+    )
+
+
+def profile_lines(lines: TextIO, source: str = "-", live: bool = False, live_interval_lines: int = 1000) -> TraceProfile:
     profile = TraceProfile()
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
-        for line in handle:
-            profile.lines += 1
-            line = line.rstrip("\n")
-            trace = TRACE_RE.search(line)
-            if trace:
-                profile.add_trace(int(trace.group("seq")), trace.group("event"), parse_fields(trace.group("body")))
-                continue
+    interval = max(live_interval_lines, 1)
+    for line in lines:
+        profile.lines += 1
+        line = line.rstrip("\n")
+        trace = TRACE_RE.search(line)
+        if trace:
+            profile.add_trace(int(trace.group("seq")), trace.group("event"), parse_fields(trace.group("body")))
+        else:
             nvidia = NVIDIA_RE.search(line)
             if nvidia:
                 profile.add_nvidia_event(nvidia.group("kind"), parse_fields(nvidia.group("body")))
-                continue
-            chrome_error = CHROME_ERROR_RE.search(line)
-            if chrome_error:
-                profile.add_chrome_error(chrome_error.group("source"), chrome_error.group("message"))
+            else:
+                chrome_error = CHROME_ERROR_RE.search(line)
+                if chrome_error:
+                    profile.add_chrome_error(chrome_error.group("source"), chrome_error.group("message"))
+        if live and profile.lines % interval == 0:
+            print_live_summary(source, profile)
     return profile
 
 
-def print_text(path: Path, profile: TraceProfile, top_events: int) -> None:
+def profile_log(path: Path, live: bool = False, live_interval_lines: int = 1000) -> TraceProfile:
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        return profile_lines(handle, str(path), live, live_interval_lines)
+
+
+def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
     totals = profile.totals()
     print(
         "trace-profile "
-        f"path={path} lines={profile.lines} trace_records={profile.trace_records} "
+        f"path={source} lines={profile.lines} trace_records={profile.trace_records} "
         f"seq_first={profile.first_seq if profile.first_seq is not None else 0} "
         f"seq_last={profile.last_seq if profile.last_seq is not None else 0} "
         f"seq_missing={profile.trace_sequence_gaps}"
@@ -602,20 +620,28 @@ def print_text(path: Path, profile: TraceProfile, top_events: int) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Aggregate nvidia-vulkan-vaapi trace/perf logs line by line.")
-    parser.add_argument("log", type=Path, help="Chrome/stderr log containing nvidia-vulkan-vaapi trace lines")
+    parser.add_argument("log", help="Chrome/stderr log containing nvidia-vulkan-vaapi trace lines, or '-' for stdin")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    parser.add_argument("--live", action="store_true", help="print rolling summaries to stderr while reading")
+    parser.add_argument("--live-interval-lines", type=int, default=1000, help="input line interval between --live summaries")
     parser.add_argument("--top-events", type=int, default=20, help="number of event counters to print in text mode")
     args = parser.parse_args()
 
-    if not args.log.is_file():
-        print(f"not a file: {args.log}", file=sys.stderr)
-        return 2
-
-    profile = profile_log(args.log)
-    if args.json:
-        print(json.dumps(profile.to_json(args.log), indent=2, sort_keys=True))
+    if args.log == "-":
+        source = "-"
+        profile = profile_lines(sys.stdin, source, args.live, args.live_interval_lines)
     else:
-        print_text(args.log, profile, args.top_events)
+        log_path = Path(args.log)
+        if not log_path.is_file():
+            print(f"not a file: {log_path}", file=sys.stderr)
+            return 2
+        source = str(log_path)
+        profile = profile_log(log_path, args.live, args.live_interval_lines)
+
+    if args.json:
+        print(json.dumps(profile.to_json(source), indent=2, sort_keys=True))
+    else:
+        print_text(source, profile, args.top_events)
     return 0
 
 
