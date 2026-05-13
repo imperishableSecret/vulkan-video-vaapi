@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+FIXTURE = """\
+noise
+nvidia-vulkan-vaapi: trace seq=1 event=domain-note driver=2 stream=1 codec=0x8 width=3840 height=2160 rt=0x1 fourcc=0x30313050 surface=7
+nvidia-vulkan-vaapi: trace seq=2 event=pending-submit slot=0 use=decode pending=1 operation=VP9 decode surface=7 driver=2 stream=1 codec=0x8 refresh_export=1 decoded=0 content_gen=0 shadow_mem=0x1 shadow_gen=0 predecode=0 upload_mem=1024
+nvidia-vulkan-vaapi: trace seq=4 event=pending-complete-after use=decode operation=VP9 decode surface=7 status=0 refresh_export=1 decoded=1 content_gen=1 shadow_mem=0x1 shadow_gen=1 predecode=0 exported=1
+nvidia-vulkan-vaapi: trace seq=5 event=fence-wait slot=0 use=decode operation=VP9 decode timeout_ns=18446744073709551615 status=0 wait_ns=2000
+nvidia-vulkan-vaapi: trace seq=6 event=surface-resource-create surface=7 driver=2 stream=1 surface_codec=0x8 key_codec=0x8 resource_codec=0x8 extent=3840x2160 exportable=1 decode_mem=4096 shadow_mem=0x1 imported=0 import_fd_stat=0 import_fd_dev=0 import_fd_ino=0
+nvidia-vulkan-vaapi: trace seq=7 event=export-image-create format=1 fourcc=0x30313050 extent=3840x2160 export_mem=8192 planes=2
+nvidia-vulkan-vaapi: trace seq=8 event=video-session-memory bytes=16384 binds=2
+nvidia-vulkan-vaapi: trace seq=9 event=va-export-return driver=2 surface=7 status=0 stream=1 codec=0x8 decoded=1
+nvidia-vulkan-vaapi: trace seq=10 event=export-copy-metrics surface=7 driver=2 stream=1 codec=0x8 owner_copy=1 predecode_targets=1 copy_targets=2 copy_bytes=12288 wait_ns=3000
+nvidia-vulkan-vaapi: trace seq=11 event=export-copy-done surface=7 driver=2 stream=1 codec=0x8 content_gen=1 shadow_mem=0x1 shadow_gen=1 seeded_targets=1 predecode=0 seeded=1
+nvidia-vulkan-vaapi: trace seq=12 event=predecode-export-stale-drop surface=7 driver=2 stream=1 codec=0x8
+nvidia-vulkan-vaapi: trace seq=13 event=export-seed-stale-drop surface=0 driver=0 stream=0 codec=0x0
+nvidia-vulkan-vaapi: trace seq=14 event=export-refresh-skip-nondisplay surface=7 driver=2 stream=1 codec=0x8
+nvidia-vulkan-vaapi: trace seq=15 event=export-stale-visible-nondisplay surface=7 driver=2 stream=1 codec=0x8
+nvidia-vulkan-vaapi: trace seq=16 event=export-copy-publish-skip surface=7 driver=2 stream=1 codec=0x8
+[1:2:0512/000000.000000:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:3552] vaEndPicture failed, VA error: operation failed
+nvidia-vulkan-vaapi: device-lost call=vkWaitForFences operation=AV1 decode result=-4 decode_submitted=1 decode_completed=0
+"""
+
+
+def check(condition: bool, message: str) -> None:
+    if not condition:
+        print(message, file=sys.stderr)
+        raise SystemExit(1)
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("usage: trace_log_profiler_smoke.py <source-root>", file=sys.stderr)
+        return 2
+
+    root = Path(sys.argv[1])
+    script = root / "tools" / "profile_trace_log.py"
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "trace.log"
+        log.write_text(FIXTURE, encoding="utf-8")
+        result = subprocess.run([sys.executable, str(script), "--json", str(log)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        text_result = subprocess.run([sys.executable, str(script), str(log)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if result.returncode != 0:
+        print(result.stdout, file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        return result.returncode
+    if text_result.returncode != 0:
+        print(text_result.stdout, file=sys.stderr)
+        print(text_result.stderr, file=sys.stderr)
+        return text_result.returncode
+
+    data = json.loads(result.stdout)
+    totals = data["totals"]
+    check(data["trace_records"] == 15, "trace record count mismatch")
+    check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
+    check(totals["streams"] == 1, "stream count mismatch")
+    check(totals["decode_submitted"] == 1 and totals["decode_completed"] == 1, "decode aggregate mismatch")
+    check(totals["export_copy_targets"] == 2, "copy target aggregate mismatch")
+    check(totals["export_copy_bytes"] == 12288 and totals["export_copy_wait_ns"] == 3000, "copy metric aggregate mismatch")
+    check(totals["fence_waits"] == 1 and totals["fence_wait_ns"] == 2000, "fence metric aggregate mismatch")
+    check(totals["decode_image_high_water"] == 4096, "decode image high-water mismatch")
+    check(totals["export_image_high_water"] == 8192, "export image high-water mismatch")
+    check(totals["video_session_high_water"] == 16384, "video session high-water mismatch")
+    check(totals["driver_stale_drops"] == 2, "driver stale drop aggregate mismatch")
+    check(totals["predecode_stale_drops"] == 1, "predecode stale drop aggregate mismatch")
+    check(totals["export_seed_stale_drops"] == 1, "export seed stale drop aggregate mismatch")
+    check(totals["nondisplay_refresh_skips"] == 1, "nondisplay refresh skip aggregate mismatch")
+    check(totals["stale_visible_nondisplay"] == 1, "stale visible nondisplay aggregate mismatch")
+    check(totals["export_copy_publish_skips"] == 1, "export copy publish skip aggregate mismatch")
+    check(data["browser_dropped_frames_observed"] is False, "browser dropped-frame observation mismatch")
+    check(totals["device_lost"] == 1, "device-lost aggregate mismatch")
+    check(totals["chrome_vaapi_errors"] == 1, "chrome error aggregate mismatch")
+    codec = data["codecs"]["vp9/0x8"]
+    check(codec["driver_stale_drops"] == 1 and codec["predecode_stale_drops"] == 1, "codec stale drop aggregate mismatch")
+    check(codec["nondisplay_refresh_skips"] == 1 and codec["stale_visible_nondisplay"] == 1, "codec nondisplay aggregate mismatch")
+    stream = data["streams"][0]
+    check(stream["codec"] == "vp9/0x8", "stream codec mismatch")
+    check(stream["width"] == 3840 and stream["height"] == 2160, "stream size mismatch")
+    check(stream["stale_drops"] == 1 and stream["predecode_stale_drops"] == 1, "stream stale drop mismatch")
+    check(stream["nondisplay_refresh_skips"] == 1 and stream["stale_visible_nondisplay"] == 1, "stream nondisplay mismatch")
+    check(stream["export_copy_publish_skips"] == 1, "stream publish skip mismatch")
+    check("driver_stale_drops=2" in text_result.stdout, "text stale drop aggregate missing")
+    check("browser_dropped_frames_observed=0" in text_result.stdout, "text browser dropped-frame warning missing")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -335,3 +335,5 @@ test('smoke-telemetry-deep', telemetry_smoke, env: telemetry_trace_deep_env, is_
 test('smoke-telemetry-perf-on', telemetry_smoke, env: telemetry_perf_on_env, is_parallel: false, timeout: 30)
 test('smoke-perf-counters', perf_counters_smoke, is_parallel: false, timeout: 30)
 test('smoke-telemetry-patterns', python3, args: [files('tests/smoke/generic/telemetry_patterns.py'), meson.current_source_dir()], is_parallel: false, timeout: 30)
+test('smoke-trace-log-profiler', python3, args: [files('tests/smoke/generic/trace_log_profiler_smoke.py'), meson.current_source_dir()], is_parallel: false,
+     timeout: 30)
