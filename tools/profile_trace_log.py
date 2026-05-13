@@ -140,10 +140,13 @@ class TraceProfile:
         self.first_seq: int | None = None
         self.last_seq: int | None = None
         self.trace_sequence_gaps = 0
+        self.sequence_first_by_pid: dict[int, int] = {}
+        self.sequence_last_by_pid: dict[int, int] = {}
+        self.sequence_gaps_by_pid: Counter[int] = Counter()
         self.event_counts: Counter[str] = Counter()
         self.chrome_errors: Counter[str] = Counter()
         self.nvidia_events: Counter[str] = Counter()
-        self.device_lost = 0
+        self.device_lost_pids: set[int] = set()
         self.fence_polls = 0
         self.fence_waits = 0
         self.fence_wait_ns = 0
@@ -224,11 +227,17 @@ class TraceProfile:
     def add_trace(self, seq: int, event: str, fields: dict[str, str]) -> None:
         self.trace_records += 1
         self.event_counts[event] += 1
-        if self.first_seq is None:
-            self.first_seq = seq
-        if self.last_seq is not None and seq > self.last_seq + 1:
-            self.trace_sequence_gaps += seq - self.last_seq - 1
-        self.last_seq = max(seq, self.last_seq or seq)
+        pid = parse_int(fields.get("pid")) or 0
+        if pid not in self.sequence_first_by_pid:
+            self.sequence_first_by_pid[pid] = seq
+        last_for_pid = self.sequence_last_by_pid.get(pid)
+        if last_for_pid is not None and seq > last_for_pid + 1:
+            self.sequence_gaps_by_pid[pid] += seq - last_for_pid - 1
+        if last_for_pid is None or seq > last_for_pid:
+            self.sequence_last_by_pid[pid] = seq
+        self.first_seq = min(self.sequence_first_by_pid.values()) if self.sequence_first_by_pid else None
+        self.last_seq = max(self.sequence_last_by_pid.values()) if self.sequence_last_by_pid else None
+        self.trace_sequence_gaps = sum(self.sequence_gaps_by_pid.values())
 
         self.remember_surface(fields, event)
         stream = self.stream_for_fields(fields, event)
@@ -314,6 +323,8 @@ class TraceProfile:
         elif event == "fence-wait":
             self.fence_waits += 1
             self.fence_wait_ns += parse_int(fields.get("wait_ns")) or 0
+            if (parse_int(fields.get("status")) or 0) == -4:
+                self.note_device_lost(fields)
         elif event == "pending-backpressure-drain":
             self.backpressure_drains += 1
         elif event == "pending-reference-drain":
@@ -347,6 +358,8 @@ class TraceProfile:
             self.stale_visible_nondisplay += 1
         elif event == "export-copy-publish-skip":
             self.export_copy_publish_skips += 1
+        elif event == "device-lost":
+            self.note_device_lost(fields)
 
     @staticmethod
     def update_pending(stream: StreamStats, fields: dict[str, str]) -> None:
@@ -357,7 +370,10 @@ class TraceProfile:
     def add_nvidia_event(self, kind: str, fields: dict[str, str]) -> None:
         self.nvidia_events[kind] += 1
         if kind == "device-lost":
-            self.device_lost += 1
+            self.note_device_lost(fields)
+
+    def note_device_lost(self, fields: dict[str, str]) -> None:
+        self.device_lost_pids.add(parse_int(fields.get("pid")) or 0)
 
     def add_chrome_error(self, source: str, message: str) -> None:
         if "vaapi" not in source and "vaapi" not in message.lower():
@@ -376,13 +392,15 @@ class TraceProfile:
     def totals(self) -> dict[str, int]:
         submitted = sum(stream.decode_submitted for stream in self.streams.values())
         completed = sum(stream.decode_completed for stream in self.streams.values())
+        failed = sum(max(stream.decode_failed, stream.va_end_failed) for stream in self.streams.values())
         return {
             "streams": len(self.streams),
             "decode_submitted": submitted,
             "decode_completed": completed,
-            "decode_failed": sum(stream.decode_failed for stream in self.streams.values()),
+            "decode_failed": failed,
             "decode_inflight": submitted - completed,
             "va_end_submitted": sum(stream.va_end_submitted for stream in self.streams.values()),
+            "va_end_failed": sum(stream.va_end_failed for stream in self.streams.values()),
             "export_return": sum(stream.export_return for stream in self.streams.values()),
             "export_failed": sum(stream.export_failed for stream in self.streams.values()),
             "export_copy_done": sum(stream.export_copy_done for stream in self.streams.values()),
@@ -411,7 +429,7 @@ class TraceProfile:
             "nondisplay_refresh_skips": self.nondisplay_refresh_skips,
             "stale_visible_nondisplay": self.stale_visible_nondisplay,
             "export_copy_publish_skips": self.export_copy_publish_skips,
-            "device_lost": self.device_lost,
+            "device_lost": len(self.device_lost_pids),
             "chrome_vaapi_errors": sum(self.chrome_errors.values()),
         }
 
@@ -422,8 +440,9 @@ class TraceProfile:
             total["streams"] += 1
             total["decode_submitted"] += stream.decode_submitted
             total["decode_completed"] += stream.decode_completed
-            total["decode_failed"] += stream.decode_failed
+            total["decode_failed"] += max(stream.decode_failed, stream.va_end_failed)
             total["va_end_submitted"] += stream.va_end_submitted
+            total["va_end_failed"] += stream.va_end_failed
             total["export_failed"] += stream.export_failed
             total["export_copy_bytes"] += stream.export_copy_bytes
             total["export_copy_wait_ns"] += stream.export_copy_wait_ns
@@ -446,6 +465,14 @@ class TraceProfile:
                 "last": self.last_seq,
                 "missing": self.trace_sequence_gaps,
             },
+            "trace_sequences": {
+                str(pid): {
+                    "first": self.sequence_first_by_pid[pid],
+                    "last": self.sequence_last_by_pid.get(pid),
+                    "missing": self.sequence_gaps_by_pid.get(pid, 0),
+                }
+                for pid in sorted(self.sequence_first_by_pid)
+            },
             "totals": self.totals(),
             "browser_dropped_frames_observed": self.browser_dropped_frames_observed,
             "events": dict(sorted(self.event_counts.items())),
@@ -467,9 +494,10 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "surfaces": len(stream.surfaces),
         "decode_submitted": stream.decode_submitted,
         "decode_completed": stream.decode_completed,
-        "decode_failed": stream.decode_failed,
+        "decode_failed": max(stream.decode_failed, stream.va_end_failed),
         "decode_inflight": stream.decode_submitted - stream.decode_completed,
         "va_end_submitted": stream.va_end_submitted,
+        "va_end_failed": stream.va_end_failed,
         "export_return": stream.export_return,
         "export_failed": stream.export_failed,
         "export_copy_done": stream.export_copy_done,
@@ -501,6 +529,7 @@ def print_live_summary(source: str, profile: TraceProfile, output: TextIO = sys.
         "live-summary "
         f"path={source} lines={profile.lines} trace_records={profile.trace_records} "
         f"submitted={totals['decode_submitted']} completed={totals['decode_completed']} "
+        f"failed={totals['decode_failed']} device_lost={totals['device_lost']} "
         f"driver_stale_drops={totals['driver_stale_drops']} chrome_vaapi_errors={totals['chrome_vaapi_errors']}",
         file=output,
     )
@@ -546,7 +575,7 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         "summary "
         f"streams={totals['streams']} submitted={totals['decode_submitted']} "
         f"completed={totals['decode_completed']} failed={totals['decode_failed']} "
-        f"inflight={totals['decode_inflight']} va_end_submitted={totals['va_end_submitted']} "
+        f"inflight={totals['decode_inflight']} va_end_submitted={totals['va_end_submitted']} va_end_failed={totals['va_end_failed']} "
         f"export_return={totals['export_return']} export_failed={totals['export_failed']} "
         f"export_copy_done={totals['export_copy_done']} export_copy_targets={totals['export_copy_targets']} "
         f"export_copy_mb={mib(totals['export_copy_bytes']):.2f} export_copy_wait_ms={totals['export_copy_wait_ns'] / 1000000.0:.3f} "
@@ -568,7 +597,7 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             "codec "
             f"codec={codec_name(codec)} streams={values['streams']} "
             f"submitted={values['decode_submitted']} completed={values['decode_completed']} "
-            f"failed={values['decode_failed']} va_end_submitted={values['va_end_submitted']} "
+            f"failed={values['decode_failed']} va_end_submitted={values['va_end_submitted']} va_end_failed={values['va_end_failed']} "
             f"export_failed={values['export_failed']} export_copy_mb={mib(values['export_copy_bytes']):.2f} "
             f"export_copy_wait_ms={values['export_copy_wait_ns'] / 1000000.0:.3f} upload_mb={mib(values['upload_bytes']):.2f} "
             f"driver_stale_drops={values['driver_stale_drops']} predecode_stale_drops={values['predecode_stale_drops']} "
@@ -581,8 +610,8 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             "stream "
             f"driver={stream.key.driver} stream={stream.key.stream} codec={codec_name(stream.key.codec)} "
             f"size={stream.width}x{stream.height} fourcc=0x{stream.fourcc:x} surfaces={len(stream.surfaces)} "
-            f"submitted={stream.decode_submitted} completed={stream.decode_completed} failed={stream.decode_failed} "
-            f"inflight={stream.decode_submitted - stream.decode_completed} va_end_submitted={stream.va_end_submitted} "
+            f"submitted={stream.decode_submitted} completed={stream.decode_completed} failed={max(stream.decode_failed, stream.va_end_failed)} "
+            f"inflight={stream.decode_submitted - stream.decode_completed} va_end_submitted={stream.va_end_submitted} va_end_failed={stream.va_end_failed} "
             f"export_return={stream.export_return} export_failed={stream.export_failed} "
             f"copy_done={stream.export_copy_done} copy_targets={copy_targets} copy_mb={mib(stream.export_copy_bytes):.2f} "
             f"copy_wait_ms={stream.export_copy_wait_ns / 1000000.0:.3f} "

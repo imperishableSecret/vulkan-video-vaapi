@@ -3,7 +3,6 @@
 #include "vulkan/runtime.h"
 
 #include <atomic>
-#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -33,19 +32,6 @@ namespace {
     }
 
 } // namespace
-
-void vkvv_log(const char* fmt, ...) {
-    if (!vkvv_log_enabled()) {
-        return;
-    }
-
-    va_list args;
-    va_start(args, fmt);
-    std::fprintf(stderr, "nvidia-vulkan-vaapi: ");
-    std::vfprintf(stderr, fmt, args);
-    std::fprintf(stderr, "\n");
-    va_end(args);
-}
 
 void* vkvv_get_or_create_vulkan_runtime(char* reason, size_t reason_size) {
     std::lock_guard<std::mutex> lock(global_runtime_mutex);

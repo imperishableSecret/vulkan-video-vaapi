@@ -289,6 +289,14 @@ telemetry_trace_deep_env.set('VKVV_EXPECT_TRACE_DEEP', '1')
 telemetry_trace_deep_env.set('VKVV_LOG', '0')
 telemetry_trace_deep_env.set('VKVV_EXPECT_LOG', '0')
 
+telemetry_log_file_env = environment()
+telemetry_log_file_env.set('VKVV_TRACE', '1')
+telemetry_log_file_env.set('VKVV_EXPECT_TRACE', '1')
+telemetry_log_file_env.set('VKVV_LOG', '1')
+telemetry_log_file_env.set('VKVV_EXPECT_LOG', '1')
+telemetry_log_file_env.set('VKVV_LOG_FILE', '/tmp/vkvv-telemetry-smoke.log')
+telemetry_log_file_env.set('VKVV_EXPECT_LOG_FILE', '1')
+
 test('smoke-session', session_smoke, is_parallel: false, timeout: 30)
 test('smoke-hevc-session', hevc_session_smoke, is_parallel: false, timeout: 30)
 test('smoke-vp9-session', vp9_session_smoke, is_parallel: false, timeout: 30)
@@ -306,6 +314,7 @@ test('smoke-telemetry-off', telemetry_smoke, env: telemetry_trace_off_env, is_pa
 test('smoke-telemetry-on', telemetry_smoke, env: telemetry_trace_on_env, is_parallel: false, timeout: 30)
 test('smoke-telemetry-log-on', telemetry_smoke, env: telemetry_log_on_env, is_parallel: false, timeout: 30)
 test('smoke-telemetry-deep', telemetry_smoke, env: telemetry_trace_deep_env, is_parallel: false, timeout: 30)
+test('smoke-telemetry-log-file', telemetry_smoke, env: telemetry_log_file_env, is_parallel: false, timeout: 30)
 test('smoke-telemetry-patterns', python3, args: [files('tests/smoke/generic/telemetry_patterns.py'), meson.current_source_dir()], is_parallel: false, timeout: 30)
 test('smoke-trace-log-profiler', python3, args: [files('tests/smoke/generic/trace_log_profiler_smoke.py'), meson.current_source_dir()], is_parallel: false,
      timeout: 30)

@@ -10,11 +10,12 @@ namespace vkvv {
 
     namespace {
 
-        void mark_device_lost(VulkanRuntime* runtime) {
+        bool mark_device_lost(VulkanRuntime* runtime) {
             if (runtime == nullptr || runtime->device_lost.exchange(true)) {
-                return;
+                return false;
             }
             runtime->destroy_detached_export_resources();
+            return true;
         }
 
         CommandSlot& active_slot(VulkanRuntime* runtime) {
@@ -112,7 +113,9 @@ namespace vkvv {
             return true;
         }
         if (result == VK_ERROR_DEVICE_LOST) {
-            mark_device_lost(runtime);
+            const bool first_loss = mark_device_lost(runtime);
+            VKVV_TRACE("device-lost", "call=%s operation=%s result=%d first=%u", call != nullptr ? call : "unknown", operation != nullptr ? operation : "unknown", result,
+                       first_loss ? 1U : 0U);
         }
         std::snprintf(reason, reason_size, "%s for %s failed: %d", call, operation, result);
         return false;

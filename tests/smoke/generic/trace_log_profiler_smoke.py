@@ -24,6 +24,8 @@ nvidia-vulkan-vaapi: trace seq=13 event=export-seed-stale-drop surface=0 driver=
 nvidia-vulkan-vaapi: trace seq=14 event=export-refresh-skip-nondisplay surface=7 driver=2 stream=1 codec=0x8
 nvidia-vulkan-vaapi: trace seq=15 event=export-stale-visible-nondisplay surface=7 driver=2 stream=1 codec=0x8
 nvidia-vulkan-vaapi: trace seq=16 event=export-copy-publish-skip surface=7 driver=2 stream=1 codec=0x8
+nvidia-vulkan-vaapi: trace seq=17 event=fence-wait slot=0 use=decode operation=VP9 decode timeout_ns=18446744073709551615 status=-4 wait_ns=4000
+nvidia-vulkan-vaapi: trace seq=18 event=va-end-finish driver=2 target=7 status=1 decoded=0 pending=0
 [1:2:0512/000000.000000:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:3552] vaEndPicture failed, VA error: operation failed
 nvidia-vulkan-vaapi: device-lost call=vkWaitForFences operation=AV1 decode result=-4 decode_submitted=1 decode_completed=0
 """
@@ -76,14 +78,14 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 15, "trace record count mismatch")
+    check(data["trace_records"] == 17, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 1, "stream count mismatch")
-    check(totals["decode_submitted"] == 1 and totals["decode_completed"] == 1, "decode aggregate mismatch")
+    check(totals["decode_submitted"] == 1 and totals["decode_completed"] == 1 and totals["decode_failed"] == 1, "decode aggregate mismatch")
     check(totals["export_copy_targets"] == 2, "copy target aggregate mismatch")
     check(totals["export_copy_bytes"] == 12288 and totals["export_copy_wait_ns"] == 3000, "copy metric aggregate mismatch")
-    check(totals["fence_waits"] == 1 and totals["fence_wait_ns"] == 2000, "fence metric aggregate mismatch")
+    check(totals["fence_waits"] == 2 and totals["fence_wait_ns"] == 6000, "fence metric aggregate mismatch")
     check(totals["decode_image_high_water"] == 4096, "decode image high-water mismatch")
     check(totals["export_image_high_water"] == 8192, "export image high-water mismatch")
     check(totals["video_session_high_water"] == 16384, "video session high-water mismatch")
@@ -95,6 +97,7 @@ def main() -> int:
     check(totals["export_copy_publish_skips"] == 1, "export copy publish skip aggregate mismatch")
     check(data["browser_dropped_frames_observed"] is False, "browser dropped-frame observation mismatch")
     check(totals["device_lost"] == 1, "device-lost aggregate mismatch")
+    check(totals["va_end_failed"] == 1, "VA end failure aggregate mismatch")
     check(totals["chrome_vaapi_errors"] == 1, "chrome error aggregate mismatch")
     codec = data["codecs"]["vp9/0x8"]
     check(codec["driver_stale_drops"] == 1 and codec["predecode_stale_drops"] == 1, "codec stale drop aggregate mismatch")
@@ -103,6 +106,7 @@ def main() -> int:
     check(stream["codec"] == "vp9/0x8", "stream codec mismatch")
     check(stream["width"] == 3840 and stream["height"] == 2160, "stream size mismatch")
     check(stream["stale_drops"] == 1 and stream["predecode_stale_drops"] == 1, "stream stale drop mismatch")
+    check(stream["decode_failed"] == 1 and stream["va_end_failed"] == 1, "stream failure mismatch")
     check(stream["nondisplay_refresh_skips"] == 1 and stream["stale_visible_nondisplay"] == 1, "stream nondisplay mismatch")
     check(stream["export_copy_publish_skips"] == 1, "stream publish skip mismatch")
     check("driver_stale_drops=2" in text_result.stdout, "text stale drop aggregate missing")
