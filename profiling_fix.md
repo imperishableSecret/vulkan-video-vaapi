@@ -9,6 +9,7 @@ The driver profiling model is now trace-first:
 - `VKVV_TRACE=1` enables raw `nvidia-vulkan-vaapi: trace seq=... event=...` records.
 - `VKVV_TRACE=deep`, `VKVV_TRACE=2`, or `VKVV_TRACE=verbose` keeps the existing deeper diagnostic trace mode.
 - `VKVV_LOG=1` remains human debug logging.
+- `VKVV_LOG_FILE=/path/to/file.log` redirects enabled driver logs and enabled trace records into one driver-owned file instead of mixing them with browser stderr.
 - `VKVV_PERF` driver aggregation has been removed.
 
 The driver no longer owns profiler aggregates. It emits raw events, and `tools/profile_trace_log.py` performs all aggregation from those records.
@@ -42,6 +43,18 @@ VKVV_TRACE=1 google-chrome ... 2>&1 | tools/profile_trace_log.py - --live
 
 `--live` prints rolling summaries to stderr while preserving final text or JSON output on stdout.
 
+For browser runs, prefer a driver-owned log file so Chromium stderr and driver telemetry are not mixed:
+
+```bash
+VKVV_LOG_FILE=/tmp/vkvv-driver.log \
+VKVV_LOG=1 \
+VKVV_TRACE=1 \
+google-chrome ...
+
+tools/profile_trace_log.py /tmp/vkvv-driver.log --json
+tail -F /tmp/vkvv-driver.log | tools/profile_trace_log.py - --live
+```
+
 ### Phase 3: Driver Perf Removal
 
 The legacy in-driver aggregation path was removed:
@@ -60,11 +73,22 @@ Raw trace events remain for the metrics the profiler needs, including fence wait
 
 The profiler no longer consumes legacy `perf`, `perf-stream`, or `perf-sample` lines. Aggregates come from raw trace records, plus separately parsed `device-lost` and Chrome VAAPI error lines.
 
+### Phase 5: Driver-Owned Log File
+
+The telemetry sink now owns both normal logs and traces:
+
+- no `VKVV_LOG_FILE`: existing stderr behavior remains
+- `VKVV_LOG_FILE=/path`: enabled `VKVV_LOG` lines and enabled `VKVV_TRACE` lines are appended to that file
+- trace lines keep the raw `seq=... event=...` contract and include `pid=...` for multi-process browser captures
+- the profiler tracks sequence gaps per PID so a shared file can contain multiple driver processes without treating per-process sequence resets as loss
+- Vulkan `VK_ERROR_DEVICE_LOST` is emitted as a raw `device-lost` trace event, and older captures are still detected from `fence-wait status=-4`
+- `va-end-finish status!=0` is exposed as `va_end_failed` and contributes to effective decode failure totals
+
 ## File Writing And Pipe Limits
 
-The driver has no explicit trace file-size cap. It writes trace lines to stderr with sequence numbers. Real limits are outside the driver: disk space, wrapper log rotation, terminal capture behavior, pipe buffering, and profiler read speed.
+The driver has no explicit log or trace file-size cap. Without `VKVV_LOG_FILE`, enabled telemetry writes to stderr. With `VKVV_LOG_FILE`, enabled telemetry appends to the requested file. Real limits are outside the driver: disk space, filesystem behavior, wrapper log rotation, terminal capture behavior, pipe buffering, and profiler read speed.
 
-Loss or truncation is detectable through `seq_missing` in profiler output.
+Loss or truncation is detectable through `seq_missing` in profiler output. For `VKVV_LOG_FILE` captures, `tools/profile_trace_log.py --json` also exposes per-PID sequence state in `trace_sequences`.
 
 ## Validation
 
@@ -72,7 +96,7 @@ Validated successfully with:
 
 ```bash
 python3 -m py_compile tools/profile_trace_log.py tests/smoke/generic/trace_log_profiler_smoke.py
-meson test -C build smoke-trace-log-profiler smoke-telemetry-patterns smoke-telemetry-off smoke-telemetry-on smoke-telemetry-log-on smoke-telemetry-deep --print-errorlogs
+meson test -C build smoke-trace-log-profiler smoke-telemetry-patterns smoke-telemetry-off smoke-telemetry-on smoke-telemetry-log-on smoke-telemetry-deep smoke-telemetry-log-file --print-errorlogs
 make all
 graphify update .
 ```
