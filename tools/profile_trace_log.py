@@ -11,7 +11,7 @@ from typing import Any, TextIO
 
 
 TRACE_RE = re.compile(r"nvidia-vulkan-vaapi: trace seq=(?P<seq>\d+) event=(?P<event>\S+)(?: (?P<body>.*))?$")
-NVIDIA_RE = re.compile(r"nvidia-vulkan-vaapi: (?P<kind>perf|perf-stream|perf-sample|device-lost)(?: (?P<body>.*))?$")
+NVIDIA_RE = re.compile(r"nvidia-vulkan-vaapi: (?P<kind>device-lost)(?: (?P<body>.*))?$")
 CHROME_ERROR_RE = re.compile(r"\[[^\]]+:ERROR:(?P<source>[^\]]+)\] (?P<message>.*)$")
 KEY_VALUE_RE = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>.*?)(?=\s+[A-Za-z_][A-Za-z0-9_]*=|$)")
 BARE_SIZE_RE = re.compile(r"(?:^|\s)(?P<width>\d+)x(?P<height>\d+)(?:\s|$)")
@@ -172,8 +172,6 @@ class TraceProfile:
         self.browser_dropped_frames_observed = False
         self.surfaces: dict[int, SurfaceInfo] = {}
         self.streams: dict[StreamKey, StreamStats] = {}
-        self.legacy_perf_latest: dict[str, str] = {}
-        self.legacy_perf_streams: dict[StreamKey, dict[str, str]] = {}
 
     def stream_for_fields(self, fields: dict[str, str], event: str = "") -> StreamStats | None:
         surface = parse_int(fields.get("surface") or fields.get("target") or fields.get("source_surface") or fields.get("owner"))
@@ -360,14 +358,6 @@ class TraceProfile:
         self.nvidia_events[kind] += 1
         if kind == "device-lost":
             self.device_lost += 1
-        elif kind == "perf":
-            self.legacy_perf_latest = fields
-        elif kind == "perf-stream":
-            driver = parse_int(fields.get("driver")) or 0
-            stream = parse_int(fields.get("stream")) or 0
-            codec = parse_int(fields.get("codec")) or 0
-            if driver and stream and codec:
-                self.legacy_perf_streams[StreamKey(driver, stream, codec)] = fields
 
     def add_chrome_error(self, source: str, message: str) -> None:
         if "vaapi" not in source and "vaapi" not in message.lower():
@@ -463,10 +453,6 @@ class TraceProfile:
             "nvidia_events": dict(self.nvidia_events),
             "codecs": {codec_name(codec): dict(values) for codec, values in sorted(self.codec_totals().items())},
             "streams": [stream_to_json(stream) for stream in sorted(self.streams.values(), key=lambda item: item.key)],
-            "legacy_perf_latest": self.legacy_perf_latest,
-            "legacy_perf_streams": {
-                f"driver={key.driver} stream={key.stream} codec={codec_name(key.codec)}": value for key, value in sorted(self.legacy_perf_streams.items())
-            },
         }
 
 
@@ -610,16 +596,9 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         print(f"chrome-error count={count} message=\"{message}\"")
     for event, count in profile.event_counts.most_common(top_events):
         print(f"event count={count} name={event}")
-    if profile.legacy_perf_latest:
-        submitted = profile.legacy_perf_latest.get("decode_submitted", "0")
-        completed = profile.legacy_perf_latest.get("decode_completed", "0")
-        device_lost = profile.legacy_perf_latest.get("device_lost", "0")
-        streams = profile.legacy_perf_latest.get("streams", "unknown")
-        print(f"legacy-perf-latest streams={streams} submitted={submitted} completed={completed} device_lost={device_lost}")
-
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Aggregate nvidia-vulkan-vaapi trace/perf logs line by line.")
+    parser = argparse.ArgumentParser(description="Aggregate nvidia-vulkan-vaapi trace logs line by line.")
     parser.add_argument("log", help="Chrome/stderr log containing nvidia-vulkan-vaapi trace lines, or '-' for stdin")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     parser.add_argument("--live", action="store_true", help="print rolling summaries to stderr while reading")
