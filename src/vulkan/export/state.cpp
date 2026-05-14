@@ -82,6 +82,15 @@ namespace vkvv {
             sync.release_mode == VkvvExternalReleaseMode::ConcurrentSharing;
     }
 
+    bool surface_resource_visible_publish_ready(const SurfaceResource* resource, bool display_visible, bool copy_done, bool pixel_proof_required) {
+        if (resource == nullptr) {
+            return false;
+        }
+        const bool pixel_match_ok = !pixel_proof_required || (resource->decode_pixel_proof_valid && resource->present_pixel_proof_valid && resource->present_pixel_matches_decode);
+        return display_visible && copy_done && surface_resource_has_current_export_shadow(resource) && export_visible_release_satisfied(&resource->export_resource) &&
+            pixel_match_ok;
+    }
+
     bool surface_resource_has_exported_shadow_output(const SurfaceResource* resource) {
         return surface_resource_has_current_export_shadow(resource) && resource->exported && resource->export_resource.exported &&
             !resource->export_resource.predecode_quarantined && resource->export_resource.presentable && resource->export_resource.present_pinned &&

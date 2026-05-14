@@ -500,6 +500,7 @@ namespace vkvv {
     bool                av1_visible_export_requires_copy(const SurfaceResource* resource);
     bool                export_visible_release_satisfied(const ExportResource* resource);
     bool                surface_resource_has_current_export_shadow(const SurfaceResource* resource);
+    bool                surface_resource_visible_publish_ready(const SurfaceResource* resource, bool display_visible, bool copy_done, bool pixel_proof_required);
     bool                surface_resource_has_exported_shadow_output(const SurfaceResource* resource);
     bool                surface_resource_has_direct_import_output(const SurfaceResource* resource);
     bool                surface_resource_has_published_visible_output(const SurfaceResource* resource);

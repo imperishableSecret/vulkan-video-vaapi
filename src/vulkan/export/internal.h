@@ -45,6 +45,7 @@ namespace vkvv {
     void     exit_predecode_quarantine(const SurfaceResource* owner, ExportResource* resource, bool release_done);
     void     mark_export_visible_acquire(const SurfaceResource* owner, ExportResource* resource);
     void     mark_export_visible_release(const SurfaceResource* owner, ExportResource* resource, VkImageLayout old_layout, VkImageLayout new_layout);
+    bool     export_pixel_proof_enabled();
     bool     trace_visible_pixel_proof(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
     bool     trace_private_shadow_pixel_proof(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
 
