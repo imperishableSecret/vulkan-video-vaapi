@@ -861,11 +861,23 @@ namespace vkvv {
     }
 
     bool predecode_seed_policy_keeps_placeholder(const ExportResource* target) {
-        return predecode_seed_target_thumbnail_like(target);
+        return target != nullptr && target->content_generation == 0;
     }
 
     bool can_seed_predecode_target(const ExportResource* target, const SurfaceResource* source) {
         return predecode_seed_target_matches(target, source) && !predecode_seed_policy_keeps_placeholder(target);
+    }
+
+    void trace_predecode_keep_placeholder(const ExportResource* target, const SurfaceResource* source) {
+        if (target == nullptr || source == nullptr) {
+            return;
+        }
+        const bool thumbnail_like = predecode_seed_target_thumbnail_like(target);
+        VKVV_TRACE("predecode-seed-policy",
+                   "surface=%u source_surface=%u action=keep-placeholder reason=content-gen-zero presentable=0 present_pinned=0 decoded=0 thumbnail_like=%u content_gen=%llu "
+                   "target_mem=0x%llx",
+                   target->owner_surface_id, source->surface_id, thumbnail_like ? 1U : 0U, static_cast<unsigned long long>(target->content_generation),
+                   vkvv_trace_handle(target->memory));
     }
 
     bool export_seed_source_valid(const SurfaceResource* source) {
@@ -1004,10 +1016,7 @@ namespace vkvv {
             }
             if (predecode_seed_target_matches(record.resource, source) && predecode_seed_policy_keeps_placeholder(record.resource)) {
                 mark_export_predecode_nonpresentable(record.resource);
-                VKVV_TRACE("predecode-seed-policy",
-                           "surface=%u source_surface=%u action=keep-placeholder presentable=0 present_pinned=0 thumbnail_like=1 content_gen=%llu target_mem=0x%llx",
-                           record.owner_surface_id, source->surface_id, static_cast<unsigned long long>(record.resource->content_generation),
-                           vkvv_trace_handle(record.resource->memory));
+                trace_predecode_keep_placeholder(record.resource, source);
             } else if (can_seed_predecode_target(record.resource, source)) {
                 targets.push_back(record.resource);
             }
@@ -1016,10 +1025,7 @@ namespace vkvv {
         for (RetainedExportBacking& backing : runtime->retained_exports) {
             if (predecode_seed_target_matches(&backing.resource, source) && predecode_seed_policy_keeps_placeholder(&backing.resource)) {
                 mark_export_predecode_nonpresentable(&backing.resource);
-                VKVV_TRACE("predecode-seed-policy",
-                           "surface=%u source_surface=%u action=keep-placeholder presentable=0 present_pinned=0 thumbnail_like=1 content_gen=%llu target_mem=0x%llx",
-                           backing.resource.owner_surface_id, source->surface_id, static_cast<unsigned long long>(backing.resource.content_generation),
-                           vkvv_trace_handle(backing.resource.memory));
+                trace_predecode_keep_placeholder(&backing.resource, source);
             } else if (can_seed_predecode_target(&backing.resource, source)) {
                 targets.push_back(&backing.resource);
             }
@@ -1445,10 +1451,7 @@ namespace vkvv {
         target->export_resource.predecode_exported = true;
         if (predecode_seed_target_matches(&target->export_resource, source) && predecode_seed_policy_keeps_placeholder(&target->export_resource)) {
             mark_export_predecode_nonpresentable(&target->export_resource);
-            VKVV_TRACE("predecode-seed-policy",
-                       "surface=%u source_surface=%u action=keep-placeholder presentable=0 present_pinned=0 thumbnail_like=1 content_gen=%llu target_mem=0x%llx",
-                       target->surface_id, source->surface_id, static_cast<unsigned long long>(target->export_resource.content_generation),
-                       vkvv_trace_handle(target->export_resource.memory));
+            trace_predecode_keep_placeholder(&target->export_resource, source);
             return true;
         }
         if (!can_seed_predecode_target(&target->export_resource, source)) {
