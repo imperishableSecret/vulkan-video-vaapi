@@ -492,6 +492,37 @@ namespace {
         return ok;
     }
 
+    bool check_export_pixel_source_policy() {
+        bool                  ok = true;
+        vkvv::SurfaceResource owner{};
+        owner.content_generation = 9;
+
+        vkvv::ExportResource decoded{};
+        decoded.content_generation = owner.content_generation;
+        ok &= check(vkvv::export_pixel_source_for_resource(&owner, &decoded) == vkvv::VkvvExportPixelSource::DecodedContent,
+                    "current decoded export source was not classified as decoded");
+        ok &= check(std::string_view(vkvv::vkvv_export_pixel_source_name(vkvv::VkvvExportPixelSource::DecodedContent)) == "decoded",
+                    "decoded export source reason text should be stable");
+
+        vkvv::ExportResource seed{};
+        seed.predecode_seeded       = true;
+        seed.seed_source_generation = 8;
+        ok &= check(vkvv::export_pixel_source_for_resource(&owner, &seed) == vkvv::VkvvExportPixelSource::StreamLocalSeed,
+                    "seeded export source was not classified as stream-local seed");
+
+        vkvv::ExportResource placeholder{};
+        placeholder.predecode_exported = true;
+        placeholder.black_placeholder  = true;
+        ok &= check(vkvv::export_pixel_source_for_resource(&owner, &placeholder) == vkvv::VkvvExportPixelSource::Placeholder,
+                    "placeholder export source was not classified as placeholder");
+
+        vkvv::ExportResource retained{};
+        retained.content_generation = 4;
+        ok &= check(vkvv::export_pixel_source_for_resource(&owner, &retained) == vkvv::VkvvExportPixelSource::RetainedUnknown,
+                    "retained non-current export source was not classified as retained unknown");
+        return ok;
+    }
+
     bool check_predecode_seed_source_safety() {
         bool                  ok = true;
         vkvv::SurfaceResource source{};
@@ -595,6 +626,7 @@ int main() {
     ok &= check_visible_output_publication_policy();
     ok &= check_private_decode_shadow_state_policy();
     ok &= check_exported_fd_state_policy();
+    ok &= check_export_pixel_source_policy();
     ok &= check_predecode_seed_source_safety();
     return ok ? 0 : 1;
 }

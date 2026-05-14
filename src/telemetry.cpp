@@ -130,7 +130,8 @@ bool vkvv_success_reason_enabled(void) {
 }
 
 bool vkvv_trace_enabled(void) {
-    static const bool enabled = env_enabled("VKVV_TRACE");
+    static const bool enabled = env_enabled("VKVV_TRACE") || env_enabled("VKVV_TRACE_EXPORT_VALIDITY") || env_enabled("VKVV_TRACE_FD_LIFETIME") ||
+        env_enabled("VKVV_TRACE_PIXEL_PROOF");
     return enabled;
 }
 

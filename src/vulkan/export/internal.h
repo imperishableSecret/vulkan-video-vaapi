@@ -48,6 +48,9 @@ namespace vkvv {
     bool     export_pixel_proof_enabled();
     bool     trace_visible_pixel_proof(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
     bool     trace_private_shadow_pixel_proof(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
+    bool     trace_returned_fd_pixel_proof(VulkanRuntime* runtime, const SurfaceResource* owner, ExportResource* resource, const VkvvFdIdentity& fd,
+                                           VkvvExportPixelSource pixel_source, VkvvReturnedFdProof* proof, char* reason, size_t reason_size);
+    void     trace_seed_pixel_proof(VulkanRuntime* runtime, SurfaceResource* source, ExportResource* target, const char* copy_status);
 
 } // namespace vkvv
 

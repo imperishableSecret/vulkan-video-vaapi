@@ -39,6 +39,37 @@ namespace vkvv {
 
     const char* vkvv_external_release_mode_name(VkvvExternalReleaseMode mode);
 
+    enum class VkvvExportPixelSource {
+        None = 0,
+        DecodedContent,
+        StreamLocalSeed,
+        Placeholder,
+        RetainedUnknown,
+    };
+
+    const char* vkvv_export_pixel_source_name(VkvvExportPixelSource source);
+
+    struct VkvvReturnedFdProof {
+        bool                          returned_fd              = false;
+        int                           fd                       = -1;
+        uint64_t                      fd_dev                   = 0;
+        uint64_t                      fd_ino                   = 0;
+        bool                          may_be_sampled_by_client = false;
+        uint64_t                      surface_id               = VA_INVALID_ID;
+        uint64_t                      stream_id                = 0;
+        VkVideoCodecOperationFlagsKHR codec_operation          = 0;
+        uint64_t                      content_generation       = 0;
+        uint64_t                      fd_content_generation    = 0;
+        VkvvExportPixelSource         pixel_source             = VkvvExportPixelSource::None;
+        bool                          decoded_pixels_valid     = false;
+        bool                          seed_pixels_valid        = false;
+        bool                          placeholder_pixels       = false;
+        bool                          pixel_proof_valid        = false;
+        uint64_t                      pixel_crc                = 0;
+        uint64_t                      black_crc                = 0;
+        uint64_t                      zero_crc                 = 0;
+    };
+
     struct ExternalSyncState {
         bool                    external_release_required = false;
         bool                    external_release_done     = false;
@@ -85,6 +116,10 @@ namespace vkvv {
         uint64_t                      predecode_fd_dev             = 0;
         uint64_t                      predecode_fd_ino             = 0;
         uint64_t                      predecode_generation         = 0;
+        uint64_t                      predecode_quarantine_enter_ms = 0;
+        bool                          predecode_had_va_begin       = false;
+        bool                          predecode_had_decode_submit  = false;
+        bool                          predecode_had_visible_decode = false;
         bool                          black_placeholder            = false;
         VASurfaceID                   seed_source_surface_id       = VA_INVALID_ID;
         uint64_t                      seed_source_generation       = 0;
@@ -515,6 +550,7 @@ namespace vkvv {
     bool                export_resource_fd_may_be_sampled_by_client(const ExportResource* resource);
     uint64_t            export_resource_fd_content_generation(const ExportResource* resource);
     bool                export_resource_fd_fresh(const SurfaceResource* resource);
+    VkvvExportPixelSource export_pixel_source_for_resource(const SurfaceResource* owner, const ExportResource* resource);
     bool                surface_resource_has_current_export_shadow(const SurfaceResource* resource);
     bool                surface_resource_visible_publish_ready(const SurfaceResource* resource, bool display_visible, bool copy_done, bool pixel_proof_required);
     bool                surface_resource_has_exported_shadow_output(const SurfaceResource* resource);
@@ -533,13 +569,17 @@ namespace vkvv {
     const ExportResource* current_decode_shadow(const SurfaceResource* resource);
     void                  clear_private_decode_shadow_state(SurfaceResource* resource);
     void                  trace_export_present_state(const SurfaceResource* owner, const ExportResource* resource, const char* action, bool refresh_export, bool display_visible);
-    void         trace_exported_fd_freshness_check(const SurfaceResource* owner, const ExportResource* resource, bool refresh_export, bool display_visible, const char* action);
-    bool         predecode_seed_source_safe_for_client(const SurfaceResource* source);
-    void         clear_predecode_export_state(ExportResource* resource);
-    void         clear_nondisplay_predecode_presentation_state(SurfaceResource* resource);
-    void         clear_surface_export_attach_state(SurfaceResource* resource);
-    void         clear_surface_direct_import_present_state(SurfaceResource* resource);
-    void         clear_surface_av1_visible_output_trace(SurfaceResource* resource);
+    void                  trace_exported_fd_freshness_check(const SurfaceResource* owner, const ExportResource* resource, bool refresh_export, bool display_visible,
+                                                            const char* action);
+    void                  trace_export_fd_lifetime(const SurfaceResource* owner, const ExportResource* resource, const char* action, uint64_t generation_at_action,
+                                                   bool may_be_sampled_by_client);
+    void                  trace_predecode_quarantine_outcome(const SurfaceResource* owner, const ExportResource* resource, const char* outcome);
+    bool                  predecode_seed_source_safe_for_client(const SurfaceResource* source);
+    void                  clear_predecode_export_state(ExportResource* resource);
+    void                  clear_nondisplay_predecode_presentation_state(SurfaceResource* resource);
+    void                  clear_surface_export_attach_state(SurfaceResource* resource);
+    void                  clear_surface_direct_import_present_state(SurfaceResource* resource);
+    void                  clear_surface_av1_visible_output_trace(SurfaceResource* resource);
     VkDeviceSize retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties& properties);
     RetainedExportBudget  retained_export_budget_from_expected(size_t expected_count, VkDeviceSize expected_bytes, VkDeviceSize global_cap_bytes);
     size_t                runtime_retained_export_count(VulkanRuntime* runtime);

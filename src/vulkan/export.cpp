@@ -74,6 +74,62 @@ namespace {
         return true;
     }
 
+    struct ExportPendingSnapshot {
+        bool       found          = false;
+        CommandUse use            = CommandUse::Idle;
+        VASurfaceID surface       = VA_INVALID_ID;
+        bool       refresh_export = false;
+        char       operation[64]{};
+    };
+
+    ExportPendingSnapshot pending_export_snapshot(VulkanRuntime* runtime, const VkvvSurface* surface) {
+        ExportPendingSnapshot snapshot{};
+        if (runtime == nullptr || surface == nullptr) {
+            return snapshot;
+        }
+        std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+        for (const CommandSlot& slot : runtime->command_slots) {
+            if (slot.pending.surface != surface) {
+                continue;
+            }
+            snapshot.found          = true;
+            snapshot.use            = slot.pending.use;
+            snapshot.surface        = slot.pending.surface != nullptr ? slot.pending.surface->id : VA_INVALID_ID;
+            snapshot.refresh_export = slot.pending.refresh_export;
+            std::snprintf(snapshot.operation, sizeof(snapshot.operation), "%s", slot.pending.operation[0] != '\0' ? slot.pending.operation : command_use_name(slot.pending.use));
+            return snapshot;
+        }
+        return snapshot;
+    }
+
+    const char* export_decision_for_source(VkvvExportPixelSource source, bool drained) {
+        if (drained) {
+            return "drain-and-return";
+        }
+        switch (source) {
+            case VkvvExportPixelSource::DecodedContent: return "return-decoded";
+            case VkvvExportPixelSource::StreamLocalSeed: return "return-seed";
+            case VkvvExportPixelSource::Placeholder: return "return-placeholder";
+            case VkvvExportPixelSource::RetainedUnknown: return "return-retained";
+            default: return "fail";
+        }
+    }
+
+    void trace_direct_export_fd_lifetime(const VkvvSurface* surface, const SurfaceResource* resource, const VkvvFdIdentity& fd_stat, const char* action,
+                                         uint64_t generation_at_action, bool may_be_sampled_by_client) {
+        if (surface == nullptr || resource == nullptr) {
+            return;
+        }
+        VKVV_TRACE("export-fd-lifetime",
+                   "event_action=%s surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu fd_content_gen=%llu present_gen=0 "
+                   "predecode_quarantined=0 may_be_sampled_by_client=%u generation_at_action=%llu",
+                   action != nullptr ? action : "unknown", surface->id, static_cast<unsigned long long>(resource->driver_instance_id),
+                   static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, static_cast<unsigned long long>(fd_stat.dev),
+                   static_cast<unsigned long long>(fd_stat.ino), static_cast<unsigned long long>(resource->content_generation),
+                   static_cast<unsigned long long>(resource->content_generation), may_be_sampled_by_client ? 1U : 0U,
+                   static_cast<unsigned long long>(generation_at_action));
+    }
+
     bool trace_decode_shadow_coherence_check(const SurfaceResource* resource, bool refresh_export, bool display_visible, const char* action) {
         if (resource == nullptr || resource->export_resource.image == VK_NULL_HANDLE) {
             return true;
@@ -777,10 +833,65 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
     if (format == nullptr) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
-    const bool pending_decode_before_export = runtime_surface_has_pending_work(runtime, surface);
-    const bool decoded_before_export_drain  = surface->decoded;
-    VAStatus   drain_status                 = drain_pending_surface_work_before_sync_command(runtime, const_cast<VkvvSurface*>(surface), reason, reason_size);
+    const ExportPendingSnapshot pending_before_export         = pending_export_snapshot(runtime, surface);
+    const bool                  pending_decode_before_export = pending_before_export.found;
+    const bool                  decoded_before_export_drain  = surface->decoded;
+    const uint64_t              content_generation_before_drain = resource->content_generation;
+    const bool                  fd_already_exported_before         = resource->export_resource.exported_fd.fd_exported;
+    auto trace_drain_attempt = [&](VAStatus status) {
+        VKVV_TRACE("export-drain-attempt",
+                   "surface=%u stream=%llu codec=0x%x content_gen_before=%llu pending_decode_found=%u pending_operation=%s pending_surface=%u pending_refresh_export=%u "
+                   "pending_display_visible=%u drain_attempted=%u drain_status=%d content_gen_after=%llu fd_content_gen_after=%llu can_return_decoded_after_drain=%u",
+                   surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                   static_cast<unsigned long long>(content_generation_before_drain), pending_before_export.found ? 1U : 0U,
+                   pending_before_export.operation[0] != '\0' ? pending_before_export.operation : "none", pending_before_export.surface,
+                   pending_before_export.refresh_export ? 1U : 0U, pending_before_export.refresh_export ? 1U : 0U, pending_before_export.found ? 1U : 0U, status,
+                   static_cast<unsigned long long>(resource->content_generation),
+                   static_cast<unsigned long long>(export_resource_fd_content_generation(&resource->export_resource)),
+                   surface->decoded && resource->content_generation != 0 ? 1U : 0U);
+    };
+    auto trace_export_summary = [&](ExportResource* returned_resource, const VkvvReturnedFdProof* proof, bool returned_fd, const VkvvFdIdentity& fd_stat,
+                                    const char* decision, const char* trace_reason, VAStatus status) {
+        const VkvvExportPixelSource pixel_source = returned_resource != nullptr ? export_pixel_source_for_resource(resource, returned_resource) :
+            (returned_fd && surface->decoded && resource->content_generation != 0 ? VkvvExportPixelSource::DecodedContent : VkvvExportPixelSource::None);
+        const uint64_t fd_content_gen = returned_resource != nullptr ? export_resource_fd_content_generation(returned_resource) : (returned_fd ? resource->content_generation : 0);
+        const bool     may_sample = returned_resource != nullptr ? export_resource_fd_may_be_sampled_by_client(returned_resource) : returned_fd;
+        const bool     proof_black = proof != nullptr && proof->pixel_crc != 0 && proof->black_crc != 0 && proof->pixel_crc == proof->black_crc;
+        const bool     proof_zero  = proof != nullptr && proof->pixel_crc != 0 && proof->zero_crc != 0 && proof->pixel_crc == proof->zero_crc;
+        const bool     placeholder =
+            pixel_source == VkvvExportPixelSource::Placeholder || (returned_resource != nullptr && returned_resource->black_placeholder) || proof_black || proof_zero;
+        const bool valid_decoded_pixels_available = surface->decoded && resource->content_generation != 0 &&
+            (returned_resource == nullptr || returned_resource->content_generation == resource->content_generation || pixel_source == VkvvExportPixelSource::DecodedContent);
+        const bool valid_seed_available = pixel_source == VkvvExportPixelSource::StreamLocalSeed && fd_content_gen != 0;
+        VKVV_TRACE("export-validity-gate",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x profile=0 width=%u height=%u fourcc=0x%x content_gen=%llu decoded=%u pending_decode=%u refresh_export=%u "
+                   "display_visible=%u fd_already_exported=%u fd_dev=%llu fd_ino=%llu fd_content_gen=%llu may_be_sampled_by_client=%u valid_decoded_pixels_available=%u "
+                   "valid_seed_available=%u placeholder_available=%u retained_candidate_available=%u decision=%s reason=%s returned_fd=%u status=%d",
+                   surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, surface->width,
+                   surface->height, resource->va_fourcc, static_cast<unsigned long long>(resource->content_generation), surface->decoded ? 1U : 0U,
+                   pending_before_export.found ? 1U : 0U, surface->decoded ? 1U : 0U, surface->decoded ? 1U : 0U, fd_already_exported_before ? 1U : 0U,
+                   static_cast<unsigned long long>(fd_stat.valid ? fd_stat.dev : (returned_resource != nullptr ? returned_resource->exported_fd.fd_dev : 0)),
+                   static_cast<unsigned long long>(fd_stat.valid ? fd_stat.ino : (returned_resource != nullptr ? returned_resource->exported_fd.fd_ino : 0)),
+                   static_cast<unsigned long long>(fd_content_gen), may_sample ? 1U : 0U, valid_decoded_pixels_available ? 1U : 0U, valid_seed_available ? 1U : 0U,
+                   placeholder ? 1U : 0U, resource->export_retained_attached ? 1U : 0U, decision != nullptr ? decision : "fail", trace_reason != nullptr ? trace_reason : "unknown",
+                   returned_fd ? 1U : 0U, status);
+        VKVV_TRACE("generic-export-summary",
+                   "surface=%u stream=%llu codec=0x%x width=%u height=%u fourcc=0x%x content_gen=%llu fd_content_gen=%llu returned_fd=%u decision=%s pixel_source=%s "
+                   "pixel_proof_valid=%u is_black=%u is_zero=%u pending_decode=%u valid_seed_available=%u quarantine_outcome=%s external_release_mode=%s status=%d "
+                   "may_be_sampled_by_client=%u",
+                   surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, surface->width, surface->height, resource->va_fourcc,
+                   static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(fd_content_gen), returned_fd ? 1U : 0U,
+                   decision != nullptr ? decision : "fail", vkvv_export_pixel_source_name(pixel_source), proof != nullptr && proof->pixel_proof_valid ? 1U : 0U,
+                   proof_black || pixel_source == VkvvExportPixelSource::Placeholder ? 1U : 0U, proof_zero ? 1U : 0U, pending_before_export.found ? 1U : 0U,
+                   valid_seed_available ? 1U : 0U,
+                   returned_resource != nullptr && returned_resource->predecode_quarantined ? "pending" : "none",
+                   returned_resource != nullptr ? vkvv_external_release_mode_name(returned_resource->external_sync.release_mode) : "none", status, may_sample ? 1U : 0U);
+    };
+    VAStatus drain_status = drain_pending_surface_work_before_sync_command(runtime, const_cast<VkvvSurface*>(surface), reason, reason_size);
+    trace_drain_attempt(drain_status);
     if (drain_status != VA_STATUS_SUCCESS) {
+        VkvvFdIdentity no_fd{};
+        trace_export_summary(nullptr, nullptr, false, no_fd, "fail", "drain-failed", drain_status);
         return drain_status;
     }
     if (!decoded_before_export_drain && surface->decoded) {
@@ -834,6 +945,8 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                            static_cast<unsigned long long>(resource->export_resource.decode_shadow_generation), resource->export_resource.presentable ? 1U : 0U);
             } else {
                 if (!copy_surface_to_export_resource(runtime, resource, &seeded_predecode_exports, reason, reason_size)) {
+                    VkvvFdIdentity no_fd{};
+                    trace_export_summary(&resource->export_resource, nullptr, false, no_fd, "fail", "copy-shadow-failed", VA_STATUS_ERROR_OPERATION_FAILED);
                     return VA_STATUS_ERROR_OPERATION_FAILED;
                 }
                 clear_private_decode_shadow_state(resource);
@@ -848,8 +961,12 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                        export_after_nondisplay_skip ? 1U : 0U, static_cast<unsigned long long>(resource->last_nondisplay_skip_generation),
                        static_cast<unsigned long long>(resource->last_nondisplay_skip_shadow_generation), skip_shadow_was_stale ? 1U : 0U, seeded_predecode_exports);
         } else if (!ensure_export_resource(runtime, resource, reason, reason_size)) {
+            VkvvFdIdentity no_fd{};
+            trace_export_summary(&resource->export_resource, nullptr, false, no_fd, "fail", "ensure-export-resource-failed", VA_STATUS_ERROR_OPERATION_FAILED);
             return VA_STATUS_ERROR_OPERATION_FAILED;
         } else if (!seed_predecode_export_from_last_good(runtime, resource, reason, reason_size)) {
+            VkvvFdIdentity no_fd{};
+            trace_export_summary(&resource->export_resource, nullptr, false, no_fd, "fail", "seed-export-failed", VA_STATUS_ERROR_OPERATION_FAILED);
             return VA_STATUS_ERROR_OPERATION_FAILED;
         }
         ExportResource* shadow = &resource->export_resource;
@@ -885,6 +1002,8 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
 
     if (export_memory == VK_NULL_HANDLE) {
         std::snprintf(reason, reason_size, "Vulkan surface image has no exportable memory layout");
+        VkvvFdIdentity no_fd{};
+        trace_export_summary(exported_shadow, nullptr, false, no_fd, "fail", "missing-export-memory", VA_STATUS_ERROR_INVALID_SURFACE);
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
 
@@ -903,6 +1022,8 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         if (result == VK_SUCCESS) {
             std::snprintf(reason, reason_size, "vkGetMemoryFdKHR for surface export returned invalid fd=%d", fd);
         }
+        VkvvFdIdentity no_fd{};
+        trace_export_summary(exported_shadow, nullptr, false, no_fd, "fail", "get-fd-failed", VA_STATUS_ERROR_OPERATION_FAILED);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
@@ -910,6 +1031,8 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                                                                  export_has_modifier, fd, descriptor, reason, reason_size);
     if (descriptor_status != VA_STATUS_SUCCESS) {
         close(fd);
+        VkvvFdIdentity no_fd{};
+        trace_export_summary(exported_shadow, nullptr, false, no_fd, "fail", "descriptor-fill-failed", descriptor_status);
         return descriptor_status;
     }
 
@@ -944,6 +1067,9 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                        pending_decode_before_export ? 1U : 0U, seeded_predecode ? "stream-local-seed" : "neutral-placeholder",
                        seeded_predecode ? exported_shadow->seed_source_surface_id : VA_INVALID_ID,
                        static_cast<unsigned long long>(seeded_predecode ? exported_shadow->seed_source_generation : 0), seeded_predecode ? 1U : 0U);
+            if (!seeded_predecode) {
+                trace_predecode_quarantine_outcome(resource, exported_shadow, "placeholder-returned");
+            }
         }
         trace_exported_fd_freshness_check(resource, exported_shadow, surface->decoded, surface->decoded,
                                           surface->decoded ? "export-fd-current" : (exported_shadow->predecode_seeded ? "stream-local-seed" : "neutral-placeholder"));
@@ -961,6 +1087,38 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                static_cast<unsigned long long>(exported_shadow != nullptr ? export_resource_fd_content_generation(exported_shadow) : resource->content_generation),
                exported_shadow != nullptr && export_resource_fd_may_be_sampled_by_client(exported_shadow) ? 1U : 0U, export_after_nondisplay_skip ? 1U : 0U,
                static_cast<unsigned long long>(resource->last_nondisplay_skip_generation), static_cast<unsigned long long>(resource->last_nondisplay_skip_shadow_generation));
+
+    VkvvReturnedFdProof         returned_proof{};
+    const bool                  drained_to_decoded = pending_decode_before_export && !decoded_before_export_drain && surface->decoded && resource->content_generation != 0;
+    const VkvvExportPixelSource pixel_source =
+        exported_shadow != nullptr ? export_pixel_source_for_resource(resource, exported_shadow) : VkvvExportPixelSource::DecodedContent;
+    const char* decision = export_decision_for_source(pixel_source, drained_to_decoded);
+    if (exported_shadow != nullptr) {
+        (void)trace_returned_fd_pixel_proof(runtime, resource, exported_shadow, fd_stat, pixel_source, &returned_proof, reason, reason_size);
+        trace_export_fd_lifetime(resource, exported_shadow, "return", export_resource_fd_content_generation(exported_shadow),
+                                 export_resource_fd_may_be_sampled_by_client(exported_shadow));
+    } else {
+        returned_proof.returned_fd              = fd_stat.valid;
+        returned_proof.fd                       = fd;
+        returned_proof.fd_dev                   = fd_stat.dev;
+        returned_proof.fd_ino                   = fd_stat.ino;
+        returned_proof.may_be_sampled_by_client = fd_stat.valid;
+        returned_proof.surface_id               = surface->id;
+        returned_proof.stream_id                = resource->stream_id;
+        returned_proof.codec_operation          = resource->codec_operation;
+        returned_proof.content_generation       = resource->content_generation;
+        returned_proof.fd_content_generation    = resource->content_generation;
+        returned_proof.pixel_source             = pixel_source;
+        returned_proof.decoded_pixels_valid     = surface->decoded && resource->content_generation != 0;
+        VKVV_TRACE("returned-fd-pixel-proof",
+                   "surface=%u fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu pixel_source=%s returned_crc=0x0 black_crc=0x0 zero_crc=0x0 "
+                   "is_black=0 is_zero=0 pixel_proof_valid=0 may_be_sampled_by_client=%u returned_fd=1 sample_bytes=0 proof_enabled=0",
+                   surface->id, static_cast<unsigned long long>(fd_stat.dev), static_cast<unsigned long long>(fd_stat.ino),
+                   static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                   static_cast<unsigned long long>(resource->content_generation), vkvv_export_pixel_source_name(pixel_source), fd_stat.valid ? 1U : 0U);
+        trace_direct_export_fd_lifetime(surface, resource, fd_stat, "return", resource->content_generation, fd_stat.valid);
+    }
+    trace_export_summary(exported_shadow, &returned_proof, true, fd_stat, decision, "success", VA_STATUS_SUCCESS);
 
     VKVV_SUCCESS_REASON(
         reason, reason_size,

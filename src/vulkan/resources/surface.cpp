@@ -77,11 +77,13 @@ namespace vkvv {
             return;
         }
         if (resource->predecode_quarantined) {
+            trace_predecode_quarantine_outcome(nullptr, resource, "destroyed");
             VKVV_TRACE("export-resource-destroy", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx fd_dev=%llu fd_ino=%llu content_gen=%llu predecode_quarantined=1",
                        resource->owner_surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
                        resource->codec_operation, vkvv_trace_handle(resource->memory), static_cast<unsigned long long>(resource->predecode_fd_dev),
                        static_cast<unsigned long long>(resource->predecode_fd_ino), static_cast<unsigned long long>(resource->predecode_generation));
         }
+        trace_export_fd_lifetime(nullptr, resource, "destroy", resource->content_generation, export_resource_fd_may_be_sampled_by_client(resource));
         if (resource->image != VK_NULL_HANDLE) {
             vkDestroyImage(runtime->device, resource->image, nullptr);
             resource->image = VK_NULL_HANDLE;
@@ -110,6 +112,10 @@ namespace vkvv {
         resource->predecode_fd_dev             = 0;
         resource->predecode_fd_ino             = 0;
         resource->predecode_generation         = 0;
+        resource->predecode_quarantine_enter_ms = 0;
+        resource->predecode_had_va_begin       = false;
+        resource->predecode_had_decode_submit  = false;
+        resource->predecode_had_visible_decode = false;
         resource->black_placeholder            = false;
         resource->seed_source_surface_id       = VA_INVALID_ID;
         resource->seed_source_generation       = 0;
@@ -480,6 +486,7 @@ namespace vkvv {
         detached.decode_shadow_private_active = false;
         detached.decode_shadow_generation     = detached.content_generation;
         mark_export_fd_detached(&detached);
+        trace_export_fd_lifetime(resource, &detached, "retained-detach", detached.content_generation, false);
         if (!retainable) {
             lock.unlock();
             destroy_export_resource(runtime, &detached);
@@ -562,6 +569,8 @@ namespace vkvv {
             return;
         }
 
+        trace_export_fd_lifetime(resource, &resource->export_resource, "surface-destroy", resource->content_generation,
+                                 export_resource_fd_may_be_sampled_by_client(&resource->export_resource));
         unregister_export_seed_resource(runtime, resource);
         detach_export_resource(runtime, resource);
         destroy_decode_resource_handles(runtime, resource);
