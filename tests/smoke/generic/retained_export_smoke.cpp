@@ -321,6 +321,12 @@ namespace {
         resource.codec_operation    = codec_av1;
         resource.content_generation = 12;
 
+        ok &= check(!vkvv::surface_resource_requires_visible_publication(&resource, true), "unexported AV1 resource unexpectedly required visible publication");
+        resource.import.external = true;
+        ok &= check(vkvv::surface_resource_requires_visible_publication(&resource, true), "external AV1 visible refresh did not require publication");
+        ok &= check(!vkvv::surface_resource_requires_visible_publication(&resource, false), "AV1 non-display refresh required visible publication");
+        resource.import.external = false;
+
         ok &= check(!vkvv::surface_resource_has_current_export_shadow(&resource), "empty shadow was treated as current");
         ok &= check(!vkvv::surface_resource_has_published_visible_output(&resource), "empty resource was treated as published");
 
@@ -349,6 +355,11 @@ namespace {
 
         vkvv::clear_surface_direct_import_present_state(&resource);
         ok &= check(!vkvv::surface_resource_has_direct_import_output(&resource), "cleared direct import state still published");
+
+        vkvv::SurfaceResource vp9_resource = resource;
+        vp9_resource.codec_operation       = codec_vp9;
+        vp9_resource.import.external       = true;
+        ok &= check(!vkvv::surface_resource_requires_visible_publication(&vp9_resource, true), "non-AV1 refresh used the AV1 publication invariant");
         return ok;
     }
 
