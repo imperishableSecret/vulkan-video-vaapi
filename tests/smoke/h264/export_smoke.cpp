@@ -470,8 +470,7 @@ namespace {
             cleanup();
             return false;
         }
-        const VkDeviceMemory       nondisplay_shadow_memory     = nondisplay_resource->export_resource.memory;
-        const uint64_t             nondisplay_shadow_generation = nondisplay_resource->export_resource.content_generation;
+        const VkDeviceMemory       nondisplay_shadow_memory = nondisplay_resource->export_resource.memory;
 
         const vkvv::DecodeImageKey nondisplay_decode_key = h264_decode_key(typed_session, &nondisplay, {64, 64});
         if (!vkvv::ensure_surface_resource(runtime, &nondisplay, nondisplay_decode_key, reason, sizeof(reason))) {
@@ -491,13 +490,15 @@ namespace {
             cleanup();
             return false;
         }
-        if (nondisplay_resource->export_resource.memory != nondisplay_shadow_memory || nondisplay_resource->export_resource.content_generation != nondisplay_shadow_generation ||
-            vkvv_vulkan_surface_has_predecode_export(&nondisplay) || nondisplay_resource->export_resource.predecode_seeded ||
+        if (nondisplay_resource->export_resource.memory != nondisplay_shadow_memory ||
+            nondisplay_resource->export_resource.content_generation != nondisplay_resource->content_generation || vkvv_vulkan_surface_has_predecode_export(&nondisplay) ||
+            nondisplay_resource->export_resource.predecode_seeded ||
             nondisplay_resource->export_resource.seed_source_surface_id != VA_INVALID_ID) {
-            std::fprintf(stderr, "non-display decode mutated its exported shadow instead of preserving display content\n");
+            std::fprintf(stderr, "non-display decode did not refresh its exported shadow from decoded content\n");
             cleanup();
             return false;
         }
+        const uint64_t nondisplay_decoded_generation = nondisplay_resource->export_resource.content_generation;
 
         const vkvv::DecodeImageKey next_display_key = h264_decode_key(typed_session, &next_display, {64, 64});
         if (!vkvv::ensure_surface_resource(runtime, &next_display, next_display_key, reason, sizeof(reason))) {
@@ -516,7 +517,8 @@ namespace {
             cleanup();
             return false;
         }
-        if (nondisplay_resource->export_resource.memory != nondisplay_shadow_memory || nondisplay_resource->export_resource.content_generation != nondisplay_shadow_generation ||
+        if (nondisplay_resource->export_resource.memory != nondisplay_shadow_memory ||
+            nondisplay_resource->export_resource.content_generation != nondisplay_decoded_generation ||
             nondisplay_resource->export_resource.seed_source_surface_id != VA_INVALID_ID) {
             std::fprintf(stderr, "later displayable refresh incorrectly reseeded the non-display predecode export\n");
             cleanup();
@@ -601,7 +603,6 @@ namespace {
         std::printf("%s\n", reason);
         const VkvvFdIdentity retained_fd           = vkvv::retained_export_fd_identity(vp9_resource->export_resource);
         const VkDeviceMemory retained_memory       = vp9_resource->export_resource.memory;
-        const uint64_t       retained_generation   = vp9_resource->export_resource.content_generation;
         const bool           retained_has_modifier = vp9_resource->export_resource.has_drm_format_modifier;
         const uint64_t       retained_modifier     = vp9_resource->export_resource.drm_format_modifier;
         if (status != VA_STATUS_SUCCESS || !retained_fd.valid) {
@@ -651,10 +652,10 @@ namespace {
             std::printf("%s\n", reason);
         }
         if (status != VA_STATUS_SUCCESS || imported_resource->export_resource.image == VK_NULL_HANDLE || imported_resource->export_resource.memory != retained_memory ||
-            imported_resource->export_resource.content_generation != retained_generation ||
+            imported_resource->export_resource.content_generation != imported_resource->content_generation ||
             imported_resource->export_resource.codec_operation != VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR || imported_resource->export_seed_generation != 0 ||
             imported_resource->exported) {
-            std::fprintf(stderr, "non-display imported decode did not preserve the attached retained backing\n");
+            std::fprintf(stderr, "non-display imported decode did not refresh the attached retained backing\n");
             cleanup();
             return false;
         }

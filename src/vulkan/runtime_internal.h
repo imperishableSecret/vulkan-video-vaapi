@@ -49,6 +49,7 @@ namespace vkvv {
         VisibleRefresh,
         PredecodePlaceholderSeed,
         ImportOutput,
+        NondisplayCurrentRefresh,
     };
 
     const char* vkvv_export_copy_reason_name(VkvvExportCopyReason reason);
