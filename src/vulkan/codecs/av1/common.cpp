@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "telemetry.h"
 
 #include <cstdio>
 
@@ -197,6 +198,122 @@ namespace vkvv {
         }
     }
 
+    void av1_clear_surface_slot(AV1VideoSession* session, VASurfaceID surface_id) {
+        if (session == nullptr || surface_id == VA_INVALID_ID) {
+            return;
+        }
+        for (auto it = session->surface_slots.begin(); it != session->surface_slots.end();) {
+            if (it->surface_id == surface_id) {
+                it = session->surface_slots.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    SurfaceResource* av1_retained_dpb_resource_for_slot(const AV1VideoSession* session, int slot) {
+        if (session == nullptr || slot < 0 || static_cast<uint32_t>(slot) >= max_av1_dpb_slots) {
+            return nullptr;
+        }
+        return session->retained_dpb_resources[slot];
+    }
+
+    void av1_release_retained_dpb_resource(VulkanRuntime* runtime, AV1VideoSession* session, int slot) {
+        if (session == nullptr || slot < 0 || static_cast<uint32_t>(slot) >= max_av1_dpb_slots) {
+            return;
+        }
+        SurfaceResource* resource             = session->retained_dpb_resources[slot];
+        session->retained_dpb_resources[slot] = nullptr;
+        destroy_surface_resource_raw(runtime, resource);
+    }
+
+    void av1_release_unreferenced_retained_dpb_resources(VulkanRuntime* runtime, AV1VideoSession* session) {
+        if (session == nullptr) {
+            return;
+        }
+        for (uint32_t slot = 0; slot < max_av1_dpb_slots; slot++) {
+            if (session->retained_dpb_resources[slot] == nullptr) {
+                continue;
+            }
+            bool referenced = false;
+            for (const AV1ReferenceSlot& entry : session->reference_slots) {
+                if (entry.slot == static_cast<int>(slot)) {
+                    referenced = true;
+                    break;
+                }
+            }
+            if (!referenced) {
+                for (const AV1ReferenceSlot& entry : session->surface_slots) {
+                    if (entry.slot == static_cast<int>(slot)) {
+                        referenced = true;
+                        break;
+                    }
+                }
+            }
+            if (!referenced) {
+                av1_release_retained_dpb_resource(runtime, session, static_cast<int>(slot));
+            }
+        }
+    }
+
+    bool av1_target_surface_needs_detach(const AV1VideoSession* session, const VkvvAV1DecodeInput* input, VASurfaceID target_surface_id) {
+        if (session == nullptr || input == nullptr || input->pic == nullptr || target_surface_id == VA_INVALID_ID) {
+            return false;
+        }
+        const AV1ReferenceSlot* surface_slot = av1_surface_slot_for_surface(session, target_surface_id);
+        if (surface_slot == nullptr || surface_slot->slot < 0) {
+            return false;
+        }
+
+        for (uint32_t i = 0; i < VK_MAX_VIDEO_AV1_REFERENCES_PER_FRAME_KHR; i++) {
+            const uint8_t ref_index = input->pic->ref_frame_idx[i];
+            if (ref_index >= max_av1_reference_slots) {
+                continue;
+            }
+            if (input->pic->ref_frame_map[ref_index] == target_surface_id) {
+                return true;
+            }
+            const AV1ReferenceSlot* ref_slot = av1_reference_slot_for_index(session, ref_index);
+            if (ref_slot != nullptr && ref_slot->slot == surface_slot->slot) {
+                return true;
+            }
+        }
+
+        for (uint32_t i = 0; i < max_av1_reference_slots; i++) {
+            if ((input->header.refresh_frame_flags & (1U << i)) != 0) {
+                continue;
+            }
+            const AV1ReferenceSlot* ref_slot = av1_reference_slot_for_index(session, i);
+            if (ref_slot != nullptr && ref_slot->slot == surface_slot->slot) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void av1_detach_target_dpb_resource(VulkanRuntime* runtime, AV1VideoSession* session, VkvvSurface* target, VASurfaceID target_surface_id) {
+        if (session == nullptr || target == nullptr || target->vulkan == nullptr) {
+            return;
+        }
+        const AV1ReferenceSlot* surface_slot = av1_surface_slot_for_surface(session, target_surface_id);
+        if (surface_slot == nullptr || surface_slot->slot < 0 || static_cast<uint32_t>(surface_slot->slot) >= max_av1_dpb_slots) {
+            return;
+        }
+
+        const int slot     = surface_slot->slot;
+        auto*     resource = static_cast<SurfaceResource*>(target->vulkan);
+        if (session->retained_dpb_resources[slot] != nullptr && session->retained_dpb_resources[slot] != resource) {
+            destroy_surface_resource_raw(runtime, session->retained_dpb_resources[slot]);
+        }
+        session->retained_dpb_resources[slot] = resource;
+        target->vulkan                        = nullptr;
+        target->decoded                       = false;
+        target->work_state                    = VKVV_SURFACE_WORK_READY;
+        target->sync_status                   = VA_STATUS_SUCCESS;
+        VKVV_TRACE("av1-target-reference-detach", "surface=%u slot=%d content_gen=%llu retained_mem=%llu", target_surface_id, slot,
+                   static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->allocation_size));
+    }
+
     void av1_mark_retained_reference_slots(const AV1VideoSession* session, const VkvvAV1DecodeInput* input, bool used_slots[max_av1_dpb_slots]) {
         if (session == nullptr || used_slots == nullptr) {
             return;
@@ -239,9 +356,44 @@ namespace vkvv {
         return target_slot;
     }
 
+    int av1_reserved_scratch_dpb_slot(const AV1VideoSession* session) {
+        if (session == nullptr) {
+            return -1;
+        }
+        uint32_t slot_count = session->max_dpb_slots;
+        if (slot_count == 0) {
+            return -1;
+        }
+        if (slot_count > max_av1_dpb_slots) {
+            slot_count = max_av1_dpb_slots;
+        }
+        if (slot_count <= max_av1_reference_slots) {
+            return -1;
+        }
+        return static_cast<int>(slot_count - 1);
+    }
+
     int av1_select_current_setup_slot(AV1VideoSession* session, VASurfaceID target_surface_id, const bool used_slots[max_av1_dpb_slots], bool current_is_reference) {
-        (void)current_is_reference;
-        return av1_select_target_dpb_slot(session, target_surface_id, used_slots);
+        if (!current_is_reference) {
+            const int scratch_slot = av1_reserved_scratch_dpb_slot(session);
+            if (scratch_slot >= 0 && used_slots != nullptr && !used_slots[scratch_slot]) {
+                return scratch_slot;
+            }
+            return allocate_av1_dpb_slot(session, used_slots);
+        }
+
+        bool reference_used_slots[max_av1_dpb_slots]{};
+        if (used_slots == nullptr) {
+            return -1;
+        }
+        for (uint32_t i = 0; i < max_av1_dpb_slots; i++) {
+            reference_used_slots[i] = used_slots[i];
+        }
+        const int scratch_slot = av1_reserved_scratch_dpb_slot(session);
+        if (scratch_slot >= 0) {
+            reference_used_slots[scratch_slot] = true;
+        }
+        return av1_select_target_dpb_slot(session, target_surface_id, reference_used_slots);
     }
 
     VkImageLayout av1_target_layout(bool has_setup_slot) {
@@ -262,7 +414,8 @@ namespace vkvv {
             std::snprintf(reason, reason_size, "missing AV1 reference surface: slot_surface=%u slot=%d", slot->surface_id, slot->slot);
             return false;
         }
-        if (!surface->decoded || surface->vulkan == nullptr || resource == nullptr) {
+        const bool retained_resource = resource != nullptr && resource != surface->vulkan;
+        if (((!surface->decoded || surface->vulkan == nullptr) && !retained_resource) || resource == nullptr) {
             std::snprintf(reason, reason_size, "AV1 reference surface %u is not decoded: decoded=%u vulkan=%u slot=%d", surface->id, surface->decoded ? 1U : 0U,
                           surface->vulkan != nullptr ? 1U : 0U, slot->slot);
             return false;

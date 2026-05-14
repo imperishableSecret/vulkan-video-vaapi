@@ -62,6 +62,7 @@ namespace vkvv {
         std::array<UploadBuffer, command_slot_count>              uploads;
         AV1ReferenceSlot                                          reference_slots[max_av1_reference_slots]{};
         std::vector<AV1ReferenceSlot>                             surface_slots;
+        std::array<SurfaceResource*, max_av1_dpb_slots>           retained_dpb_resources{};
         VkDeviceSize                                              bitstream_offset_alignment    = 1;
         VkDeviceSize                                              bitstream_size_alignment      = 1;
         StdVideoAV1Level                                          max_level                     = STD_VIDEO_AV1_LEVEL_6_2;
@@ -99,6 +100,11 @@ namespace vkvv {
     void                    destroy_av1_video_session(VulkanRuntime* runtime, AV1VideoSession* session);
     VkImageUsageFlags       av1_surface_image_usage();
     bool                    reset_av1_session(VulkanRuntime* runtime, AV1VideoSession* session, VkVideoSessionParametersKHR parameters, char* reason, size_t reason_size);
+    bool                    av1_target_surface_needs_detach(const AV1VideoSession* session, const VkvvAV1DecodeInput* input, VASurfaceID target_surface_id);
+    SurfaceResource*        av1_retained_dpb_resource_for_slot(const AV1VideoSession* session, int slot);
+    void                    av1_release_retained_dpb_resource(VulkanRuntime* runtime, AV1VideoSession* session, int slot);
+    void                    av1_release_unreferenced_retained_dpb_resources(VulkanRuntime* runtime, AV1VideoSession* session);
+    void                    av1_detach_target_dpb_resource(VulkanRuntime* runtime, AV1VideoSession* session, VkvvSurface* target, VASurfaceID target_surface_id);
     int                     av1_dpb_slot_for_surface(const AV1VideoSession* session, VASurfaceID surface_id);
     const AV1ReferenceSlot* av1_reference_slot_for_index(const AV1VideoSession* session, uint32_t reference_index);
     const AV1ReferenceSlot* av1_reference_slot_for_surface(const AV1VideoSession* session, VASurfaceID surface_id);
@@ -109,9 +115,11 @@ namespace vkvv {
     void                    av1_set_surface_slot(AV1VideoSession* session, VASurfaceID surface_id, int slot, const StdVideoDecodeAV1ReferenceInfo& info,
                                                  const AV1ReferenceMetadata* metadata = nullptr);
     void                    av1_clear_reference_slot(AV1VideoSession* session, int slot);
+    void                    av1_clear_surface_slot(AV1VideoSession* session, VASurfaceID surface_id);
     bool                    validate_av1_reference_slot(const AV1VideoSession* session, const AV1ReferenceSlot* slot, const VkvvSurface* surface, const SurfaceResource* resource,
                                                         const VkvvDriver* drv, const VkvvContext* vctx, const DecodeImageKey& current_decode_key, char* reason, size_t reason_size);
     void                    av1_mark_retained_reference_slots(const AV1VideoSession* session, const VkvvAV1DecodeInput* input, bool used_slots[max_av1_dpb_slots]);
+    int                     av1_reserved_scratch_dpb_slot(const AV1VideoSession* session);
     int                     av1_select_target_dpb_slot(AV1VideoSession* session, VASurfaceID target_surface_id, const bool used_slots[max_av1_dpb_slots]);
     int            av1_select_current_setup_slot(AV1VideoSession* session, VASurfaceID target_surface_id, const bool used_slots[max_av1_dpb_slots], bool current_is_reference);
     VkImageLayout  av1_target_layout(bool has_setup_slot);

@@ -3,6 +3,7 @@
 #include "codecs/h264/h264.h"
 #include "codecs/hevc/hevc.h"
 #include "codecs/vp9/vp9.h"
+#include "vulkan/codecs/av1/internal.h"
 #include "vulkan/formats.h"
 #include "vulkan/runtime_internal.h"
 
@@ -509,6 +510,35 @@ namespace {
                    "AV1 parser did not normalize the selected frame window for a packed buffer") &&
             ok;
 
+        std::vector<uint8_t> mixed_multi_frame;
+        mixed_multi_frame.reserve(hidden_showable.size() + bitstream.size());
+        mixed_multi_frame.insert(mixed_multi_frame.end(), hidden_showable.begin(), hidden_showable.end());
+        mixed_multi_frame.insert(mixed_multi_frame.end(), bitstream.begin(), bitstream.end());
+        const uint32_t mixed_target_frame_offset = static_cast<uint32_t>(hidden_showable.size() + 14);
+        tile.slice_data_offset                   = mixed_target_frame_offset;
+        tile.slice_data_size                     = static_cast<uint32_t>(bitstream.size() - 14);
+        data_buffer.size                         = static_cast<unsigned int>(mixed_multi_frame.size());
+        data_buffer.data                         = mixed_multi_frame.data();
+
+        av1->begin_picture(state);
+        ok        = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 mixed packed picture buffer ingestion failed") && ok;
+        ok        = check(av1->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS, "AV1 mixed packed slice data ingestion failed") && ok;
+        ok        = check(av1->render_buffer(state, &tile_buffer) == VA_STATUS_SUCCESS, "AV1 mixed packed tile parameter ingestion failed") && ok;
+        width     = 0;
+        height    = 0;
+        reason[0] = '\0';
+        ok        = check(av1->prepare_decode(state, &width, &height, reason, sizeof(reason)) == VA_STATUS_SUCCESS, "AV1 mixed packed prepare_decode failed") && ok;
+        if (!ok) {
+            std::fprintf(stderr, "%s\n", reason);
+        }
+        VkvvAV1DecodeInput mixed_input{};
+        ok = check(vkvv_av1_get_decode_input(state, &mixed_input) == VA_STATUS_SUCCESS, "AV1 mixed packed decode input extraction failed") && ok;
+        ok = check(mixed_input.header.frame_type == STD_VIDEO_AV1_FRAME_TYPE_KEY && mixed_input.header.refresh_frame_flags == 0xff &&
+                       mixed_input.decode_window_offset == mixed_target_frame_offset && mixed_input.header.frame_header_offset == 0 && mixed_input.tile_count == 1 &&
+                       mixed_input.tiles[0].offset == 11 && mixed_input.tiles[0].size == 8 && mixed_input.bitstream_size == 19,
+                   "AV1 parser parsed the prefix frame instead of the selected packed frame") &&
+            ok;
+
         std::vector<uint8_t> two_tile_group = make_av1_two_tile_group_keyframe();
         pic.frame_width_minus1              = 127;
         pic.frame_height_minus1             = 63;
@@ -667,6 +697,54 @@ namespace {
 
         av1->state_destroy(state);
         return ok;
+    }
+
+    bool check_av1_scratch_setup_slot_selection() {
+        vkvv::AV1VideoSession session{};
+        session.max_dpb_slots                    = vkvv::max_av1_dpb_slots;
+        bool used_slots[vkvv::max_av1_dpb_slots] = {};
+        for (bool& used : used_slots) {
+            used = true;
+        }
+
+        const int scratch_slot = vkvv::av1_reserved_scratch_dpb_slot(&session);
+        if (!check(scratch_slot == static_cast<int>(vkvv::max_av1_dpb_slots - 1), "AV1 scratch setup did not reserve the last DPB slot")) {
+            return false;
+        }
+
+        used_slots[4]                    = false;
+        used_slots[scratch_slot]         = false;
+        const uint32_t next_slot_before  = session.next_dpb_slot;
+        const int      display_only_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false);
+        if (!check(display_only_slot == scratch_slot, "AV1 zero-refresh frame did not use the reserved scratch setup slot")) {
+            return false;
+        }
+        if (!check(session.next_dpb_slot == next_slot_before, "AV1 zero-refresh scratch setup advanced reference DPB allocation state")) {
+            return false;
+        }
+        if (!check(vkvv::av1_surface_slot_for_surface(&session, 77) == nullptr, "AV1 scratch setup slot persisted target surface history")) {
+            return false;
+        }
+
+        vkvv::av1_set_surface_slot(&session, 77, 4, {});
+        for (bool& used : used_slots) {
+            used = true;
+        }
+        used_slots[scratch_slot] = false;
+        session.next_dpb_slot    = 4;
+        if (!check(vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false) == scratch_slot, "AV1 zero-refresh scratch setup reused recycled target slot history")) {
+            return false;
+        }
+        vkvv::av1_clear_surface_slot(&session, 77);
+        if (!check(vkvv::av1_surface_slot_for_surface(&session, 77) == nullptr, "AV1 zero-refresh target history was not cleared after scratch setup")) {
+            return false;
+        }
+
+        for (bool& used : used_slots) {
+            used = true;
+        }
+        used_slots[scratch_slot] = false;
+        return check(vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true) == -1, "AV1 reference frame used the reserved scratch slot under full reference pressure");
     }
 
     bool check_hevc_parser(const VkvvDecodeOps* hevc, uint8_t bit_depth_minus8, const char* label) {
@@ -871,6 +949,7 @@ int main(void) {
         ok = check_av1_parser(av1, 0, 8, VA_FOURCC_NV12, "AV1 NV12") && ok;
         ok = check_av1_bit_depth_mismatch_rejected(av1) && ok;
         ok = check_av1_large_scale_tile_rejected(av1) && ok;
+        ok = check_av1_scratch_setup_slot_selection() && ok;
     }
     ok =
         check(vkvv_encode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointEncSlice) == nullptr, "H.264 EncSlice should not have encode ops before encode is wired") && ok;
