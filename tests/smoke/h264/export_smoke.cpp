@@ -283,11 +283,10 @@ namespace {
             return false;
         }
 
-        if (!backup_resource->export_resource.predecode_exported || !backup_resource->export_resource.predecode_seeded || backup_resource->export_resource.black_placeholder ||
-            backup_resource->export_resource.seed_source_surface_id != decoded.id ||
-            backup_resource->export_resource.seed_source_generation != decoded_resource->content_generation || backup_resource->export_resource.content_generation != 0 ||
-            backup_resource->export_resource.layout != VK_IMAGE_LAYOUT_GENERAL) {
-            std::fprintf(stderr, "decoded refresh did not seed compatible predecode backup export\n");
+        if (!backup_resource->export_resource.predecode_exported || backup_resource->export_resource.predecode_seeded || !backup_resource->export_resource.black_placeholder ||
+            backup_resource->export_resource.seed_source_surface_id != VA_INVALID_ID || backup_resource->export_resource.seed_source_generation != 0 ||
+            backup_resource->export_resource.content_generation != 0 || backup_resource->export_resource.layout != VK_IMAGE_LAYOUT_GENERAL) {
+            std::fprintf(stderr, "decoded refresh seeded or mutated a compatible predecode backup export\n");
             cleanup();
             return false;
         }
@@ -378,7 +377,7 @@ namespace {
         return true;
     }
 
-    bool check_export_time_last_good_seeding(vkvv::VulkanRuntime* runtime) {
+    bool check_export_time_last_good_keeps_placeholder(vkvv::VulkanRuntime* runtime) {
         char                        reason[512] = {};
         void*                       session     = nullptr;
         VADRMPRIMESurfaceDescriptor descriptor{};
@@ -444,10 +443,10 @@ namespace {
         status = vkvv_vulkan_export_surface(runtime, &late_export, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &descriptor, reason, sizeof(reason));
         std::printf("%s\n", reason);
         auto* late_resource = static_cast<vkvv::SurfaceResource*>(late_export.vulkan);
-        if (status != VA_STATUS_SUCCESS || late_resource == nullptr || !late_resource->export_resource.predecode_exported || !late_resource->export_resource.predecode_seeded ||
-            late_resource->export_resource.black_placeholder || late_resource->export_resource.seed_source_surface_id != decoded.id ||
-            late_resource->export_resource.seed_source_generation != decoded_resource->content_generation) {
-            std::fprintf(stderr, "predecode export did not seed from the last same-stream decoded surface before fd return\n");
+        if (status != VA_STATUS_SUCCESS || late_resource == nullptr || !late_resource->export_resource.predecode_exported || late_resource->export_resource.predecode_seeded ||
+            !late_resource->export_resource.black_placeholder || late_resource->export_resource.seed_source_surface_id != VA_INVALID_ID ||
+            late_resource->export_resource.seed_source_generation != 0) {
+            std::fprintf(stderr, "predecode export seeded from the last same-stream decoded surface before fd return\n");
             cleanup();
             return false;
         }
@@ -474,10 +473,10 @@ namespace {
             cleanup();
             return false;
         }
-        if (!late_resource->export_resource.predecode_exported || !late_resource->export_resource.predecode_seeded ||
-            late_resource->export_resource.seed_source_surface_id != decoded.id || late_resource->export_resource.seed_source_generation != decoded_resource->content_generation ||
+        if (!late_resource->export_resource.predecode_exported || late_resource->export_resource.predecode_seeded ||
+            late_resource->export_resource.seed_source_surface_id != VA_INVALID_ID || late_resource->export_resource.seed_source_generation != 0 ||
             late_resource->export_resource.content_generation != 0) {
-            std::fprintf(stderr, "already-seeded predecode placeholder was reseeded by a newer visible frame\n");
+            std::fprintf(stderr, "predecode placeholder was seeded by a newer visible frame\n");
             cleanup();
             return false;
         }
@@ -563,9 +562,10 @@ namespace {
         status = vkvv_vulkan_export_surface(runtime, &nondisplay, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &nondisplay_descriptor, reason, sizeof(reason));
         std::printf("%s\n", reason);
         auto* nondisplay_resource = static_cast<vkvv::SurfaceResource*>(nondisplay.vulkan);
-        if (status != VA_STATUS_SUCCESS || nondisplay_resource == nullptr || !nondisplay_resource->export_resource.predecode_seeded ||
-            nondisplay_resource->export_resource.seed_source_surface_id != decoded.id) {
-            std::fprintf(stderr, "non-display predecode export did not seed from the displayable last-good frame\n");
+        if (status != VA_STATUS_SUCCESS || nondisplay_resource == nullptr || !nondisplay_resource->export_resource.predecode_exported ||
+            nondisplay_resource->export_resource.predecode_seeded || !nondisplay_resource->export_resource.black_placeholder ||
+            nondisplay_resource->export_resource.seed_source_surface_id != VA_INVALID_ID) {
+            std::fprintf(stderr, "non-display predecode export seeded from the displayable last-good frame\n");
             cleanup();
             return false;
         }
@@ -589,14 +589,16 @@ namespace {
             cleanup();
             return false;
         }
-        if (nondisplay_resource->export_resource.memory != nondisplay_shadow_memory ||
-            nondisplay_resource->export_resource.content_generation != nondisplay_resource->content_generation || vkvv_vulkan_surface_has_predecode_export(&nondisplay) ||
-            nondisplay_resource->export_resource.predecode_seeded || nondisplay_resource->export_resource.seed_source_surface_id != VA_INVALID_ID) {
-            std::fprintf(stderr, "non-display decode did not refresh its exported shadow from decoded content\n");
+        if (nondisplay_resource->export_resource.memory != nondisplay_shadow_memory || nondisplay_resource->export_resource.content_generation != 0 ||
+            !vkvv_vulkan_surface_has_predecode_export(&nondisplay) || !nondisplay_resource->export_resource.predecode_quarantined ||
+            nondisplay_resource->export_resource.predecode_seeded || nondisplay_resource->export_resource.seed_source_surface_id != VA_INVALID_ID ||
+            nondisplay_resource->private_decode_shadow.content_generation != nondisplay_resource->content_generation ||
+            vkvv::current_decode_shadow(nondisplay_resource) != &nondisplay_resource->private_decode_shadow) {
+            std::fprintf(stderr, "non-display decode did not keep its predecode export quarantined while refreshing private decode shadow\n");
             cleanup();
             return false;
         }
-        const uint64_t             nondisplay_decoded_generation = nondisplay_resource->export_resource.content_generation;
+        const uint64_t             nondisplay_decoded_generation = nondisplay_resource->private_decode_shadow.content_generation;
 
         const vkvv::DecodeImageKey next_display_key = h264_decode_key(typed_session, &next_display, {non_thumbnail_seed_width, non_thumbnail_seed_height});
         if (!vkvv::ensure_surface_resource(runtime, &next_display, next_display_key, reason, sizeof(reason))) {
@@ -615,7 +617,8 @@ namespace {
             cleanup();
             return false;
         }
-        if (nondisplay_resource->export_resource.memory != nondisplay_shadow_memory || nondisplay_resource->export_resource.content_generation != nondisplay_decoded_generation ||
+        if (nondisplay_resource->export_resource.memory != nondisplay_shadow_memory ||
+            nondisplay_resource->private_decode_shadow.content_generation != nondisplay_decoded_generation ||
             nondisplay_resource->export_resource.seed_source_surface_id != VA_INVALID_ID) {
             std::fprintf(stderr, "later displayable refresh incorrectly reseeded the non-display predecode export\n");
             cleanup();
@@ -631,9 +634,9 @@ namespace {
         status = vkvv_vulkan_export_surface(runtime, &late_export, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &late_descriptor, reason, sizeof(reason));
         std::printf("%s\n", reason);
         auto* late_resource = static_cast<vkvv::SurfaceResource*>(late_export.vulkan);
-        if (status != VA_STATUS_SUCCESS || late_resource == nullptr || !late_resource->export_resource.predecode_seeded ||
-            late_resource->export_resource.seed_source_surface_id != next_display.id || late_resource->export_resource.seed_source_surface_id == nondisplay.id) {
-            std::fprintf(stderr, "non-display decode replaced the displayable last-good export seed\n");
+        if (status != VA_STATUS_SUCCESS || late_resource == nullptr || !late_resource->export_resource.predecode_exported || late_resource->export_resource.predecode_seeded ||
+            late_resource->export_resource.seed_source_surface_id != VA_INVALID_ID) {
+            std::fprintf(stderr, "non-display decode or later display seeded a new predecode export\n");
             cleanup();
             return false;
         }
@@ -857,14 +860,14 @@ namespace {
         std::printf("%s\n", reason);
         auto* late_resource = static_cast<vkvv::SurfaceResource*>(late_export.vulkan);
         if (status != VA_STATUS_SUCCESS || late_resource == nullptr || late_resource->stream_id != context.stream_id || late_resource->codec_operation != context.codec_operation ||
-            !late_resource->export_resource.predecode_exported || !late_resource->export_resource.predecode_seeded || late_resource->export_resource.black_placeholder ||
-            late_resource->export_resource.seed_source_surface_id != decoded.id || late_resource->export_resource.seed_source_generation != decoded_resource->content_generation) {
-            std::fprintf(stderr, "untagged Chrome-style export was not seeded after active-domain tagging\n");
+            !late_resource->export_resource.predecode_exported || late_resource->export_resource.predecode_seeded || !late_resource->export_resource.black_placeholder ||
+            late_resource->export_resource.seed_source_surface_id != VA_INVALID_ID || late_resource->export_resource.seed_source_generation != 0) {
+            std::fprintf(stderr, "untagged Chrome-style export was seeded after active-domain tagging\n");
             cleanup();
             return false;
         }
         if (!vkvv_vulkan_surface_has_predecode_export(&late_export)) {
-            std::fprintf(stderr, "seeded predecode export was not marked for synchronous decode completion\n");
+            std::fprintf(stderr, "quarantined predecode export was not marked for synchronous decode completion\n");
             cleanup();
             return false;
         }
@@ -1242,7 +1245,7 @@ int main(void) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
-    if (!check_export_time_last_good_seeding(typed_runtime)) {
+    if (!check_export_time_last_good_keeps_placeholder(typed_runtime)) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }

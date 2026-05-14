@@ -126,6 +126,9 @@ class StreamStats:
     decode_shadow_incoherent_checks: int = 0
     present_state_traces: int = 0
     visible_present_pins: int = 0
+    predecode_quarantine_enters: int = 0
+    predecode_quarantine_exits: int = 0
+    predecode_quarantine_destroys: int = 0
     nondisplay_present_pinned_skips: int = 0
     invalid_nondisplay_stale_export_shadows: int = 0
     invalid_presentable_undecoded_surfaces: int = 0
@@ -205,6 +208,9 @@ class TraceProfile:
         self.decode_shadow_incoherent_checks = 0
         self.present_state_traces = 0
         self.visible_present_pins = 0
+        self.predecode_quarantine_enters = 0
+        self.predecode_quarantine_exits = 0
+        self.predecode_quarantine_destroys = 0
         self.nondisplay_present_pinned_skips = 0
         self.invalid_nondisplay_stale_export_shadows = 0
         self.invalid_presentable_undecoded_surfaces = 0
@@ -352,6 +358,12 @@ class TraceProfile:
             stream.present_state_traces += 1
             if fields.get("action") == "visible-present-pin":
                 stream.visible_present_pins += 1
+        elif event == "predecode-quarantine-enter" and stream is not None:
+            stream.predecode_quarantine_enters += 1
+        elif event == "predecode-quarantine-exit" and stream is not None:
+            stream.predecode_quarantine_exits += 1
+        elif event == "export-resource-destroy" and stream is not None and (parse_int(fields.get("predecode_quarantined")) or 0) != 0:
+            stream.predecode_quarantine_destroys += 1
         elif event == "nondisplay-present-pinned-skip" and stream is not None:
             stream.nondisplay_present_pinned_skips += 1
         elif event == "invalid-nondisplay-stale-export-shadow" and stream is not None:
@@ -468,6 +480,12 @@ class TraceProfile:
             self.present_state_traces += 1
             if fields.get("action") == "visible-present-pin":
                 self.visible_present_pins += 1
+        elif event == "predecode-quarantine-enter":
+            self.predecode_quarantine_enters += 1
+        elif event == "predecode-quarantine-exit":
+            self.predecode_quarantine_exits += 1
+        elif event == "export-resource-destroy" and (parse_int(fields.get("predecode_quarantined")) or 0) != 0:
+            self.predecode_quarantine_destroys += 1
         elif event == "nondisplay-present-pinned-skip":
             self.nondisplay_present_pinned_skips += 1
         elif event == "invalid-nondisplay-stale-export-shadow":
@@ -578,6 +596,9 @@ class TraceProfile:
             "decode_shadow_incoherent_checks": self.decode_shadow_incoherent_checks,
             "present_state_traces": self.present_state_traces,
             "visible_present_pins": self.visible_present_pins,
+            "predecode_quarantine_enters": self.predecode_quarantine_enters,
+            "predecode_quarantine_exits": self.predecode_quarantine_exits,
+            "predecode_quarantine_destroys": self.predecode_quarantine_destroys,
             "nondisplay_present_pinned_skips": self.nondisplay_present_pinned_skips,
             "invalid_nondisplay_stale_export_shadows": self.invalid_nondisplay_stale_export_shadows,
             "invalid_presentable_undecoded_surfaces": self.invalid_presentable_undecoded_surfaces,
@@ -626,6 +647,9 @@ class TraceProfile:
             total["decode_shadow_incoherent_checks"] += stream.decode_shadow_incoherent_checks
             total["present_state_traces"] += stream.present_state_traces
             total["visible_present_pins"] += stream.visible_present_pins
+            total["predecode_quarantine_enters"] += stream.predecode_quarantine_enters
+            total["predecode_quarantine_exits"] += stream.predecode_quarantine_exits
+            total["predecode_quarantine_destroys"] += stream.predecode_quarantine_destroys
             total["nondisplay_present_pinned_skips"] += stream.nondisplay_present_pinned_skips
             total["invalid_nondisplay_stale_export_shadows"] += stream.invalid_nondisplay_stale_export_shadows
             total["invalid_presentable_undecoded_surfaces"] += stream.invalid_presentable_undecoded_surfaces
@@ -717,6 +741,9 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "decode_shadow_incoherent_checks": stream.decode_shadow_incoherent_checks,
         "present_state_traces": stream.present_state_traces,
         "visible_present_pins": stream.visible_present_pins,
+        "predecode_quarantine_enters": stream.predecode_quarantine_enters,
+        "predecode_quarantine_exits": stream.predecode_quarantine_exits,
+        "predecode_quarantine_destroys": stream.predecode_quarantine_destroys,
         "nondisplay_present_pinned_skips": stream.nondisplay_present_pinned_skips,
         "invalid_nondisplay_stale_export_shadows": stream.invalid_nondisplay_stale_export_shadows,
         "invalid_presentable_undecoded_surfaces": stream.invalid_presentable_undecoded_surfaces,
@@ -809,6 +836,9 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         f"decode_shadow_coherence_checks={totals['decode_shadow_coherence_checks']} "
         f"decode_shadow_incoherent_checks={totals['decode_shadow_incoherent_checks']} "
         f"present_state_traces={totals['present_state_traces']} visible_present_pins={totals['visible_present_pins']} "
+        f"predecode_quarantine_enters={totals['predecode_quarantine_enters']} "
+        f"predecode_quarantine_exits={totals['predecode_quarantine_exits']} "
+        f"predecode_quarantine_destroys={totals['predecode_quarantine_destroys']} "
         f"nondisplay_present_pinned_skips={totals['nondisplay_present_pinned_skips']} "
         f"invalid_nondisplay_stale_export_shadows={totals['invalid_nondisplay_stale_export_shadows']} "
         f"invalid_presentable_undecoded_surfaces={totals['invalid_presentable_undecoded_surfaces']} "
@@ -842,6 +872,9 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"decode_shadow_coherence_checks={values['decode_shadow_coherence_checks']} "
             f"decode_shadow_incoherent_checks={values['decode_shadow_incoherent_checks']} "
             f"present_state_traces={values['present_state_traces']} visible_present_pins={values['visible_present_pins']} "
+            f"predecode_quarantine_enters={values['predecode_quarantine_enters']} "
+            f"predecode_quarantine_exits={values['predecode_quarantine_exits']} "
+            f"predecode_quarantine_destroys={values['predecode_quarantine_destroys']} "
             f"nondisplay_present_pinned_skips={values['nondisplay_present_pinned_skips']} "
             f"invalid_nondisplay_stale_export_shadows={values['invalid_nondisplay_stale_export_shadows']} "
             f"invalid_presentable_undecoded_surfaces={values['invalid_presentable_undecoded_surfaces']} "
@@ -878,6 +911,9 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"decode_shadow_coherence_checks={stream.decode_shadow_coherence_checks} "
             f"decode_shadow_incoherent_checks={stream.decode_shadow_incoherent_checks} "
             f"present_state_traces={stream.present_state_traces} visible_present_pins={stream.visible_present_pins} "
+            f"predecode_quarantine_enters={stream.predecode_quarantine_enters} "
+            f"predecode_quarantine_exits={stream.predecode_quarantine_exits} "
+            f"predecode_quarantine_destroys={stream.predecode_quarantine_destroys} "
             f"nondisplay_present_pinned_skips={stream.nondisplay_present_pinned_skips} "
             f"invalid_nondisplay_stale_export_shadows={stream.invalid_nondisplay_stale_export_shadows} "
             f"invalid_presentable_undecoded_surfaces={stream.invalid_presentable_undecoded_surfaces} "

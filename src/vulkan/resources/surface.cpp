@@ -76,6 +76,12 @@ namespace vkvv {
         if (resource == nullptr) {
             return;
         }
+        if (resource->predecode_quarantined) {
+            VKVV_TRACE("export-resource-destroy", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx fd_dev=%llu fd_ino=%llu content_gen=%llu predecode_quarantined=1",
+                       resource->owner_surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                       resource->codec_operation, vkvv_trace_handle(resource->memory), static_cast<unsigned long long>(resource->predecode_fd_dev),
+                       static_cast<unsigned long long>(resource->predecode_fd_ino), static_cast<unsigned long long>(resource->predecode_generation));
+        }
         if (resource->image != VK_NULL_HANDLE) {
             vkDestroyImage(runtime->device, resource->image, nullptr);
             resource->image = VK_NULL_HANDLE;
@@ -100,6 +106,10 @@ namespace vkvv {
         resource->exported                     = false;
         resource->predecode_exported           = false;
         resource->predecode_seeded             = false;
+        resource->predecode_quarantined        = false;
+        resource->predecode_fd_dev             = 0;
+        resource->predecode_fd_ino             = 0;
+        resource->predecode_generation         = 0;
         resource->black_placeholder            = false;
         resource->seed_source_surface_id       = VA_INVALID_ID;
         resource->seed_source_generation       = 0;

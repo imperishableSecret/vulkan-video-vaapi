@@ -243,6 +243,7 @@ retained_export_smoke = executable(
   'vkvv-retained-export-smoke',
   files(
     'tests/smoke/generic/retained_export_smoke.cpp',
+    'src/telemetry.cpp',
     'src/va/surface_import.cpp',
     'src/vulkan/export/retained.cpp',
     'src/vulkan/export/state.cpp',
