@@ -5,6 +5,15 @@
 
 namespace vkvv {
 
+    const char* vkvv_export_copy_reason_name(VkvvExportCopyReason reason) {
+        switch (reason) {
+            case VkvvExportCopyReason::VisibleRefresh: return "visible-refresh";
+            case VkvvExportCopyReason::PredecodePlaceholderSeed: return "predecode-placeholder-seed";
+            case VkvvExportCopyReason::ImportOutput: return "import-output";
+            default: return "unknown";
+        }
+    }
+
     bool av1_export_env_flag_enabled(const char* name) {
         const char* value = std::getenv(name);
         return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 && std::strcmp(value, "off") != 0;

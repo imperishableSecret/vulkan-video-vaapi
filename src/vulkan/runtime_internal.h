@@ -45,6 +45,14 @@ namespace vkvv {
         VkImageLayout                 layout                  = VK_IMAGE_LAYOUT_UNDEFINED;
     };
 
+    enum class VkvvExportCopyReason {
+        VisibleRefresh,
+        PredecodePlaceholderSeed,
+        ImportOutput,
+    };
+
+    const char* vkvv_export_copy_reason_name(VkvvExportCopyReason reason);
+
     struct PredecodeExportRecord {
         ExportResource*               resource           = nullptr;
         VkImage                       image              = VK_NULL_HANDLE;
