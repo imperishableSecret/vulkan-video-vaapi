@@ -129,6 +129,9 @@ class StreamStats:
     predecode_quarantine_enters: int = 0
     predecode_quarantine_exits: int = 0
     predecode_quarantine_destroys: int = 0
+    export_visible_releases: int = 0
+    export_visible_acquires: int = 0
+    export_visible_release_missing: int = 0
     nondisplay_present_pinned_skips: int = 0
     invalid_nondisplay_stale_export_shadows: int = 0
     invalid_presentable_undecoded_surfaces: int = 0
@@ -211,6 +214,9 @@ class TraceProfile:
         self.predecode_quarantine_enters = 0
         self.predecode_quarantine_exits = 0
         self.predecode_quarantine_destroys = 0
+        self.export_visible_releases = 0
+        self.export_visible_acquires = 0
+        self.export_visible_release_missing = 0
         self.nondisplay_present_pinned_skips = 0
         self.invalid_nondisplay_stale_export_shadows = 0
         self.invalid_presentable_undecoded_surfaces = 0
@@ -364,6 +370,14 @@ class TraceProfile:
             stream.predecode_quarantine_exits += 1
         elif event == "export-resource-destroy" and stream is not None and (parse_int(fields.get("predecode_quarantined")) or 0) != 0:
             stream.predecode_quarantine_destroys += 1
+        elif event == "export-visible-release" and stream is not None:
+            stream.export_visible_releases += 1
+            release_required = parse_int(fields.get("release_required")) or 0
+            release_done = parse_int(fields.get("release_done")) or 0
+            if release_required != 0 and release_done == 0:
+                stream.export_visible_release_missing += 1
+        elif event == "export-visible-acquire" and stream is not None:
+            stream.export_visible_acquires += 1
         elif event == "nondisplay-present-pinned-skip" and stream is not None:
             stream.nondisplay_present_pinned_skips += 1
         elif event == "invalid-nondisplay-stale-export-shadow" and stream is not None:
@@ -486,6 +500,14 @@ class TraceProfile:
             self.predecode_quarantine_exits += 1
         elif event == "export-resource-destroy" and (parse_int(fields.get("predecode_quarantined")) or 0) != 0:
             self.predecode_quarantine_destroys += 1
+        elif event == "export-visible-release":
+            self.export_visible_releases += 1
+            release_required = parse_int(fields.get("release_required")) or 0
+            release_done = parse_int(fields.get("release_done")) or 0
+            if release_required != 0 and release_done == 0:
+                self.export_visible_release_missing += 1
+        elif event == "export-visible-acquire":
+            self.export_visible_acquires += 1
         elif event == "nondisplay-present-pinned-skip":
             self.nondisplay_present_pinned_skips += 1
         elif event == "invalid-nondisplay-stale-export-shadow":
@@ -599,6 +621,9 @@ class TraceProfile:
             "predecode_quarantine_enters": self.predecode_quarantine_enters,
             "predecode_quarantine_exits": self.predecode_quarantine_exits,
             "predecode_quarantine_destroys": self.predecode_quarantine_destroys,
+            "export_visible_releases": self.export_visible_releases,
+            "export_visible_acquires": self.export_visible_acquires,
+            "export_visible_release_missing": self.export_visible_release_missing,
             "nondisplay_present_pinned_skips": self.nondisplay_present_pinned_skips,
             "invalid_nondisplay_stale_export_shadows": self.invalid_nondisplay_stale_export_shadows,
             "invalid_presentable_undecoded_surfaces": self.invalid_presentable_undecoded_surfaces,
@@ -650,6 +675,9 @@ class TraceProfile:
             total["predecode_quarantine_enters"] += stream.predecode_quarantine_enters
             total["predecode_quarantine_exits"] += stream.predecode_quarantine_exits
             total["predecode_quarantine_destroys"] += stream.predecode_quarantine_destroys
+            total["export_visible_releases"] += stream.export_visible_releases
+            total["export_visible_acquires"] += stream.export_visible_acquires
+            total["export_visible_release_missing"] += stream.export_visible_release_missing
             total["nondisplay_present_pinned_skips"] += stream.nondisplay_present_pinned_skips
             total["invalid_nondisplay_stale_export_shadows"] += stream.invalid_nondisplay_stale_export_shadows
             total["invalid_presentable_undecoded_surfaces"] += stream.invalid_presentable_undecoded_surfaces
@@ -744,6 +772,9 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "predecode_quarantine_enters": stream.predecode_quarantine_enters,
         "predecode_quarantine_exits": stream.predecode_quarantine_exits,
         "predecode_quarantine_destroys": stream.predecode_quarantine_destroys,
+        "export_visible_releases": stream.export_visible_releases,
+        "export_visible_acquires": stream.export_visible_acquires,
+        "export_visible_release_missing": stream.export_visible_release_missing,
         "nondisplay_present_pinned_skips": stream.nondisplay_present_pinned_skips,
         "invalid_nondisplay_stale_export_shadows": stream.invalid_nondisplay_stale_export_shadows,
         "invalid_presentable_undecoded_surfaces": stream.invalid_presentable_undecoded_surfaces,
@@ -839,6 +870,9 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         f"predecode_quarantine_enters={totals['predecode_quarantine_enters']} "
         f"predecode_quarantine_exits={totals['predecode_quarantine_exits']} "
         f"predecode_quarantine_destroys={totals['predecode_quarantine_destroys']} "
+        f"export_visible_releases={totals['export_visible_releases']} "
+        f"export_visible_acquires={totals['export_visible_acquires']} "
+        f"export_visible_release_missing={totals['export_visible_release_missing']} "
         f"nondisplay_present_pinned_skips={totals['nondisplay_present_pinned_skips']} "
         f"invalid_nondisplay_stale_export_shadows={totals['invalid_nondisplay_stale_export_shadows']} "
         f"invalid_presentable_undecoded_surfaces={totals['invalid_presentable_undecoded_surfaces']} "
@@ -875,6 +909,9 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"predecode_quarantine_enters={values['predecode_quarantine_enters']} "
             f"predecode_quarantine_exits={values['predecode_quarantine_exits']} "
             f"predecode_quarantine_destroys={values['predecode_quarantine_destroys']} "
+            f"export_visible_releases={values['export_visible_releases']} "
+            f"export_visible_acquires={values['export_visible_acquires']} "
+            f"export_visible_release_missing={values['export_visible_release_missing']} "
             f"nondisplay_present_pinned_skips={values['nondisplay_present_pinned_skips']} "
             f"invalid_nondisplay_stale_export_shadows={values['invalid_nondisplay_stale_export_shadows']} "
             f"invalid_presentable_undecoded_surfaces={values['invalid_presentable_undecoded_surfaces']} "
@@ -914,6 +951,9 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"predecode_quarantine_enters={stream.predecode_quarantine_enters} "
             f"predecode_quarantine_exits={stream.predecode_quarantine_exits} "
             f"predecode_quarantine_destroys={stream.predecode_quarantine_destroys} "
+            f"export_visible_releases={stream.export_visible_releases} "
+            f"export_visible_acquires={stream.export_visible_acquires} "
+            f"export_visible_release_missing={stream.export_visible_release_missing} "
             f"nondisplay_present_pinned_skips={stream.nondisplay_present_pinned_skips} "
             f"invalid_nondisplay_stale_export_shadows={stream.invalid_nondisplay_stale_export_shadows} "
             f"invalid_presentable_undecoded_surfaces={stream.invalid_presentable_undecoded_surfaces} "

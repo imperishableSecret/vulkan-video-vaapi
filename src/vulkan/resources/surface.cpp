@@ -119,6 +119,7 @@ namespace vkvv {
         resource->fd_stat_valid                = false;
         resource->fd_dev                       = 0;
         resource->fd_ino                       = 0;
+        resource->external_sync                = {};
         clear_export_present_state(resource);
         resource->layout = VK_IMAGE_LAYOUT_UNDEFINED;
     }

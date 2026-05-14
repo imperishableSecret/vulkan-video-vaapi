@@ -43,6 +43,8 @@ namespace vkvv {
     bool     seed_predecode_export_from_last_good(VulkanRuntime* runtime, SurfaceResource* target, char* reason, size_t reason_size);
     void     enter_predecode_quarantine(const SurfaceResource* owner, ExportResource* resource);
     void     exit_predecode_quarantine(const SurfaceResource* owner, ExportResource* resource, bool release_done);
+    void     mark_export_visible_acquire(const SurfaceResource* owner, ExportResource* resource);
+    void     mark_export_visible_release(const SurfaceResource* owner, ExportResource* resource, VkImageLayout old_layout, VkImageLayout new_layout);
 
 } // namespace vkvv
 

@@ -51,7 +51,9 @@ nvidia-vulkan-vaapi: trace seq=40 event=export-present-state action=nondisplay-p
 nvidia-vulkan-vaapi: trace seq=41 event=decode-shadow-coherence-check surface=7 driver=2 stream=1 codec=0x8 content_gen=3 refresh_export=0 display_visible=0 present_pinned=1 present_shadow_gen=2 private_shadow_gen=3 decode_shadow_gen=3 coherent=1 action=private-shadow-refresh
 nvidia-vulkan-vaapi: trace seq=42 event=decode-shadow-coherence-check surface=7 driver=2 stream=1 codec=0x8 content_gen=1 refresh_export=1 display_visible=1 present_pinned=1 present_shadow_gen=1 private_shadow_gen=0 decode_shadow_gen=1 coherent=1 action=visible-refresh
 nvidia-vulkan-vaapi: trace seq=43 event=predecode-quarantine-enter surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 content_gen=0 presentable=0 published_visible=0 predecode_exported=1 predecode_quarantined=1
-nvidia-vulkan-vaapi: trace seq=44 event=predecode-quarantine-exit surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 content_gen=1 present_gen=1 release_done=0 predecode_quarantined=0
+nvidia-vulkan-vaapi: trace seq=44 event=predecode-quarantine-exit surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 content_gen=1 present_gen=1 release_done=1 predecode_quarantined=0
+nvidia-vulkan-vaapi: trace seq=45 event=export-visible-acquire surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 acquired_generation=0 acquire_required=0 acquire_done=1 acquire_mode=implicit-sync-only src_queue_family=4294967295 dst_queue_family=4294967295
+nvidia-vulkan-vaapi: trace seq=46 event=export-visible-release surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 content_gen=1 present_gen=0 old_layout=7 new_layout=1 src_queue_family=4294967295 dst_queue_family=4294967295 release_required=0 release_done=1 release_mode=implicit-sync-only
 [1:2:0512/000000.000000:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:3552] vaEndPicture failed, VA error: operation failed
 nvidia-vulkan-vaapi: device-lost call=vkWaitForFences operation=AV1 decode result=-4 decode_submitted=1 decode_completed=0
 """
@@ -104,7 +106,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 43, "trace record count mismatch")
+    check(data["trace_records"] == 45, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -133,6 +135,9 @@ def main() -> int:
     check(totals["predecode_quarantine_enters"] == 1, "predecode quarantine enter aggregate mismatch")
     check(totals["predecode_quarantine_exits"] == 1, "predecode quarantine exit aggregate mismatch")
     check(totals["predecode_quarantine_destroys"] == 0, "predecode quarantine destroy aggregate mismatch")
+    check(totals["export_visible_releases"] == 1, "export visible release aggregate mismatch")
+    check(totals["export_visible_acquires"] == 1, "export visible acquire aggregate mismatch")
+    check(totals["export_visible_release_missing"] == 0, "export visible release missing aggregate mismatch")
     check(totals["nondisplay_present_pinned_skips"] == 0, "nondisplay present-pinned skip aggregate mismatch")
     check(totals["invalid_nondisplay_stale_export_shadows"] == 0, "invalid nondisplay stale shadow aggregate mismatch")
     check(totals["invalid_presentable_undecoded_surfaces"] == 0, "invalid undecoded presentable aggregate mismatch")
@@ -170,6 +175,7 @@ def main() -> int:
     )
     check(codec["visible_present_pins"] == 1 and codec["nondisplay_present_pinned_skips"] == 0, "codec present aggregate mismatch")
     check(codec["predecode_quarantine_enters"] == 1 and codec["predecode_quarantine_exits"] == 1, "codec predecode quarantine aggregate mismatch")
+    check(codec["export_visible_releases"] == 1 and codec["export_visible_acquires"] == 1, "codec visible handoff aggregate mismatch")
     stream = data["streams"][0]
     check(stream["codec"] == "vp9/0x8", "stream codec mismatch")
     check(stream["width"] == 3840 and stream["height"] == 2160, "stream size mismatch")
@@ -193,6 +199,7 @@ def main() -> int:
     )
     check(stream["present_state_traces"] == 3 and stream["visible_present_pins"] == 1, "stream present state mismatch")
     check(stream["predecode_quarantine_enters"] == 1 and stream["predecode_quarantine_exits"] == 1, "stream predecode quarantine mismatch")
+    check(stream["export_visible_releases"] == 1 and stream["export_visible_acquires"] == 1, "stream visible handoff mismatch")
     check(stream["nondisplay_present_pinned_skips"] == 0, "stream nondisplay present-pinned skip mismatch")
     check(stream["export_copy_publish_skips"] == 1, "stream publish skip mismatch")
     av1_stream = data["streams"][1]
@@ -209,6 +216,8 @@ def main() -> int:
     check("visible_present_pins=1" in text_result.stdout, "text visible present pin aggregate missing")
     check("predecode_quarantine_enters=1" in text_result.stdout, "text predecode quarantine enter aggregate missing")
     check("predecode_quarantine_exits=1" in text_result.stdout, "text predecode quarantine exit aggregate missing")
+    check("export_visible_releases=1" in text_result.stdout, "text export visible release aggregate missing")
+    check("export_visible_acquires=1" in text_result.stdout, "text export visible acquire aggregate missing")
     check("nondisplay_present_pinned_skips=0" in text_result.stdout, "text nondisplay present-pinned skip aggregate missing")
     check("invalid_nondisplay_stale_export_shadows=0" in text_result.stdout, "text invalid nondisplay stale shadow aggregate missing")
     check("invalid_visible_without_present_pins=0" in text_result.stdout, "text invalid visible without present pin missing")

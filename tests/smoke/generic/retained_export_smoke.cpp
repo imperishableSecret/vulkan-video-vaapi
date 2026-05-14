@@ -368,6 +368,9 @@ namespace {
         resource.export_resource.exported = true;
         ok &= check(!vkvv::surface_resource_has_exported_shadow_output(&resource), "unpinned current shadow was treated as published output");
         vkvv::pin_export_visible_present(&resource, &resource.export_resource, vkvv::VkvvExportPresentSource::VisibleRefresh);
+        resource.export_resource.external_sync.external_release_done = true;
+        resource.export_resource.external_sync.released_generation   = resource.content_generation;
+        resource.export_resource.external_sync.release_mode          = vkvv::VkvvExternalReleaseMode::ImplicitSyncOnly;
         ok &= check(vkvv::surface_resource_has_exported_shadow_output(&resource), "pinned current shadow was not treated as published output");
         ok &= check(vkvv::surface_resource_has_published_visible_output(&resource), "exported current shadow did not satisfy visible publication");
         resource.export_resource.predecode_quarantined = true;

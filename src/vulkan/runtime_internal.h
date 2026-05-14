@@ -27,6 +27,30 @@ namespace vkvv {
 
     const char* vkvv_export_present_source_name(VkvvExportPresentSource source);
 
+    enum class VkvvExternalReleaseMode {
+        NoneRequired,
+        ConcurrentSharing,
+        QueueFamilyOwnershipTransfer,
+        ImplicitSyncOnly,
+        ExplicitSyncFile,
+    };
+
+    const char* vkvv_external_release_mode_name(VkvvExternalReleaseMode mode);
+
+    struct ExternalSyncState {
+        bool                    external_release_required = false;
+        bool                    external_release_done     = false;
+        bool                    external_acquire_required = false;
+        bool                    external_acquire_done     = false;
+        uint32_t                src_queue_family          = invalid_queue_family;
+        uint32_t                dst_queue_family          = invalid_queue_family;
+        VkImageLayout           last_internal_layout      = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageLayout           external_layout           = VK_IMAGE_LAYOUT_UNDEFINED;
+        uint64_t                released_generation       = 0;
+        uint64_t                acquired_generation       = 0;
+        VkvvExternalReleaseMode release_mode              = VkvvExternalReleaseMode::NoneRequired;
+    };
+
     struct ExportResource {
         VkImage                       image              = VK_NULL_HANDLE;
         VkDeviceMemory                memory             = VK_NULL_HANDLE;
@@ -70,7 +94,8 @@ namespace vkvv {
         VkvvExportPresentSource       present_source               = VkvvExportPresentSource::None;
         bool                          client_visible_shadow        = false;
         bool                          private_nondisplay_shadow    = false;
-        VkImageLayout                 layout                       = VK_IMAGE_LAYOUT_UNDEFINED;
+        ExternalSyncState             external_sync{};
+        VkImageLayout                 layout = VK_IMAGE_LAYOUT_UNDEFINED;
     };
 
     enum class VkvvExportCopyReason {
@@ -463,6 +488,7 @@ namespace vkvv {
     bool                surface_resource_decode_shadow_stale(const SurfaceResource* resource);
     bool                surface_resource_has_current_decode_shadow(const SurfaceResource* resource);
     bool                av1_visible_export_requires_copy(const SurfaceResource* resource);
+    bool                export_visible_release_satisfied(const ExportResource* resource);
     bool                surface_resource_has_current_export_shadow(const SurfaceResource* resource);
     bool                surface_resource_has_exported_shadow_output(const SurfaceResource* resource);
     bool                surface_resource_has_direct_import_output(const SurfaceResource* resource);
