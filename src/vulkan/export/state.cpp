@@ -279,7 +279,7 @@ namespace vkvv {
                    resource->predecode_quarantined ? 1U : 0U, may_be_sampled_by_client ? 1U : 0U, static_cast<unsigned long long>(generation_at_action));
     }
 
-    void trace_predecode_quarantine_outcome(const SurfaceResource* owner, const ExportResource* resource, const char* outcome) {
+    void trace_predecode_quarantine_outcome(const SurfaceResource* owner, const ExportResource* resource, const char* outcome, const char* reason, bool returned_fd) {
         if (resource == nullptr) {
             return;
         }
@@ -296,12 +296,13 @@ namespace vkvv {
         const uint64_t    fd_ino     = resource->predecode_fd_ino != 0 ? resource->predecode_fd_ino : resource->fd_ino;
         VKVV_TRACE("predecode-quarantine-outcome",
                    "surface=%u fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x age_ms=%llu content_gen=%llu fd_content_gen=%llu decoded=%u had_va_begin=%u "
-                   "had_decode_submit=%u had_visible_decode=%u may_be_sampled_by_client=%u outcome=%s",
+                   "had_decode_submit=%u had_visible_decode=%u may_be_sampled_by_client=%u outcome=%s reason=%s returned_fd=%u",
                    surface_id, static_cast<unsigned long long>(fd_dev), static_cast<unsigned long long>(fd_ino), static_cast<unsigned long long>(stream), codec,
                    static_cast<unsigned long long>(age_ms), static_cast<unsigned long long>(content),
                    static_cast<unsigned long long>(export_resource_fd_content_generation(resource)), decoded ? 1U : 0U, resource->predecode_had_va_begin ? 1U : 0U,
                    resource->predecode_had_decode_submit ? 1U : 0U, resource->predecode_had_visible_decode ? 1U : 0U,
-                   export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U, outcome != nullptr ? outcome : "unknown");
+                   export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U, outcome != nullptr ? outcome : "unknown",
+                   reason != nullptr ? reason : "none", returned_fd ? 1U : 0U);
     }
 
     void mark_export_predecode_nonpresentable(ExportResource* resource) {
@@ -438,7 +439,7 @@ namespace vkvv {
         }
         const uint64_t fd_dev = resource->predecode_fd_dev;
         const uint64_t fd_ino = resource->predecode_fd_ino;
-        trace_predecode_quarantine_outcome(owner, resource, resource->predecode_seeded ? "seed-exit" : "decoded-exit");
+        trace_predecode_quarantine_outcome(owner, resource, resource->predecode_seeded ? "seed-exit" : "decoded-exit", "valid-pixels", true);
         trace_export_fd_lifetime(owner, resource, "quarantine-exit", resource->content_generation, export_resource_fd_may_be_sampled_by_client(resource));
         clear_predecode_quarantine_state(resource);
         VKVV_TRACE("predecode-quarantine-exit",

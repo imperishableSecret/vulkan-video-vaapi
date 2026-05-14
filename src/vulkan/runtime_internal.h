@@ -574,7 +574,8 @@ namespace vkvv {
                                                             const char* action);
     void                  trace_export_fd_lifetime(const SurfaceResource* owner, const ExportResource* resource, const char* action, uint64_t generation_at_action,
                                                    bool may_be_sampled_by_client);
-    void                  trace_predecode_quarantine_outcome(const SurfaceResource* owner, const ExportResource* resource, const char* outcome);
+    void                  trace_predecode_quarantine_outcome(const SurfaceResource* owner, const ExportResource* resource, const char* outcome, const char* reason,
+                                                             bool returned_fd);
     bool                  predecode_seed_source_safe_for_client(const SurfaceResource* source);
     void                  clear_predecode_export_state(ExportResource* resource);
     void                  clear_nondisplay_predecode_presentation_state(SurfaceResource* resource);
