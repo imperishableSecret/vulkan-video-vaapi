@@ -357,19 +357,20 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
 
     if (!resource->exportable) {
         if (surface->decoded) {
+            const bool force_visible_copy       = av1_visible_export_requires_copy(resource);
             const bool shadow_current           = resource->content_generation != 0 && resource->export_resource.content_generation == resource->content_generation;
             uint32_t   seeded_predecode_exports = 0;
             if (!copy_surface_to_export_resource(runtime, resource, &seeded_predecode_exports, reason, reason_size)) {
                 return VA_STATUS_ERROR_OPERATION_FAILED;
             }
-            copied_to_shadow = !shadow_current;
+            copied_to_shadow = !shadow_current || force_visible_copy;
             VKVV_TRACE("export-late-refresh",
-                       "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_before=%llu shadow_after=%llu copied=%u after_skip=%u skip_gen=%llu "
+                       "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_before=%llu shadow_after=%llu copied=%u forced=%u after_skip=%u skip_gen=%llu "
                        "skip_shadow_gen=%llu skip_shadow_stale=%u seeded_targets=%u",
                        surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                        static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(shadow_generation_before),
-                       static_cast<unsigned long long>(resource->export_resource.content_generation), copied_to_shadow ? 1U : 0U, export_after_nondisplay_skip ? 1U : 0U,
-                       static_cast<unsigned long long>(resource->last_nondisplay_skip_generation),
+                       static_cast<unsigned long long>(resource->export_resource.content_generation), copied_to_shadow ? 1U : 0U, force_visible_copy ? 1U : 0U,
+                       export_after_nondisplay_skip ? 1U : 0U, static_cast<unsigned long long>(resource->last_nondisplay_skip_generation),
                        static_cast<unsigned long long>(resource->last_nondisplay_skip_shadow_generation), skip_shadow_was_stale ? 1U : 0U, seeded_predecode_exports);
         } else if (!ensure_export_resource(runtime, resource, reason, reason_size)) {
             return VA_STATUS_ERROR_OPERATION_FAILED;

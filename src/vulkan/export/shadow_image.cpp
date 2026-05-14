@@ -384,13 +384,15 @@ namespace vkvv {
                     if (retained.driver_instance_id == source->driver_instance_id && retained.owner_surface_id == source->surface_id && retained.stream_id == source->stream_id &&
                         retained.codec_operation == source->codec_operation && retained.format == source->format && retained.va_fourcc == source->va_fourcc &&
                         retained.extent.width == source->coded_extent.width && retained.extent.height == source->coded_extent.height) {
-                        *resource                    = retained;
-                        resource->driver_instance_id = source->driver_instance_id;
-                        resource->stream_id          = source->stream_id;
-                        resource->codec_operation    = source->codec_operation;
-                        resource->owner_surface_id   = source->surface_id;
-                        resource->content_generation = 0;
-                        it->state                    = RetainedExportState::Attached;
+                        *resource                        = retained;
+                        resource->driver_instance_id     = source->driver_instance_id;
+                        resource->stream_id              = source->stream_id;
+                        resource->codec_operation        = source->codec_operation;
+                        resource->owner_surface_id       = source->surface_id;
+                        resource->content_generation     = 0;
+                        source->export_retained_attached = true;
+                        source->export_import_attached   = false;
+                        it->state                        = RetainedExportState::Attached;
                         runtime->retained_export_memory_bytes =
                             runtime->retained_export_memory_bytes > resource->allocation_size ? runtime->retained_export_memory_bytes - resource->allocation_size : 0;
                         runtime->retained_exports.erase(it);
@@ -410,6 +412,7 @@ namespace vkvv {
         }
 
         detach_export_resource(runtime, source);
+        clear_surface_export_attach_state(source);
         if (runtime->image_drm_format_modifier &&
             create_export_resource_with_tiling(runtime, resource, format, source->coded_extent, VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT, reason, reason_size)) {
             resource->driver_instance_id = source->driver_instance_id;
@@ -465,6 +468,8 @@ namespace vkvv {
             source->export_resource.black_placeholder      = false;
             source->export_resource.seed_source_surface_id = VA_INVALID_ID;
             source->export_resource.seed_source_generation = 0;
+            source->export_retained_attached               = true;
+            source->export_import_attached                 = true;
             it->state                                      = RetainedExportState::Attached;
             runtime->retained_export_memory_bytes          = runtime->retained_export_memory_bytes > source->export_resource.allocation_size ?
                 runtime->retained_export_memory_bytes - source->export_resource.allocation_size :
@@ -1028,7 +1033,8 @@ namespace vkvv {
         std::unique_lock<std::mutex> export_lock(runtime->export_mutex);
         std::vector<ExportResource*> predecode_seed_targets = collect_predecode_seed_targets_locked(runtime, source);
         const bool                   owner_export_current   = source->content_generation != 0 && source->export_resource.content_generation == source->content_generation;
-        if (owner_export_current && predecode_seed_targets.empty()) {
+        const bool                   force_owner_copy       = av1_visible_export_requires_copy(source);
+        if (owner_export_current && predecode_seed_targets.empty() && !force_owner_copy) {
             source->export_seed_generation = source->content_generation;
             remember_export_seed_resource_locked(runtime, source);
             VKVV_TRACE("export-copy-skip-current", "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu seed_gen=%llu shadow_mem=0x%llx shadow_gen=%llu",
@@ -1039,14 +1045,21 @@ namespace vkvv {
         }
 
         ExportResource* export_resource = &source->export_resource;
-        VKVV_TRACE("export-copy-targets", "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu owner_copy=%u owner_mem=0x%llx owner_gen=%llu predecode_targets=%zu",
+        const bool      copy_owner      = !owner_export_current || force_owner_copy;
+        VKVV_TRACE("export-copy-targets",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu owner_copy=%u forced_owner_copy=%u retained_attached=%u import_attached=%u owner_mem=0x%llx "
+                   "owner_gen=%llu predecode_targets=%zu",
                    source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
-                   static_cast<unsigned long long>(source->content_generation), owner_export_current ? 0U : 1U, vkvv_trace_handle(source->export_resource.memory),
+                   static_cast<unsigned long long>(source->content_generation), copy_owner ? 1U : 0U, force_owner_copy ? 1U : 0U, source->export_retained_attached ? 1U : 0U,
+                   source->export_import_attached ? 1U : 0U, vkvv_trace_handle(source->export_resource.memory),
                    static_cast<unsigned long long>(source->export_resource.content_generation), predecode_seed_targets.size());
-        if (!copy_surface_to_export_targets_locked(runtime, source, export_resource, !owner_export_current, predecode_seed_targets, export_lock, reason, reason_size)) {
+        if (!copy_surface_to_export_targets_locked(runtime, source, export_resource, copy_owner, predecode_seed_targets, export_lock, reason, reason_size)) {
             return false;
         }
         unregister_predecode_export_resource_locked(runtime, export_resource);
+        if (copy_owner) {
+            clear_surface_export_attach_state(source);
+        }
         source->export_seed_generation = source->content_generation;
         remember_export_seed_resource_locked(runtime, source);
         if (seeded_predecode_exports != nullptr) {
