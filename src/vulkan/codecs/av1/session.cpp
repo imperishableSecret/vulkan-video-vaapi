@@ -132,6 +132,8 @@ namespace vkvv {
         session->next_dpb_slot                 = 0;
         session->max_dpb_slots                 = 0;
         session->max_active_reference_pictures = 0;
+        session->loop_filter_ref_deltas        = {1, 0, 0, 0, -1, 0, -1, -1};
+        session->loop_filter_mode_deltas       = {0, 0};
     }
 
     bool reset_av1_session(VulkanRuntime* runtime, AV1VideoSession* session, VkVideoSessionParametersKHR parameters, char* reason, size_t reason_size) {

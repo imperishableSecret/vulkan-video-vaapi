@@ -51,31 +51,48 @@ namespace vkvv {
     using AV1ReferenceMetadata = AV1ReferenceSlot::Metadata;
 
     struct AV1VideoSession {
-        VAProfile                                    va_profile        = VAProfileAV1Profile0;
-        unsigned int                                 va_rt_format      = VA_RT_FORMAT_YUV420;
-        unsigned int                                 va_fourcc         = VA_FOURCC_NV12;
-        uint8_t                                      bitstream_profile = 0;
-        uint8_t                                      bit_depth         = 8;
-        VideoProfileSpec                             profile_spec      = av1_profile0_spec;
-        VideoSession                                 video;
-        std::array<UploadBuffer, command_slot_count> uploads;
-        AV1ReferenceSlot                             reference_slots[max_av1_reference_slots]{};
-        std::vector<AV1ReferenceSlot>                surface_slots;
-        VkDeviceSize                                 bitstream_offset_alignment    = 1;
-        VkDeviceSize                                 bitstream_size_alignment      = 1;
-        StdVideoAV1Level                             max_level                     = STD_VIDEO_AV1_LEVEL_6_2;
-        VkVideoDecodeCapabilityFlagsKHR              decode_flags                  = 0;
-        uint32_t                                     next_dpb_slot                 = 0;
-        uint32_t                                     max_dpb_slots                 = 0;
-        uint32_t                                     max_active_reference_pictures = 0;
-        bool                                         has_sequence_key              = false;
-        VkvvAV1SequenceHeader                        sequence_key{};
+        VAProfile                                                 va_profile        = VAProfileAV1Profile0;
+        unsigned int                                              va_rt_format      = VA_RT_FORMAT_YUV420;
+        unsigned int                                              va_fourcc         = VA_FOURCC_NV12;
+        uint8_t                                                   bitstream_profile = 0;
+        uint8_t                                                   bit_depth         = 8;
+        VideoProfileSpec                                          profile_spec      = av1_profile0_spec;
+        VideoSession                                              video;
+        std::array<UploadBuffer, command_slot_count>              uploads;
+        AV1ReferenceSlot                                          reference_slots[max_av1_reference_slots]{};
+        std::vector<AV1ReferenceSlot>                             surface_slots;
+        VkDeviceSize                                              bitstream_offset_alignment    = 1;
+        VkDeviceSize                                              bitstream_size_alignment      = 1;
+        StdVideoAV1Level                                          max_level                     = STD_VIDEO_AV1_LEVEL_6_2;
+        VkVideoDecodeCapabilityFlagsKHR                           decode_flags                  = 0;
+        uint32_t                                                  next_dpb_slot                 = 0;
+        uint32_t                                                  max_dpb_slots                 = 0;
+        uint32_t                                                  max_active_reference_pictures = 0;
+        bool                                                      has_sequence_key              = false;
+        VkvvAV1SequenceHeader                                     sequence_key{};
+        std::array<int8_t, STD_VIDEO_AV1_TOTAL_REFS_PER_FRAME>    loop_filter_ref_deltas{1, 0, 0, 0, -1, 0, -1, -1};
+        std::array<int8_t, STD_VIDEO_AV1_LOOP_FILTER_ADJUSTMENTS> loop_filter_mode_deltas{0, 0};
     };
 
     struct AV1SessionStdParameters {
         StdVideoAV1ColorConfig    color{};
         StdVideoAV1TimingInfo     timing{};
         StdVideoAV1SequenceHeader sequence{};
+    };
+
+    struct AV1PictureStdData {
+        std::array<uint16_t, STD_VIDEO_AV1_MAX_TILE_COLS + 1> mi_col_starts{};
+        std::array<uint16_t, STD_VIDEO_AV1_MAX_TILE_ROWS + 1> mi_row_starts{};
+        std::array<uint16_t, STD_VIDEO_AV1_MAX_TILE_COLS>     width_in_sbs_minus1{};
+        std::array<uint16_t, STD_VIDEO_AV1_MAX_TILE_ROWS>     height_in_sbs_minus1{};
+        StdVideoAV1TileInfo                                   tile_info{};
+        StdVideoAV1Quantization                               quantization{};
+        StdVideoAV1Segmentation                               segmentation{};
+        StdVideoAV1LoopFilter                                 loop_filter{};
+        StdVideoAV1CDEF                                       cdef{};
+        StdVideoAV1LoopRestoration                            restoration{};
+        StdVideoAV1GlobalMotion                               global_motion{};
+        StdVideoDecodeAV1PictureInfo                          picture{};
     };
 
     void                    destroy_av1_video_session(VulkanRuntime* runtime, AV1VideoSession* session);
@@ -103,6 +120,9 @@ namespace vkvv {
                                                            const StdVideoDecodeAV1ReferenceInfo& info, const AV1ReferenceMetadata* metadata = nullptr);
     int            allocate_av1_dpb_slot(AV1VideoSession* session, const bool used_slots[max_av1_dpb_slots]);
     void           build_av1_session_parameters(const VkvvAV1DecodeInput* input, AV1SessionStdParameters* std_params);
+    bool           validate_av1_switch_frame(const VkvvAV1DecodeInput* input, char* reason, size_t reason_size);
+    bool           build_av1_picture_std_data(AV1VideoSession* session, const VkvvAV1DecodeInput* input, AV1PictureStdData* std_data, char* reason, size_t reason_size);
+    StdVideoDecodeAV1ReferenceInfo build_av1_current_reference_info(const VkvvAV1DecodeInput* input);
     bool create_av1_session_parameters(VulkanRuntime* runtime, AV1VideoSession* session, const AV1SessionStdParameters* std_params, VkVideoSessionParametersKHR* parameters,
                                        char* reason, size_t reason_size);
 
