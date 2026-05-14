@@ -252,7 +252,7 @@ namespace vkvv {
         slot.pending.refresh_export         = refresh_export;
         slot.pending.use                    = CommandUse::Decode;
         std::snprintf(slot.pending.operation, sizeof(slot.pending.operation), "%s", operation);
-        const auto* resource      = surface != nullptr ? static_cast<const SurfaceResource*>(surface->vulkan) : nullptr;
+        auto*       resource      = surface != nullptr ? static_cast<SurfaceResource*>(surface->vulkan) : nullptr;
         size_t      pending_count = 0;
         const bool  trace_enabled = vkvv_trace_enabled();
         if (trace_enabled) {
@@ -271,6 +271,15 @@ namespace vkvv {
                             resource != nullptr ? vkvv_trace_handle(resource->export_resource.memory) : 0ULL,
                             resource != nullptr ? static_cast<unsigned long long>(resource->export_resource.content_generation) : 0ULL,
                             resource != nullptr && resource->export_resource.predecode_exported ? 1U : 0U, static_cast<unsigned long long>(upload_allocation_size));
+        }
+        if (resource != nullptr && resource->export_resource.image != VK_NULL_HANDLE) {
+            if (resource->export_resource.predecode_quarantined) {
+                resource->export_resource.predecode_had_va_begin       = true;
+                resource->export_resource.predecode_had_decode_submit  = true;
+                resource->export_resource.predecode_had_visible_decode = resource->export_resource.predecode_had_visible_decode || refresh_export;
+            }
+            trace_export_fd_lifetime(resource, &resource->export_resource, "decode-begin", resource->content_generation,
+                                     export_resource_fd_may_be_sampled_by_client(&resource->export_resource));
         }
     }
 
@@ -356,6 +365,11 @@ namespace vkvv {
         if (completed.surface->vulkan != nullptr) {
             auto* resource = static_cast<SurfaceResource*>(completed.surface->vulkan);
             resource->content_generation++;
+            if (resource->export_resource.predecode_quarantined && completed.refresh_export) {
+                resource->export_resource.predecode_had_visible_decode = true;
+            }
+            trace_export_fd_lifetime(resource, &resource->export_resource, "decode-complete", resource->content_generation,
+                                     export_resource_fd_may_be_sampled_by_client(&resource->export_resource));
         }
         const auto* refresh_resource = completed.surface != nullptr ? static_cast<const SurfaceResource*>(completed.surface->vulkan) : nullptr;
         VKVV_TRACE("pending-refresh-decision",
