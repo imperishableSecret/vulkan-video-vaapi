@@ -65,12 +65,43 @@ namespace {
                      "AV1 upload buffer was not populated correctly");
     }
 
+    VkvvAV1SequenceHeader make_av1_sequence(uint8_t bit_depth, uint16_t max_width_minus_1 = 63, uint16_t max_height_minus_1 = 63) {
+        VkvvAV1SequenceHeader sequence{};
+        sequence.valid                          = true;
+        sequence.seq_profile                    = 0;
+        sequence.bit_depth                      = bit_depth;
+        sequence.frame_width_bits_minus_1       = 15;
+        sequence.frame_height_bits_minus_1      = 15;
+        sequence.max_frame_width_minus_1        = max_width_minus_1;
+        sequence.max_frame_height_minus_1       = max_height_minus_1;
+        sequence.use_128x128_superblock         = true;
+        sequence.enable_filter_intra            = true;
+        sequence.enable_intra_edge_filter       = true;
+        sequence.enable_interintra_compound     = true;
+        sequence.enable_masked_compound         = true;
+        sequence.enable_order_hint              = true;
+        sequence.enable_dual_filter             = true;
+        sequence.enable_jnt_comp                = true;
+        sequence.enable_cdef                    = true;
+        sequence.order_hint_bits_minus_1        = 6;
+        sequence.seq_force_integer_mv           = STD_VIDEO_AV1_SELECT_INTEGER_MV;
+        sequence.seq_force_screen_content_tools = STD_VIDEO_AV1_SELECT_SCREEN_CONTENT_TOOLS;
+        sequence.subsampling_x                  = 1;
+        sequence.subsampling_y                  = 1;
+        sequence.color_primaries                = STD_VIDEO_AV1_COLOR_PRIMARIES_UNSPECIFIED;
+        sequence.transfer_characteristics       = STD_VIDEO_AV1_TRANSFER_CHARACTERISTICS_UNSPECIFIED;
+        sequence.matrix_coefficients            = STD_VIDEO_AV1_MATRIX_COEFFICIENTS_BT_709;
+        sequence.chroma_sample_position         = STD_VIDEO_AV1_CHROMA_SAMPLE_POSITION_UNKNOWN;
+        return sequence;
+    }
+
     bool configure_session_for_p010(void* runtime, void* session) {
         VADecPictureParameterBufferAV1 pic{};
         pic.profile = 0;
 
         VkvvAV1DecodeInput input{};
         input.pic       = &pic;
+        input.sequence  = make_av1_sequence(10);
         input.bit_depth = 10;
         input.rt_format = VA_RT_FORMAT_YUV420_10;
         input.fourcc    = VA_FOURCC_P010;
@@ -90,6 +121,112 @@ namespace {
         return check(typed_session->va_rt_format == VA_RT_FORMAT_YUV420_10 && typed_session->va_fourcc == VA_FOURCC_P010 && typed_session->bit_depth == 10,
                      "AV1 retarget did not switch the session metadata to P010") &&
             check(typed_session->video.session == VK_NULL_HANDLE && typed_session->uploads[0].buffer == VK_NULL_HANDLE, "AV1 retarget did not discard stale NV12 Vulkan resources");
+    }
+
+    bool check_av1_sequence_parameters() {
+        VADecPictureParameterBufferAV1 pic{};
+        pic.profile             = 0;
+        pic.frame_width_minus1  = 15;
+        pic.frame_height_minus1 = 15;
+
+        VkvvAV1DecodeInput input{};
+        input.pic       = &pic;
+        input.sequence  = make_av1_sequence(8, 1919, 1079);
+        input.bit_depth = 8;
+        input.rt_format = VA_RT_FORMAT_YUV420;
+        input.fourcc    = VA_FOURCC_NV12;
+
+        input.sequence.frame_width_bits_minus_1           = 12;
+        input.sequence.frame_height_bits_minus_1          = 13;
+        input.sequence.enable_warped_motion               = true;
+        input.sequence.enable_ref_frame_mvs               = true;
+        input.sequence.enable_superres                    = true;
+        input.sequence.enable_restoration                 = true;
+        input.sequence.frame_id_numbers_present_flag      = true;
+        input.sequence.delta_frame_id_length_minus_2      = 2;
+        input.sequence.additional_frame_id_length_minus_1 = 3;
+        input.sequence.color_description_present_flag     = true;
+        input.sequence.color_range                        = true;
+        input.sequence.separate_uv_delta_q                = true;
+        input.sequence.color_primaries                    = STD_VIDEO_AV1_COLOR_PRIMARIES_BT_2020;
+        input.sequence.transfer_characteristics           = STD_VIDEO_AV1_TRANSFER_CHARACTERISTICS_HLG;
+        input.sequence.matrix_coefficients                = STD_VIDEO_AV1_MATRIX_COEFFICIENTS_BT_2020_NCL;
+        input.sequence.chroma_sample_position             = STD_VIDEO_AV1_CHROMA_SAMPLE_POSITION_VERTICAL;
+        input.sequence.timing_info_present_flag           = true;
+        input.sequence.equal_picture_interval             = true;
+        input.sequence.num_units_in_display_tick          = 1001;
+        input.sequence.time_scale                         = 60000;
+        input.sequence.num_ticks_per_picture_minus_1      = 1;
+
+        vkvv::AV1SessionStdParameters params{};
+        vkvv::build_av1_session_parameters(&input, &params);
+
+        bool ok = true;
+        ok      = check(params.sequence.flags.enable_warped_motion && params.sequence.flags.enable_ref_frame_mvs && params.sequence.flags.enable_superres &&
+                            params.sequence.flags.enable_restoration,
+                        "AV1 sequence tools were derived from current-frame flags instead of the sequence header") &&
+            ok;
+        ok = check(params.sequence.max_frame_width_minus_1 == 1919 && params.sequence.max_frame_height_minus_1 == 1079 && params.sequence.frame_width_bits_minus_1 == 12 &&
+                       params.sequence.frame_height_bits_minus_1 == 13,
+                   "AV1 sequence dimensions did not come from the sequence header") &&
+            ok;
+        ok = check(params.sequence.delta_frame_id_length_minus_2 == 2 && params.sequence.additional_frame_id_length_minus_1 == 3, "AV1 frame-id sequence fields were not copied") &&
+            ok;
+        ok = check(params.color.flags.color_description_present_flag && params.color.flags.color_range && params.color.flags.separate_uv_delta_q &&
+                       params.color.color_primaries == STD_VIDEO_AV1_COLOR_PRIMARIES_BT_2020 &&
+                       params.color.transfer_characteristics == STD_VIDEO_AV1_TRANSFER_CHARACTERISTICS_HLG &&
+                       params.color.matrix_coefficients == STD_VIDEO_AV1_MATRIX_COEFFICIENTS_BT_2020_NCL &&
+                       params.color.chroma_sample_position == STD_VIDEO_AV1_CHROMA_SAMPLE_POSITION_VERTICAL,
+                   "AV1 color config did not come from the sequence header") &&
+            ok;
+        return check(params.sequence.pTimingInfo == &params.timing && params.timing.flags.equal_picture_interval && params.timing.num_units_in_display_tick == 1001 &&
+                         params.timing.time_scale == 60000 && params.timing.num_ticks_per_picture_minus_1 == 1,
+                     "AV1 timing info did not come from the sequence header") &&
+            ok;
+    }
+
+    bool check_av1_sequence_key_reset() {
+        vkvv::AV1VideoSession          session{};
+
+        VADecPictureParameterBufferAV1 pic{};
+        pic.profile = 0;
+
+        VkvvSurface target{};
+        target.rt_format = VA_RT_FORMAT_YUV420;
+        target.fourcc    = VA_FOURCC_NV12;
+
+        VkvvAV1DecodeInput input{};
+        input.pic       = &pic;
+        input.sequence  = make_av1_sequence(8, 63, 63);
+        input.bit_depth = 8;
+        input.rt_format = VA_RT_FORMAT_YUV420;
+        input.fourcc    = VA_FOURCC_NV12;
+
+        char     reason[512] = {};
+        VAStatus status      = vkvv_vulkan_configure_av1_session(nullptr, &session, &target, &input, reason, sizeof(reason));
+        if (!check(status == VA_STATUS_SUCCESS && session.has_sequence_key && session.sequence_key.max_frame_width_minus_1 == 63,
+                   "AV1 sequence key was not recorded on first configure")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+
+        StdVideoDecodeAV1ReferenceInfo info{};
+        vkvv::av1_set_reference_slot(&session, 0, 101, 3, info);
+        vkvv::av1_set_surface_slot(&session, 101, 3, info);
+        session.next_dpb_slot = 4;
+        session.max_dpb_slots = vkvv::max_av1_dpb_slots;
+
+        input.sequence = make_av1_sequence(8, 1919, 1079);
+        reason[0]      = '\0';
+        status         = vkvv_vulkan_configure_av1_session(nullptr, &session, &target, &input, reason, sizeof(reason));
+        if (!check(status == VA_STATUS_SUCCESS, "AV1 sequence change configure failed")) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+
+        return check(session.has_sequence_key && session.sequence_key.max_frame_width_minus_1 == 1919 && vkvv::av1_reference_slot_for_index(&session, 0) == nullptr &&
+                         vkvv::av1_surface_slot_for_surface(&session, 101) == nullptr && session.max_dpb_slots == 0 && session.next_dpb_slot == 0,
+                     "AV1 sequence change did not reset reference slots and DPB metadata");
     }
 
     bool check_av1_dpb_slots() {
@@ -515,7 +652,9 @@ namespace {
 } // namespace
 
 int main(void) {
-    bool ok = check_av1_dpb_slots();
+    bool ok = check_av1_sequence_parameters();
+    ok      = check_av1_sequence_key_reset() && ok;
+    ok      = check_av1_dpb_slots() && ok;
     ok      = check_av1_refresh_retention() && ok;
     ok      = check_av1_surface_reconciliation() && ok;
     ok      = check_av1_reference_identity_validation() && ok;

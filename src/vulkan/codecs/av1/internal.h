@@ -68,10 +68,13 @@ namespace vkvv {
         uint32_t                                     next_dpb_slot                 = 0;
         uint32_t                                     max_dpb_slots                 = 0;
         uint32_t                                     max_active_reference_pictures = 0;
+        bool                                         has_sequence_key              = false;
+        VkvvAV1SequenceHeader                        sequence_key{};
     };
 
     struct AV1SessionStdParameters {
         StdVideoAV1ColorConfig    color{};
+        StdVideoAV1TimingInfo     timing{};
         StdVideoAV1SequenceHeader sequence{};
     };
 
