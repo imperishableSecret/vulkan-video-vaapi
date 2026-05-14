@@ -132,6 +132,12 @@ class StreamStats:
     export_visible_releases: int = 0
     export_visible_acquires: int = 0
     export_visible_release_missing: int = 0
+    decode_pixel_proofs: int = 0
+    present_pixel_proofs: int = 0
+    present_pixel_mismatches: int = 0
+    private_shadow_pixel_proofs: int = 0
+    private_shadow_pixel_mismatches: int = 0
+    pixel_proof_unavailable: int = 0
     nondisplay_present_pinned_skips: int = 0
     invalid_nondisplay_stale_export_shadows: int = 0
     invalid_presentable_undecoded_surfaces: int = 0
@@ -217,6 +223,12 @@ class TraceProfile:
         self.export_visible_releases = 0
         self.export_visible_acquires = 0
         self.export_visible_release_missing = 0
+        self.decode_pixel_proofs = 0
+        self.present_pixel_proofs = 0
+        self.present_pixel_mismatches = 0
+        self.private_shadow_pixel_proofs = 0
+        self.private_shadow_pixel_mismatches = 0
+        self.pixel_proof_unavailable = 0
         self.nondisplay_present_pinned_skips = 0
         self.invalid_nondisplay_stale_export_shadows = 0
         self.invalid_presentable_undecoded_surfaces = 0
@@ -378,6 +390,18 @@ class TraceProfile:
                 stream.export_visible_release_missing += 1
         elif event == "export-visible-acquire" and stream is not None:
             stream.export_visible_acquires += 1
+        elif event == "decode-pixel-proof" and stream is not None:
+            stream.decode_pixel_proofs += 1
+        elif event == "present-pixel-proof" and stream is not None:
+            stream.present_pixel_proofs += 1
+            if (parse_int(fields.get("matches_decode")) or 0) == 0:
+                stream.present_pixel_mismatches += 1
+        elif event == "private-shadow-pixel-proof" and stream is not None:
+            stream.private_shadow_pixel_proofs += 1
+            if (parse_int(fields.get("matches_decode")) or 0) == 0:
+                stream.private_shadow_pixel_mismatches += 1
+        elif event == "pixel-proof-unavailable" and stream is not None:
+            stream.pixel_proof_unavailable += 1
         elif event == "nondisplay-present-pinned-skip" and stream is not None:
             stream.nondisplay_present_pinned_skips += 1
         elif event == "invalid-nondisplay-stale-export-shadow" and stream is not None:
@@ -508,6 +532,18 @@ class TraceProfile:
                 self.export_visible_release_missing += 1
         elif event == "export-visible-acquire":
             self.export_visible_acquires += 1
+        elif event == "decode-pixel-proof":
+            self.decode_pixel_proofs += 1
+        elif event == "present-pixel-proof":
+            self.present_pixel_proofs += 1
+            if (parse_int(fields.get("matches_decode")) or 0) == 0:
+                self.present_pixel_mismatches += 1
+        elif event == "private-shadow-pixel-proof":
+            self.private_shadow_pixel_proofs += 1
+            if (parse_int(fields.get("matches_decode")) or 0) == 0:
+                self.private_shadow_pixel_mismatches += 1
+        elif event == "pixel-proof-unavailable":
+            self.pixel_proof_unavailable += 1
         elif event == "nondisplay-present-pinned-skip":
             self.nondisplay_present_pinned_skips += 1
         elif event == "invalid-nondisplay-stale-export-shadow":
@@ -624,6 +660,12 @@ class TraceProfile:
             "export_visible_releases": self.export_visible_releases,
             "export_visible_acquires": self.export_visible_acquires,
             "export_visible_release_missing": self.export_visible_release_missing,
+            "decode_pixel_proofs": self.decode_pixel_proofs,
+            "present_pixel_proofs": self.present_pixel_proofs,
+            "present_pixel_mismatches": self.present_pixel_mismatches,
+            "private_shadow_pixel_proofs": self.private_shadow_pixel_proofs,
+            "private_shadow_pixel_mismatches": self.private_shadow_pixel_mismatches,
+            "pixel_proof_unavailable": self.pixel_proof_unavailable,
             "nondisplay_present_pinned_skips": self.nondisplay_present_pinned_skips,
             "invalid_nondisplay_stale_export_shadows": self.invalid_nondisplay_stale_export_shadows,
             "invalid_presentable_undecoded_surfaces": self.invalid_presentable_undecoded_surfaces,
@@ -678,6 +720,12 @@ class TraceProfile:
             total["export_visible_releases"] += stream.export_visible_releases
             total["export_visible_acquires"] += stream.export_visible_acquires
             total["export_visible_release_missing"] += stream.export_visible_release_missing
+            total["decode_pixel_proofs"] += stream.decode_pixel_proofs
+            total["present_pixel_proofs"] += stream.present_pixel_proofs
+            total["present_pixel_mismatches"] += stream.present_pixel_mismatches
+            total["private_shadow_pixel_proofs"] += stream.private_shadow_pixel_proofs
+            total["private_shadow_pixel_mismatches"] += stream.private_shadow_pixel_mismatches
+            total["pixel_proof_unavailable"] += stream.pixel_proof_unavailable
             total["nondisplay_present_pinned_skips"] += stream.nondisplay_present_pinned_skips
             total["invalid_nondisplay_stale_export_shadows"] += stream.invalid_nondisplay_stale_export_shadows
             total["invalid_presentable_undecoded_surfaces"] += stream.invalid_presentable_undecoded_surfaces
@@ -775,6 +823,12 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "export_visible_releases": stream.export_visible_releases,
         "export_visible_acquires": stream.export_visible_acquires,
         "export_visible_release_missing": stream.export_visible_release_missing,
+        "decode_pixel_proofs": stream.decode_pixel_proofs,
+        "present_pixel_proofs": stream.present_pixel_proofs,
+        "present_pixel_mismatches": stream.present_pixel_mismatches,
+        "private_shadow_pixel_proofs": stream.private_shadow_pixel_proofs,
+        "private_shadow_pixel_mismatches": stream.private_shadow_pixel_mismatches,
+        "pixel_proof_unavailable": stream.pixel_proof_unavailable,
         "nondisplay_present_pinned_skips": stream.nondisplay_present_pinned_skips,
         "invalid_nondisplay_stale_export_shadows": stream.invalid_nondisplay_stale_export_shadows,
         "invalid_presentable_undecoded_surfaces": stream.invalid_presentable_undecoded_surfaces,
@@ -873,6 +927,9 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         f"export_visible_releases={totals['export_visible_releases']} "
         f"export_visible_acquires={totals['export_visible_acquires']} "
         f"export_visible_release_missing={totals['export_visible_release_missing']} "
+        f"decode_pixel_proofs={totals['decode_pixel_proofs']} present_pixel_proofs={totals['present_pixel_proofs']} "
+        f"present_pixel_mismatches={totals['present_pixel_mismatches']} private_shadow_pixel_proofs={totals['private_shadow_pixel_proofs']} "
+        f"private_shadow_pixel_mismatches={totals['private_shadow_pixel_mismatches']} pixel_proof_unavailable={totals['pixel_proof_unavailable']} "
         f"nondisplay_present_pinned_skips={totals['nondisplay_present_pinned_skips']} "
         f"invalid_nondisplay_stale_export_shadows={totals['invalid_nondisplay_stale_export_shadows']} "
         f"invalid_presentable_undecoded_surfaces={totals['invalid_presentable_undecoded_surfaces']} "
@@ -912,6 +969,9 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"export_visible_releases={values['export_visible_releases']} "
             f"export_visible_acquires={values['export_visible_acquires']} "
             f"export_visible_release_missing={values['export_visible_release_missing']} "
+            f"decode_pixel_proofs={values['decode_pixel_proofs']} present_pixel_proofs={values['present_pixel_proofs']} "
+            f"present_pixel_mismatches={values['present_pixel_mismatches']} private_shadow_pixel_proofs={values['private_shadow_pixel_proofs']} "
+            f"private_shadow_pixel_mismatches={values['private_shadow_pixel_mismatches']} pixel_proof_unavailable={values['pixel_proof_unavailable']} "
             f"nondisplay_present_pinned_skips={values['nondisplay_present_pinned_skips']} "
             f"invalid_nondisplay_stale_export_shadows={values['invalid_nondisplay_stale_export_shadows']} "
             f"invalid_presentable_undecoded_surfaces={values['invalid_presentable_undecoded_surfaces']} "
@@ -954,6 +1014,9 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"export_visible_releases={stream.export_visible_releases} "
             f"export_visible_acquires={stream.export_visible_acquires} "
             f"export_visible_release_missing={stream.export_visible_release_missing} "
+            f"decode_pixel_proofs={stream.decode_pixel_proofs} present_pixel_proofs={stream.present_pixel_proofs} "
+            f"present_pixel_mismatches={stream.present_pixel_mismatches} private_shadow_pixel_proofs={stream.private_shadow_pixel_proofs} "
+            f"private_shadow_pixel_mismatches={stream.private_shadow_pixel_mismatches} pixel_proof_unavailable={stream.pixel_proof_unavailable} "
             f"nondisplay_present_pinned_skips={stream.nondisplay_present_pinned_skips} "
             f"invalid_nondisplay_stale_export_shadows={stream.invalid_nondisplay_stale_export_shadows} "
             f"invalid_presentable_undecoded_surfaces={stream.invalid_presentable_undecoded_surfaces} "
