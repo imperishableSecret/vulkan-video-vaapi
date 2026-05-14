@@ -269,6 +269,28 @@ namespace {
         return submit_command_buffer_and_wait(runtime, reason, reason_size, "AV1 show-existing copy");
     }
 
+    void trace_av1_display_decision(const VkvvDriver* drv, const VkvvContext* vctx, VASurfaceID target_surface_id, VASurfaceID last_display_surface,
+                                    const VkvvAV1DecodeInput* input, const SurfaceResource* resource, bool refresh_export, const char* display_action) {
+        const bool     show_frame          = input != nullptr && input->header.show_frame;
+        const bool     show_existing_frame = input != nullptr && input->header.show_existing_frame;
+        const bool     showable_frame      = input != nullptr && input->header.showable_frame;
+        const uint32_t refresh_flags       = input != nullptr ? input->header.refresh_frame_flags : 0;
+        const int      frame_to_show       = input != nullptr ? input->header.frame_to_show_map_idx : -1;
+        const bool     shadow_stale        = surface_resource_export_shadow_stale(resource);
+        VKVV_TRACE("av1-display-decision",
+                   "driver=%llu ctx_stream=%llu surface=%u show_frame=%u show_existing_frame=%u showable_frame=%u refresh_frame_flags=0x%02x frame_to_show_map_idx=%d "
+                   "content_gen=%llu shadow_gen=%llu shadow_stale=%u refresh_export=%u exported=%u shadow_exported=%u predecode=%u seeded=%u last_display_surface=%u "
+                   "last_display_gen=%llu display_action=%s",
+                   drv != nullptr ? static_cast<unsigned long long>(drv->driver_instance_id) : 0ULL, vctx != nullptr ? static_cast<unsigned long long>(vctx->stream_id) : 0ULL,
+                   target_surface_id, show_frame ? 1U : 0U, show_existing_frame ? 1U : 0U, showable_frame ? 1U : 0U, refresh_flags, frame_to_show,
+                   resource != nullptr ? static_cast<unsigned long long>(resource->content_generation) : 0ULL,
+                   resource != nullptr ? static_cast<unsigned long long>(resource->export_resource.content_generation) : 0ULL, shadow_stale ? 1U : 0U, refresh_export ? 1U : 0U,
+                   resource != nullptr && resource->exported ? 1U : 0U, resource != nullptr && resource->export_resource.exported ? 1U : 0U,
+                   resource != nullptr && resource->export_resource.predecode_exported ? 1U : 0U, resource != nullptr && resource->export_resource.predecode_seeded ? 1U : 0U,
+                   last_display_surface, resource != nullptr ? static_cast<unsigned long long>(resource->last_display_refresh_generation) : 0ULL,
+                   display_action != nullptr ? display_action : "unknown");
+    }
+
     void build_av1_tile_info(const VkvvAV1DecodeInput* input, AV1PictureStdData* std_data) {
         const VADecPictureParameterBufferAV1* pic         = input->pic;
         const uint32_t                        tile_cols   = std::min<uint32_t>(pic->tile_cols, STD_VIDEO_AV1_MAX_TILE_COLS);
@@ -802,6 +824,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
             return export_status;
         }
 
+        trace_av1_display_decision(drv, vctx, target_surface_id, show_slot->surface_id, input, target_resource, true, "show-existing-refresh");
         VKVV_TRACE("av1-show-existing", "driver=%llu ctx_stream=%llu target=%u source=%u map_idx=%d slot=%d display_frame_id=%u target_gen=%llu source_gen=%llu refresh_export=1",
                    static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id), target_surface_id, show_slot->surface_id,
                    input->header.frame_to_show_map_idx, show_slot->slot, input->header.display_frame_id, static_cast<unsigned long long>(target_resource->content_generation),
@@ -1123,6 +1146,8 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     }
 
     track_pending_decode(runtime, target, parameters, upload_allocation_size, refresh_export, "AV1 decode");
+    trace_av1_display_decision(drv, vctx, target_surface_id, refresh_export ? target_surface_id : VA_INVALID_ID, input, target_resource, refresh_export,
+                               refresh_export ? "decode-display-queued" : "decode-reference-only");
     VKVV_TRACE("av1-submit",
                "driver=%llu ctx_stream=%llu target=%u slot=%d refresh=0x%02x refresh_export=%u hdr_existing=%u hdr_show=%u hdr_showable=%u depth=%u fourcc=0x%x refs=%u bytes=%zu "
                "upload_mem=%llu session_mem=%llu",
