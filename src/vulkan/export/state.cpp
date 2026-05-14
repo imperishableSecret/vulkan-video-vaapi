@@ -1,6 +1,7 @@
 #include "vulkan/runtime_internal.h"
 #include "telemetry.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -13,6 +14,17 @@ namespace vkvv {
             case VkvvExportCopyReason::ImportOutput: return "import-output";
             case VkvvExportCopyReason::NondisplayCurrentRefresh: return "nondisplay-current-refresh";
             case VkvvExportCopyReason::NondisplayPrivateRefresh: return "nondisplay-private-refresh";
+            default: return "unknown";
+        }
+    }
+
+    const char* thumbnail_predecode_action_name(ThumbnailPredecodeAction action) {
+        switch (action) {
+            case ThumbnailPredecodeAction::NormalPredecodePolicy: return "normal";
+            case ThumbnailPredecodeAction::DrainAndExport: return "drain";
+            case ThumbnailPredecodeAction::StreamLocalSeed: return "seed";
+            case ThumbnailPredecodeAction::FailExport: return "fail";
+            case ThumbnailPredecodeAction::DebugPlaceholder: return "debug-placeholder";
             default: return "unknown";
         }
     }
@@ -61,6 +73,63 @@ namespace vkvv {
     bool av1_export_env_flag_enabled(const char* name) {
         const char* value = std::getenv(name);
         return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 && std::strcmp(value, "off") != 0;
+    }
+
+    bool surface_resource_thumbnail_like(const SurfaceResource* resource) {
+        if (resource == nullptr) {
+            return false;
+        }
+        const uint32_t width  = resource->visible_extent.width != 0 ? resource->visible_extent.width : resource->coded_extent.width;
+        const uint32_t height = resource->visible_extent.height != 0 ? resource->visible_extent.height : resource->coded_extent.height;
+        return width != 0 && height != 0 && width <= 960 && height <= 540;
+    }
+
+    bool debug_allow_thumbnail_placeholder() {
+        return av1_export_env_flag_enabled("VKVV_ALLOW_THUMBNAIL_PLACEHOLDER");
+    }
+
+    namespace {
+
+        void set_thumbnail_reason(char* reason, size_t reason_size, const char* text) {
+            if (reason != nullptr && reason_size > 0) {
+                std::snprintf(reason, reason_size, "%s", text != nullptr ? text : "");
+            }
+        }
+
+        bool surface_resource_has_pending_decode(VulkanRuntime* runtime, const SurfaceResource* resource) {
+            if (runtime == nullptr || resource == nullptr) {
+                return false;
+            }
+            std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+            for (const CommandSlot& slot : runtime->command_slots) {
+                if (slot.pending.surface != nullptr && slot.pending.surface->vulkan == resource) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+    } // namespace
+
+    ThumbnailPredecodeAction decide_thumbnail_predecode_export(VulkanRuntime* runtime, SurfaceResource* resource, char* reason, size_t reason_size) {
+        if (!surface_resource_thumbnail_like(resource)) {
+            set_thumbnail_reason(reason, reason_size, "not-thumbnail");
+            return ThumbnailPredecodeAction::NormalPredecodePolicy;
+        }
+        if (resource->content_generation > 0) {
+            set_thumbnail_reason(reason, reason_size, "decoded-content");
+            return ThumbnailPredecodeAction::DrainAndExport;
+        }
+        if (surface_resource_has_pending_decode(runtime, resource)) {
+            set_thumbnail_reason(reason, reason_size, "pending-decode");
+            return ThumbnailPredecodeAction::DrainAndExport;
+        }
+        if (debug_allow_thumbnail_placeholder()) {
+            set_thumbnail_reason(reason, reason_size, "debug-placeholder-enabled");
+            return ThumbnailPredecodeAction::DebugPlaceholder;
+        }
+        set_thumbnail_reason(reason, reason_size, "no-valid-content");
+        return ThumbnailPredecodeAction::FailExport;
     }
 
     bool surface_resource_uses_av1_decode(const SurfaceResource* resource) {
