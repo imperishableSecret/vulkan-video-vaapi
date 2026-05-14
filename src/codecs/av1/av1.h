@@ -62,6 +62,54 @@ typedef struct {
 } VkvvAV1FrameHeader;
 
 typedef struct {
+    bool     valid;
+    bool     still_picture;
+    bool     reduced_still_picture_header;
+    bool     frame_id_numbers_present_flag;
+    bool     use_128x128_superblock;
+    bool     enable_filter_intra;
+    bool     enable_intra_edge_filter;
+    bool     enable_interintra_compound;
+    bool     enable_masked_compound;
+    bool     enable_warped_motion;
+    bool     enable_order_hint;
+    bool     enable_dual_filter;
+    bool     enable_jnt_comp;
+    bool     enable_ref_frame_mvs;
+    bool     enable_superres;
+    bool     enable_cdef;
+    bool     enable_restoration;
+    bool     film_grain_params_present;
+    bool     timing_info_present_flag;
+    bool     equal_picture_interval;
+    bool     initial_display_delay_present_flag;
+    bool     mono_chrome;
+    bool     color_range;
+    bool     separate_uv_delta_q;
+    bool     color_description_present_flag;
+    uint8_t  seq_profile;
+    uint8_t  bit_depth;
+    uint8_t  frame_width_bits_minus_1;
+    uint8_t  frame_height_bits_minus_1;
+    uint16_t max_frame_width_minus_1;
+    uint16_t max_frame_height_minus_1;
+    uint8_t  delta_frame_id_length_minus_2;
+    uint8_t  additional_frame_id_length_minus_1;
+    int8_t   order_hint_bits_minus_1;
+    uint8_t  seq_force_integer_mv;
+    uint8_t  seq_force_screen_content_tools;
+    uint8_t  subsampling_x;
+    uint8_t  subsampling_y;
+    uint8_t  chroma_sample_position;
+    uint8_t  color_primaries;
+    uint8_t  transfer_characteristics;
+    uint8_t  matrix_coefficients;
+    uint32_t num_units_in_display_tick;
+    uint32_t time_scale;
+    uint32_t num_ticks_per_picture_minus_1;
+} VkvvAV1SequenceHeader;
+
+typedef struct {
     VASliceParameterBufferAV1 param;
     uint32_t                  tile_index;
     uint32_t                  offset;
@@ -76,6 +124,7 @@ typedef struct {
     size_t                                bitstream_size;
     uint32_t                              decode_window_offset;
     VkvvAV1FrameHeader                    header;
+    VkvvAV1SequenceHeader                 sequence;
     uint8_t                               bit_depth;
     unsigned int                          rt_format;
     unsigned int                          fourcc;

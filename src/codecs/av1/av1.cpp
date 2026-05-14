@@ -28,6 +28,7 @@ namespace {
         bool                                   has_pic            = false;
         bool                                   has_slice_data     = false;
         bool                                   has_header         = false;
+        bool                                   has_sequence       = false;
         bool                                   tile_records_valid = true;
 
         GstAV1Parser*                          parser = nullptr;
@@ -39,6 +40,7 @@ namespace {
         uint32_t                               decode_window_offset = 0;
         size_t                                 decode_window_size   = 0;
         VkvvAV1FrameHeader                     header{};
+        VkvvAV1SequenceHeader                  sequence{};
         uint32_t                               pending_slices_underused_frames = 0;
         uint32_t                               tiles_underused_frames          = 0;
         uint32_t                               bitstream_underused_frames      = 0;
@@ -228,6 +230,55 @@ namespace {
         std::copy(std::begin(src.expected_frame_id), std::end(src.expected_frame_id), dst->expected_frame_id);
     }
 
+    void copy_gst_sequence_header(const GstAV1SequenceHeaderOBU& src, VkvvAV1SequenceHeader* dst) {
+        *dst                                    = {};
+        dst->valid                              = true;
+        dst->still_picture                      = src.still_picture;
+        dst->reduced_still_picture_header       = src.reduced_still_picture_header;
+        dst->frame_id_numbers_present_flag      = src.frame_id_numbers_present_flag;
+        dst->use_128x128_superblock             = src.use_128x128_superblock;
+        dst->enable_filter_intra                = src.enable_filter_intra;
+        dst->enable_intra_edge_filter           = src.enable_intra_edge_filter;
+        dst->enable_interintra_compound         = src.enable_interintra_compound;
+        dst->enable_masked_compound             = src.enable_masked_compound;
+        dst->enable_warped_motion               = src.enable_warped_motion;
+        dst->enable_order_hint                  = src.enable_order_hint;
+        dst->enable_dual_filter                 = src.enable_dual_filter;
+        dst->enable_jnt_comp                    = src.enable_jnt_comp;
+        dst->enable_ref_frame_mvs               = src.enable_ref_frame_mvs;
+        dst->enable_superres                    = src.enable_superres;
+        dst->enable_cdef                        = src.enable_cdef;
+        dst->enable_restoration                 = src.enable_restoration;
+        dst->film_grain_params_present          = src.film_grain_params_present;
+        dst->timing_info_present_flag           = src.timing_info_present_flag;
+        dst->equal_picture_interval             = src.timing_info.equal_picture_interval;
+        dst->initial_display_delay_present_flag = src.initial_display_delay_present_flag;
+        dst->mono_chrome                        = src.color_config.mono_chrome;
+        dst->color_range                        = src.color_config.color_range;
+        dst->separate_uv_delta_q                = src.color_config.separate_uv_delta_q;
+        dst->color_description_present_flag     = src.color_config.color_description_present_flag;
+        dst->seq_profile                        = static_cast<uint8_t>(src.seq_profile);
+        dst->bit_depth                          = src.bit_depth;
+        dst->frame_width_bits_minus_1           = src.frame_width_bits_minus_1;
+        dst->frame_height_bits_minus_1          = src.frame_height_bits_minus_1;
+        dst->max_frame_width_minus_1            = src.max_frame_width_minus_1;
+        dst->max_frame_height_minus_1           = src.max_frame_height_minus_1;
+        dst->delta_frame_id_length_minus_2      = src.delta_frame_id_length_minus_2;
+        dst->additional_frame_id_length_minus_1 = src.additional_frame_id_length_minus_1;
+        dst->order_hint_bits_minus_1            = src.order_hint_bits_minus_1;
+        dst->seq_force_integer_mv               = src.seq_choose_integer_mv ? GST_AV1_SELECT_INTEGER_MV : src.seq_force_integer_mv;
+        dst->seq_force_screen_content_tools     = src.seq_choose_screen_content_tools ? GST_AV1_SELECT_SCREEN_CONTENT_TOOLS : src.seq_force_screen_content_tools;
+        dst->subsampling_x                      = src.color_config.subsampling_x;
+        dst->subsampling_y                      = src.color_config.subsampling_y;
+        dst->chroma_sample_position             = static_cast<uint8_t>(src.color_config.chroma_sample_position);
+        dst->color_primaries                    = static_cast<uint8_t>(src.color_config.color_primaries);
+        dst->transfer_characteristics           = static_cast<uint8_t>(src.color_config.transfer_characteristics);
+        dst->matrix_coefficients                = static_cast<uint8_t>(src.color_config.matrix_coefficients);
+        dst->num_units_in_display_tick          = src.timing_info.num_units_in_display_tick;
+        dst->time_scale                         = src.timing_info.time_scale;
+        dst->num_ticks_per_picture_minus_1      = src.timing_info.num_ticks_per_picture_minus_1;
+    }
+
     bool parse_av1_frame_header(AV1State* av1, char* reason, size_t reason_size) {
         if (av1 == nullptr || av1->parser == nullptr || av1->bitstream.empty()) {
             std::snprintf(reason, reason_size, "missing AV1 parser input");
@@ -268,6 +319,8 @@ namespace {
                     std::snprintf(reason, reason_size, "failed to parse AV1 sequence header: parser_result=%d offset=%u", parse_result, offset);
                     return false;
                 }
+                copy_gst_sequence_header(sequence, &av1->sequence);
+                av1->has_sequence = true;
             } else if (obu.obu_type == GST_AV1_OBU_TEMPORAL_DELIMITER) {
                 const GstAV1ParserResult parse_result = gst_av1_parser_parse_temporal_delimiter_obu(av1->parser, &obu);
                 if (parse_result != GST_AV1_PARSER_OK) {
@@ -509,10 +562,6 @@ VAStatus vkvv_av1_prepare_decode(void* state, unsigned int* width, unsigned int*
         VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_PROFILE, "AV1 path currently supports only 8-bit NV12 and 10-bit P010 decode");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
-    if (av1->pic.seq_info_fields.fields.mono_chrome || !av1->pic.seq_info_fields.fields.subsampling_x || !av1->pic.seq_info_fields.fields.subsampling_y) {
-        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT, "AV1 path currently supports only 4:2:0");
-        return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
-    }
     if (av1->pic.pic_info_fields.bits.large_scale_tile) {
         VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNIMPLEMENTED, "AV1 large-scale tile mode is not implemented");
         return VA_STATUS_ERROR_UNIMPLEMENTED;
@@ -530,6 +579,18 @@ VAStatus vkvv_av1_prepare_decode(void* state, unsigned int* width, unsigned int*
     }
     if (!parse_av1_frame_header(av1, reason, reason_size)) {
         return VA_STATUS_ERROR_INVALID_BUFFER;
+    }
+    if (!av1->has_sequence || !av1->sequence.valid) {
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "AV1 bitstream did not contain a sequence header before the frame");
+        return VA_STATUS_ERROR_INVALID_BUFFER;
+    }
+    if (av1->sequence.seq_profile != av1->pic.profile || av1->sequence.bit_depth != bit_depth) {
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "AV1 sequence header does not match VA picture parameters");
+        return VA_STATUS_ERROR_INVALID_BUFFER;
+    }
+    if (av1->sequence.mono_chrome || !av1->sequence.subsampling_x || !av1->sequence.subsampling_y) {
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT, "AV1 path currently supports only 4:2:0");
+        return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
     if (av1->header.show_existing_frame) {
         VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNIMPLEMENTED, "AV1 show-existing-frame is not implemented yet");
@@ -574,6 +635,7 @@ VAStatus vkvv_av1_get_decode_input(void* state, VkvvAV1DecodeInput* input) {
     input->bitstream_size       = av1->decode_window_size;
     input->decode_window_offset = av1->decode_window_offset;
     input->header               = av1->header;
+    input->sequence             = av1->sequence;
     input->bit_depth            = av1_bit_depth(av1->pic);
     input->rt_format            = av1_rt_format(input->bit_depth);
     input->fourcc               = av1_fourcc(input->bit_depth);
