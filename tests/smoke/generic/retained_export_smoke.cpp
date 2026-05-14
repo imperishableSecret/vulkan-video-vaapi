@@ -213,6 +213,33 @@ namespace {
         return ok;
     }
 
+    bool check_av1_nondisplay_export_state_policy() {
+        bool                  ok = true;
+        vkvv::SurfaceResource av1_resource{};
+        av1_resource.codec_operation                        = codec_av1;
+        av1_resource.content_generation                     = 7;
+        av1_resource.export_resource.predecode_exported     = true;
+        av1_resource.export_resource.predecode_seeded       = true;
+        av1_resource.export_resource.black_placeholder      = true;
+        av1_resource.export_resource.seed_source_surface_id = 42;
+        av1_resource.export_resource.seed_source_generation = 6;
+
+        ok &= check(vkvv::surface_resource_uses_av1_decode(&av1_resource), "AV1 export state helper did not recognize AV1 decode resources");
+        ok &= check(vkvv::av1_non_display_export_refresh(&av1_resource, false), "AV1 non-display refresh did not select the no-seed policy");
+        ok &= check(!vkvv::av1_non_display_export_refresh(&av1_resource, true), "AV1 visible refresh selected the non-display no-seed policy");
+
+        vkvv::SurfaceResource vp9_resource = av1_resource;
+        vp9_resource.codec_operation       = codec_vp9;
+        ok &= check(!vkvv::surface_resource_uses_av1_decode(&vp9_resource), "non-AV1 export state helper matched AV1");
+        ok &= check(!vkvv::av1_non_display_export_refresh(&vp9_resource, false), "non-AV1 non-display refresh selected the AV1 no-seed policy");
+
+        vkvv::clear_predecode_export_state(&av1_resource.export_resource);
+        ok &= check(!av1_resource.export_resource.predecode_exported && !av1_resource.export_resource.predecode_seeded && !av1_resource.export_resource.black_placeholder &&
+                        av1_resource.export_resource.seed_source_surface_id == VA_INVALID_ID && av1_resource.export_resource.seed_source_generation == 0,
+                    "AV1 non-display predecode state was not fully cleared");
+        return ok;
+    }
+
 } // namespace
 
 int main() {
@@ -263,5 +290,6 @@ int main() {
     ok &= check_p010_over_cap_window_stays_retained();
     ok &= check_window_policy();
     ok &= check_stats_and_accounting();
+    ok &= check_av1_nondisplay_export_state_policy();
     return ok ? 0 : 1;
 }
