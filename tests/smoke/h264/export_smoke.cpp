@@ -13,18 +13,24 @@
 
 namespace {
 
-    constexpr uint64_t h264_stream_id = 101;
-    constexpr uint64_t vp9_stream_id  = 102;
+    constexpr uint64_t h264_stream_id            = 101;
+    constexpr uint64_t vp9_stream_id             = 102;
+    constexpr uint32_t non_thumbnail_seed_width  = 1024;
+    constexpr uint32_t non_thumbnail_seed_height = 576;
 
-    void               init_nv12_surface(VkvvSurface* surface, VASurfaceID id, uint64_t stream_id, VkVideoCodecOperationFlagsKHR codec_operation) {
+    void init_nv12_surface_sized(VkvvSurface* surface, VASurfaceID id, uint64_t stream_id, VkVideoCodecOperationFlagsKHR codec_operation, uint32_t width, uint32_t height) {
         surface->id                 = id;
         surface->driver_instance_id = 1;
         surface->stream_id          = stream_id;
         surface->codec_operation    = codec_operation;
         surface->rt_format          = VA_RT_FORMAT_YUV420;
-        surface->width              = 64;
-        surface->height             = 64;
+        surface->width              = width;
+        surface->height             = height;
         surface->fourcc             = VA_FOURCC_NV12;
+    }
+
+    void init_nv12_surface(VkvvSurface* surface, VASurfaceID id, uint64_t stream_id, VkVideoCodecOperationFlagsKHR codec_operation) {
+        init_nv12_surface_sized(surface, id, stream_id, codec_operation, 64, 64);
     }
 
     vkvv::DecodeImageKey h264_decode_key(const vkvv::H264VideoSession* session, const VkvvSurface* surface, VkExtent2D coded_extent) {
@@ -204,10 +210,10 @@ namespace {
         backup_descriptor.objects[0].fd = -1;
 
         VkvvSurface decoded{};
-        init_nv12_surface(&decoded, 903, h264_stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+        init_nv12_surface_sized(&decoded, 903, h264_stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, non_thumbnail_seed_width, non_thumbnail_seed_height);
 
         VkvvSurface backup{};
-        init_nv12_surface(&backup, 904, h264_stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+        init_nv12_surface_sized(&backup, 904, h264_stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, non_thumbnail_seed_width, non_thumbnail_seed_height);
 
         auto cleanup = [&]() {
             if (backup_descriptor.objects[0].fd >= 0) {
@@ -253,7 +259,7 @@ namespace {
             cleanup();
             return false;
         }
-        status = vkvv_vulkan_ensure_h264_session(runtime, session, 64, 64, reason, sizeof(reason));
+        status = vkvv_vulkan_ensure_h264_session(runtime, session, non_thumbnail_seed_width, non_thumbnail_seed_height, reason, sizeof(reason));
         std::printf("%s\n", reason);
         if (status != VA_STATUS_SUCCESS) {
             cleanup();
@@ -261,7 +267,7 @@ namespace {
         }
 
         auto*                      typed_session = static_cast<vkvv::H264VideoSession*>(session);
-        const vkvv::DecodeImageKey decode_key    = h264_decode_key(typed_session, &decoded, {64, 64});
+        const vkvv::DecodeImageKey decode_key    = h264_decode_key(typed_session, &decoded, {non_thumbnail_seed_width, non_thumbnail_seed_height});
         if (!vkvv::ensure_surface_resource(runtime, &decoded, decode_key, reason, sizeof(reason))) {
             std::fprintf(stderr, "%s\n", reason);
             cleanup();
@@ -296,6 +302,82 @@ namespace {
         return true;
     }
 
+    bool check_thumbnail_predecode_keeps_placeholder(vkvv::VulkanRuntime* runtime) {
+        char                        reason[512] = {};
+        void*                       session     = nullptr;
+        VADRMPRIMESurfaceDescriptor backup_descriptor{};
+        backup_descriptor.objects[0].fd = -1;
+
+        VkvvSurface decoded{};
+        init_nv12_surface(&decoded, 913, h264_stream_id + 11, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+
+        VkvvSurface backup{};
+        init_nv12_surface(&backup, 914, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+
+        auto cleanup = [&]() {
+            if (backup_descriptor.objects[0].fd >= 0) {
+                close(backup_descriptor.objects[0].fd);
+                backup_descriptor.objects[0].fd = -1;
+            }
+            vkvv_vulkan_surface_destroy(runtime, &backup);
+            vkvv_vulkan_surface_destroy(runtime, &decoded);
+            vkvv_vulkan_h264_session_destroy(runtime, session);
+        };
+
+        VAStatus status = vkvv_vulkan_prepare_surface_export(runtime, &backup, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        if (status != VA_STATUS_SUCCESS) {
+            cleanup();
+            return false;
+        }
+        status = vkvv_vulkan_export_surface(runtime, &backup, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &backup_descriptor, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        auto* backup_resource = static_cast<vkvv::SurfaceResource*>(backup.vulkan);
+        if (status != VA_STATUS_SUCCESS || backup_resource == nullptr || !backup_resource->export_resource.predecode_exported ||
+            backup_resource->export_resource.predecode_seeded || !backup_resource->export_resource.black_placeholder) {
+            std::fprintf(stderr, "thumbnail predecode export should start as an unseeded placeholder\n");
+            cleanup();
+            return false;
+        }
+
+        session = vkvv_vulkan_h264_session_create();
+        if (session == nullptr) {
+            cleanup();
+            return false;
+        }
+        status = vkvv_vulkan_ensure_h264_session(runtime, session, 64, 64, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        if (status != VA_STATUS_SUCCESS) {
+            cleanup();
+            return false;
+        }
+
+        auto*                      typed_session = static_cast<vkvv::H264VideoSession*>(session);
+        const vkvv::DecodeImageKey decode_key    = h264_decode_key(typed_session, &decoded, {64, 64});
+        if (!vkvv::ensure_surface_resource(runtime, &decoded, decode_key, reason, sizeof(reason))) {
+            std::fprintf(stderr, "%s\n", reason);
+            cleanup();
+            return false;
+        }
+        auto* decoded_resource = static_cast<vkvv::SurfaceResource*>(decoded.vulkan);
+        decoded.decoded        = true;
+        decoded_resource->content_generation++;
+        status = vkvv_vulkan_refresh_surface_export(runtime, &decoded, true, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            std::printf("%s\n", reason);
+        }
+        if (status != VA_STATUS_SUCCESS || !backup_resource->export_resource.predecode_exported || backup_resource->export_resource.predecode_seeded ||
+            !backup_resource->export_resource.black_placeholder || backup_resource->export_resource.seed_source_surface_id != VA_INVALID_ID ||
+            backup_resource->export_resource.seed_source_generation != 0) {
+            std::fprintf(stderr, "thumbnail predecode export was seeded from an old visible frame\n");
+            cleanup();
+            return false;
+        }
+
+        cleanup();
+        return true;
+    }
+
     bool check_export_time_last_good_seeding(vkvv::VulkanRuntime* runtime) {
         char                        reason[512] = {};
         void*                       session     = nullptr;
@@ -303,13 +385,13 @@ namespace {
         descriptor.objects[0].fd = -1;
 
         VkvvSurface decoded{};
-        init_nv12_surface(&decoded, 905, h264_stream_id + 1, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+        init_nv12_surface_sized(&decoded, 905, h264_stream_id + 1, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, non_thumbnail_seed_width, non_thumbnail_seed_height);
 
         VkvvSurface late_export{};
-        init_nv12_surface(&late_export, 906, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+        init_nv12_surface_sized(&late_export, 906, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, non_thumbnail_seed_width, non_thumbnail_seed_height);
 
         VkvvSurface newer_visible{};
-        init_nv12_surface(&newer_visible, 907, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+        init_nv12_surface_sized(&newer_visible, 907, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, non_thumbnail_seed_width, non_thumbnail_seed_height);
 
         auto cleanup = [&]() {
             if (descriptor.objects[0].fd >= 0) {
@@ -327,7 +409,7 @@ namespace {
             cleanup();
             return false;
         }
-        VAStatus status = vkvv_vulkan_ensure_h264_session(runtime, session, 64, 64, reason, sizeof(reason));
+        VAStatus status = vkvv_vulkan_ensure_h264_session(runtime, session, non_thumbnail_seed_width, non_thumbnail_seed_height, reason, sizeof(reason));
         std::printf("%s\n", reason);
         if (status != VA_STATUS_SUCCESS) {
             cleanup();
@@ -335,7 +417,7 @@ namespace {
         }
 
         auto*                      typed_session = static_cast<vkvv::H264VideoSession*>(session);
-        const vkvv::DecodeImageKey decode_key    = h264_decode_key(typed_session, &decoded, {64, 64});
+        const vkvv::DecodeImageKey decode_key    = h264_decode_key(typed_session, &decoded, {non_thumbnail_seed_width, non_thumbnail_seed_height});
         if (!vkvv::ensure_surface_resource(runtime, &decoded, decode_key, reason, sizeof(reason))) {
             std::fprintf(stderr, "%s\n", reason);
             cleanup();
@@ -375,7 +457,7 @@ namespace {
             return false;
         }
 
-        const vkvv::DecodeImageKey newer_decode_key = h264_decode_key(typed_session, &newer_visible, {64, 64});
+        const vkvv::DecodeImageKey newer_decode_key = h264_decode_key(typed_session, &newer_visible, {non_thumbnail_seed_width, non_thumbnail_seed_height});
         if (!vkvv::ensure_surface_resource(runtime, &newer_visible, newer_decode_key, reason, sizeof(reason))) {
             std::fprintf(stderr, "%s\n", reason);
             cleanup();
@@ -413,16 +495,16 @@ namespace {
         late_descriptor.objects[0].fd       = -1;
 
         VkvvSurface decoded{};
-        init_nv12_surface(&decoded, 915, h264_stream_id + 4, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+        init_nv12_surface_sized(&decoded, 915, h264_stream_id + 4, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, non_thumbnail_seed_width, non_thumbnail_seed_height);
 
         VkvvSurface nondisplay{};
-        init_nv12_surface(&nondisplay, 916, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+        init_nv12_surface_sized(&nondisplay, 916, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, non_thumbnail_seed_width, non_thumbnail_seed_height);
 
         VkvvSurface late_export{};
-        init_nv12_surface(&late_export, 917, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+        init_nv12_surface_sized(&late_export, 917, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, non_thumbnail_seed_width, non_thumbnail_seed_height);
 
         VkvvSurface next_display{};
-        init_nv12_surface(&next_display, 918, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+        init_nv12_surface_sized(&next_display, 918, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, non_thumbnail_seed_width, non_thumbnail_seed_height);
 
         auto cleanup = [&]() {
             if (nondisplay_descriptor.objects[0].fd >= 0) {
@@ -445,7 +527,7 @@ namespace {
             cleanup();
             return false;
         }
-        VAStatus status = vkvv_vulkan_ensure_h264_session(runtime, session, 64, 64, reason, sizeof(reason));
+        VAStatus status = vkvv_vulkan_ensure_h264_session(runtime, session, non_thumbnail_seed_width, non_thumbnail_seed_height, reason, sizeof(reason));
         std::printf("%s\n", reason);
         if (status != VA_STATUS_SUCCESS) {
             cleanup();
@@ -453,7 +535,7 @@ namespace {
         }
 
         auto*                      typed_session = static_cast<vkvv::H264VideoSession*>(session);
-        const vkvv::DecodeImageKey decode_key    = h264_decode_key(typed_session, &decoded, {64, 64});
+        const vkvv::DecodeImageKey decode_key    = h264_decode_key(typed_session, &decoded, {non_thumbnail_seed_width, non_thumbnail_seed_height});
         if (!vkvv::ensure_surface_resource(runtime, &decoded, decode_key, reason, sizeof(reason))) {
             std::fprintf(stderr, "%s\n", reason);
             cleanup();
@@ -489,7 +571,7 @@ namespace {
         }
         const VkDeviceMemory       nondisplay_shadow_memory = nondisplay_resource->export_resource.memory;
 
-        const vkvv::DecodeImageKey nondisplay_decode_key = h264_decode_key(typed_session, &nondisplay, {64, 64});
+        const vkvv::DecodeImageKey nondisplay_decode_key = h264_decode_key(typed_session, &nondisplay, {non_thumbnail_seed_width, non_thumbnail_seed_height});
         if (!vkvv::ensure_surface_resource(runtime, &nondisplay, nondisplay_decode_key, reason, sizeof(reason))) {
             std::fprintf(stderr, "%s\n", reason);
             cleanup();
@@ -516,7 +598,7 @@ namespace {
         }
         const uint64_t             nondisplay_decoded_generation = nondisplay_resource->export_resource.content_generation;
 
-        const vkvv::DecodeImageKey next_display_key = h264_decode_key(typed_session, &next_display, {64, 64});
+        const vkvv::DecodeImageKey next_display_key = h264_decode_key(typed_session, &next_display, {non_thumbnail_seed_width, non_thumbnail_seed_height});
         if (!vkvv::ensure_surface_resource(runtime, &next_display, next_display_key, reason, sizeof(reason))) {
             std::fprintf(stderr, "%s\n", reason);
             cleanup();
@@ -706,14 +788,14 @@ namespace {
         context.mode            = VKVV_CONTEXT_MODE_DECODE;
         context.stream_id       = h264_stream_id + 2;
         context.codec_operation = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR;
-        context.width           = 64;
-        context.height          = 64;
+        context.width           = non_thumbnail_seed_width;
+        context.height          = non_thumbnail_seed_height;
 
         VkvvSurface decoded{};
-        init_nv12_surface(&decoded, 909, context.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+        init_nv12_surface_sized(&decoded, 909, context.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, non_thumbnail_seed_width, non_thumbnail_seed_height);
 
         VkvvSurface late_export{};
-        init_nv12_surface(&late_export, 910, 0, 0);
+        init_nv12_surface_sized(&late_export, 910, 0, 0, non_thumbnail_seed_width, non_thumbnail_seed_height);
 
         auto cleanup = [&]() {
             if (descriptor.objects[0].fd >= 0) {
@@ -732,7 +814,7 @@ namespace {
             cleanup();
             return false;
         }
-        VAStatus status = vkvv_vulkan_ensure_h264_session(runtime, session, 64, 64, reason, sizeof(reason));
+        VAStatus status = vkvv_vulkan_ensure_h264_session(runtime, session, non_thumbnail_seed_width, non_thumbnail_seed_height, reason, sizeof(reason));
         std::printf("%s\n", reason);
         if (status != VA_STATUS_SUCCESS) {
             cleanup();
@@ -740,7 +822,7 @@ namespace {
         }
 
         auto*                      typed_session = static_cast<vkvv::H264VideoSession*>(session);
-        const vkvv::DecodeImageKey decode_key    = h264_decode_key(typed_session, &decoded, {64, 64});
+        const vkvv::DecodeImageKey decode_key    = h264_decode_key(typed_session, &decoded, {non_thumbnail_seed_width, non_thumbnail_seed_height});
         if (!vkvv::ensure_surface_resource(runtime, &decoded, decode_key, reason, sizeof(reason))) {
             std::fprintf(stderr, "%s\n", reason);
             cleanup();
@@ -787,7 +869,7 @@ namespace {
             return false;
         }
 
-        const vkvv::DecodeImageKey late_decode_key = h264_decode_key(typed_session, &late_export, {64, 64});
+        const vkvv::DecodeImageKey late_decode_key = h264_decode_key(typed_session, &late_export, {non_thumbnail_seed_width, non_thumbnail_seed_height});
         if (!vkvv::ensure_surface_resource(runtime, &late_export, late_decode_key, reason, sizeof(reason))) {
             std::fprintf(stderr, "%s\n", reason);
             cleanup();
@@ -1153,6 +1235,10 @@ int main(void) {
         return 1;
     }
     if (!check_predecode_backup_seeding(typed_runtime)) {
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    if (!check_thumbnail_predecode_keeps_placeholder(typed_runtime)) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }

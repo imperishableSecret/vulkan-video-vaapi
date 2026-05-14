@@ -228,7 +228,6 @@ def main() -> int:
         "VKVV_AV1_TRACE_PUBLICATION",
         "VKVV_AV1_DISABLE_IMPORTED_OUTPUT",
         "VKVV_AV1_FORCE_EXPORTED_SHADOW",
-        "VKVV_EXPORT_THUMBNAIL_PLACEHOLDER_ONLY",
     ):
         if toggle not in export_text and toggle not in export_state_text and toggle not in shadow_text:
             fail(f"AV1 publication telemetry toggle is missing: {toggle}")

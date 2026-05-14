@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -152,17 +151,8 @@ namespace vkvv {
             return true;
         }
 
-        bool export_env_flag_enabled(const char* name) {
-            const char* value = std::getenv(name);
-            return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 && std::strcmp(value, "off") != 0;
-        }
-
-        bool thumbnail_placeholder_seed_policy_enabled() {
-            return export_env_flag_enabled("VKVV_EXPORT_THUMBNAIL_PLACEHOLDER_ONLY");
-        }
-
         bool predecode_seed_target_thumbnail_like(const ExportResource* target) {
-            return target != nullptr && target->extent.width <= 960 && target->extent.height <= 544 && target->content_generation == 0;
+            return target != nullptr && target->extent.width <= 960 && target->extent.height <= 540 && target->content_generation == 0;
         }
 
         bool initialize_export_resource_black(VulkanRuntime* runtime, ExportResource* resource, const ExportFormatInfo* format, char* reason, size_t reason_size) {
@@ -853,7 +843,7 @@ namespace vkvv {
     }
 
     bool predecode_seed_policy_keeps_placeholder(const ExportResource* target) {
-        return thumbnail_placeholder_seed_policy_enabled() && predecode_seed_target_thumbnail_like(target);
+        return predecode_seed_target_thumbnail_like(target);
     }
 
     bool can_seed_predecode_target(const ExportResource* target, const SurfaceResource* source) {
