@@ -33,6 +33,11 @@ nvidia-vulkan-vaapi: trace seq=22 event=pending-submit slot=1 use=decode pending
 nvidia-vulkan-vaapi: trace seq=23 event=pending-complete-after use=decode operation=AV1 decode surface=8 status=0 refresh_export=0 decoded=1 content_gen=1 shadow_mem=0x2 shadow_gen=0 predecode=0 exported=0
 nvidia-vulkan-vaapi: trace seq=24 event=av1-submit driver=2 ctx_stream=2 target=8 slot=1 refresh=0x01 refresh_export=0 hdr_existing=0 hdr_show=0 hdr_showable=1 depth=8 fourcc=0x3231564e refs=0 bytes=64 upload_mem=2048 session_mem=4096
 nvidia-vulkan-vaapi: trace seq=25 event=av1-show-existing driver=2 ctx_stream=2 target=9 source=8 map_idx=1 slot=1 display_frame_id=0 target_gen=1 source_gen=1 refresh_export=1
+nvidia-vulkan-vaapi: trace seq=26 event=av1-tile-submit-map scope=frame frame_seq=1 driver=2 stream=2 surface=8 codec=0x4 tile_count=1 tile_source=va-slice suspicious=1 ranges_inside_bitstream=1 ranges_overlap=0
+nvidia-vulkan-vaapi: trace seq=27 event=av1-dpb-map-before-submit scope=frame frame_seq=1 driver=2 stream=2 surface=8 target_dpb_slot=1 references_valid=1 reference_count=0 codec=0x4
+nvidia-vulkan-vaapi: trace seq=28 event=av1-dpb-map-after-submit scope=frame frame_seq=1 driver=2 stream=2 surface=8 target_dpb_slot=1 references_valid=1 reference_count=0 codec=0x4
+nvidia-vulkan-vaapi: trace seq=29 event=av1-dpb-map-after-refresh scope=frame frame_seq=1 driver=2 stream=2 surface=8 target_dpb_slot=1 references_valid=1 reference_count=0 codec=0x4
+nvidia-vulkan-vaapi: trace seq=30 event=av1-visible-frame-audit frame_seq=1 surface=8 stream=2 codec=0x4 order_hint=2 frame_type=1 show_frame=1 show_existing_frame=0 refresh_frame_flags=0x01 content_generation=1 tile_source=va-slice tile_count=1 tile_ranges_valid=1 tile_sum_size=64 setup_slot=1 target_dpb_slot=1 references_valid=1 reference_count=0 decode_crc_valid=1 decode_crc=0x1 published_path=exported-shadow published_crc_valid=1 published_crc=0x1 published_matches_decode=1 published_matches_previous_visible=0 output_published=1 failure_stage=none failure_reason=none
 [1:2:0512/000000.000000:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:3552] vaEndPicture failed, VA error: operation failed
 nvidia-vulkan-vaapi: device-lost call=vkWaitForFences operation=AV1 decode result=-4 decode_submitted=1 decode_completed=0
 """
@@ -85,7 +90,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 24, "trace record count mismatch")
+    check(data["trace_records"] == 29, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -103,6 +108,9 @@ def main() -> int:
     check(totals["stale_visible_nondisplay"] == 1, "stale visible nondisplay aggregate mismatch")
     check(totals["nondisplay_shadow_seeds"] == 1, "nondisplay shadow seed aggregate mismatch")
     check(totals["export_copy_publish_skips"] == 1, "export copy publish skip aggregate mismatch")
+    check(totals["av1_tile_submit_maps"] == 1 and totals["av1_tile_suspicious"] == 1, "AV1 tile aggregate mismatch")
+    check(totals["av1_dpb_maps"] == 3, "AV1 DPB aggregate mismatch")
+    check(totals["av1_visible_audits"] == 1 and totals["av1_publish_failures"] == 0, "AV1 audit aggregate mismatch")
     check(data["events"].get("av1-submit") == 1, "AV1 submit event count mismatch")
     check(data["events"].get("av1-show-existing") == 1, "AV1 show-existing event count mismatch")
     check(data["browser_dropped_frames_observed"] is False, "browser dropped-frame observation mismatch")
@@ -122,8 +130,10 @@ def main() -> int:
     av1_stream = data["streams"][1]
     check(av1_stream["codec"] == "av1/0x4", "AV1 stream codec mismatch")
     check(av1_stream["refresh_requested"] == 0 and av1_stream["stale_visible_nondisplay"] == 0, "hidden showable AV1 stream refreshed visible export state")
+    check(av1_stream["av1_tile_submit_maps"] == 1 and av1_stream["av1_dpb_maps"] == 3 and av1_stream["av1_visible_audits"] == 1, "AV1 stream telemetry mismatch")
     check("driver_stale_drops=2" in text_result.stdout, "text stale drop aggregate missing")
     check("nondisplay_shadow_seeds=1" in text_result.stdout, "text nondisplay seed aggregate missing")
+    check("av1_visible_audits=1" in text_result.stdout, "text AV1 audit aggregate missing")
     check("browser_dropped_frames_observed=0" in text_result.stdout, "text browser dropped-frame warning missing")
     check("live-summary path=-" in live_result.stderr, "live summary missing")
     check("trace-profile path=-" in live_result.stdout, "live final summary missing")

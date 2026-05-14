@@ -57,6 +57,46 @@ def main() -> int:
     ):
         if field not in av1_text:
             fail(f"AV1 display decision trace is missing field {field}")
+    for event in (
+        '"av1-tile-submit-map"',
+        '"av1-tile-source-compare"',
+        '"av1-dpb-map-before-submit"',
+        '"av1-dpb-map-after-submit"',
+        '"av1-dpb-map-after-refresh"',
+        '"av1-decode-fingerprint"',
+    ):
+        if event not in av1_text:
+            fail(f"AV1 decode telemetry trace is missing event {event}")
+    for field in (
+        "frame_seq=",
+        "tile_source=",
+        "selection_reason=",
+        "parser_used=",
+        "parser_status=",
+        "sum_final_tile_sizes=",
+        "ranges_inside_bitstream=",
+        "ranges_overlap=",
+        "va_offset=",
+        "parsed_offset=",
+        "target_dpb_slot=",
+        "setup_slot=",
+        "references_valid=",
+        "decode_combined_crc=",
+    ):
+        if field not in av1_text:
+            fail(f"AV1 decode telemetry trace is missing field {field}")
+
+    av1_parser_text = (root / "src" / "codecs" / "av1" / "av1.cpp").read_text(encoding="utf-8")
+    for toggle in (
+        "VKVV_AV1_TILE_SOURCE",
+        "VKVV_AV1_DISABLE_TILE_GROUP_SPLIT",
+        "VKVV_AV1_DISABLE_SHOW_EXISTING_FASTPATH",
+        "VKVV_AV1_TRACE_DPB",
+        "VKVV_AV1_TRACE_TILES",
+        "VKVV_AV1_FINGERPRINT_LEVEL",
+    ):
+        if toggle not in av1_parser_text and toggle not in av1_text:
+            fail(f"AV1 telemetry toggle is missing: {toggle}")
 
     export_text = (root / "src" / "vulkan" / "export.cpp").read_text(encoding="utf-8")
     if '"av1-visible-output-check"' not in export_text:
@@ -64,6 +104,13 @@ def main() -> int:
     for event in (
         '"av1-visible-output-published"',
         '"av1-visible-output-not-published"',
+        '"av1-publish-fingerprint"',
+        '"av1-visible-frame-identity"',
+        '"av1-visible-frame-audit"',
+        '"import-output-copy-enter"',
+        '"import-output-copy-done"',
+        '"import-output-release-barrier"',
+        '"import-present-mark"',
         '"import-output-copy-failed"',
     ):
         if event not in export_text:
@@ -93,9 +140,25 @@ def main() -> int:
         "exported=",
         "shadow_exported=",
         "result=",
+        "published_path=",
+        "published_combined_crc=",
+        "published_matches_decode=",
+        "published_matches_previous_visible=",
+        "output_published=",
+        "failure_stage=",
+        "failure_reason=",
     ):
         if field not in export_text:
             fail(f"AV1 visible output check trace is missing field {field}")
+
+    export_state_text = (root / "src" / "vulkan" / "export" / "state.cpp").read_text(encoding="utf-8")
+    for toggle in (
+        "VKVV_AV1_TRACE_PUBLICATION",
+        "VKVV_AV1_DISABLE_IMPORTED_OUTPUT",
+        "VKVV_AV1_FORCE_EXPORTED_SHADOW",
+    ):
+        if toggle not in export_text and toggle not in export_state_text:
+            fail(f"AV1 publication telemetry toggle is missing: {toggle}")
 
     return 0
 

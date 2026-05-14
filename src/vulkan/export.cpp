@@ -4,11 +4,130 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <unistd.h>
 
 using namespace vkvv;
 
 namespace {
+
+    bool av1_env_flag_enabled(const char* name) {
+        const char* value = std::getenv(name);
+        return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 && std::strcmp(value, "off") != 0;
+    }
+
+    bool av1_trace_publication_enabled() {
+        return vkvv_trace_deep_enabled() || av1_env_flag_enabled("VKVV_AV1_TRACE_PUBLICATION");
+    }
+
+    uint32_t av1_fingerprint_level() {
+        const char* value = std::getenv("VKVV_AV1_FINGERPRINT_LEVEL");
+        if (value == nullptr || value[0] == '\0') {
+            return 0;
+        }
+        const long parsed = std::strtol(value, nullptr, 10);
+        return static_cast<uint32_t>(std::clamp<long>(parsed, 0, 4));
+    }
+
+    uint64_t fnv1a64(uint64_t hash, uint64_t value) {
+        constexpr uint64_t prime = 1099511628211ULL;
+        for (uint32_t i = 0; i < 8; i++) {
+            hash ^= (value >> (i * 8)) & 0xffU;
+            hash *= prime;
+        }
+        return hash;
+    }
+
+    uint64_t av1_publish_metadata_fingerprint(const SurfaceResource* resource) {
+        uint64_t hash = 1469598103934665603ULL;
+        hash          = fnv1a64(hash, resource != nullptr ? resource->av1_frame_sequence : 0);
+        hash          = fnv1a64(hash, resource != nullptr ? resource->surface_id : VA_INVALID_ID);
+        hash          = fnv1a64(hash, resource != nullptr ? resource->content_generation : 0);
+        hash          = fnv1a64(hash, resource != nullptr ? resource->av1_order_hint : 0);
+        hash          = fnv1a64(hash, resource != nullptr ? vkvv_trace_handle(resource->image) : 0);
+        hash          = fnv1a64(hash, resource != nullptr ? vkvv_trace_handle(resource->export_resource.image) : 0);
+        hash          = fnv1a64(hash, resource != nullptr ? resource->import_present_generation : 0);
+        return hash;
+    }
+
+    const char* av1_published_path(const SurfaceResource* resource, bool shadow_published, bool import_published) {
+        if (shadow_published) {
+            return "exported-shadow";
+        }
+        if (import_published) {
+            return "imported-output";
+        }
+        if (resource != nullptr && resource->import.external) {
+            return "imported-output";
+        }
+        return "none";
+    }
+
+    void trace_av1_publication_fingerprint(VkvvSurface* surface, SurfaceResource* resource, bool refresh_export, bool shadow_published, bool import_published,
+                                           bool published) {
+        if (surface == nullptr || resource == nullptr || !surface_resource_uses_av1_decode(resource) || !refresh_export || !av1_trace_publication_enabled()) {
+            return;
+        }
+
+        const uint32_t fingerprint_level = av1_fingerprint_level();
+        const bool     crc_valid         = fingerprint_level > 0;
+        const uint64_t published_crc     = crc_valid ? av1_publish_metadata_fingerprint(resource) : 0;
+        const bool     matches_decode    = crc_valid && resource->av1_decode_fingerprint != 0 && published_crc == resource->av1_decode_fingerprint;
+        const bool     matches_previous  = crc_valid && resource->av1_previous_visible_fingerprint != 0 && published_crc == resource->av1_previous_visible_fingerprint;
+        const char*    published_path    = av1_published_path(resource, shadow_published, import_published);
+        resource->av1_publish_fingerprint = published_crc;
+
+        VKVV_TRACE("av1-publish-fingerprint",
+                   "frame_seq=%llu surface=%u content_generation=%llu published_path=%s shadow_image_handle=0x%llx import_image_handle=0x0 exported=%u shadow_exported=%u "
+                   "import_external=%u import_present_generation=%llu published_crc_valid=%u published_y_tl_crc=0 published_y_center_crc=0 published_y_br_crc=0 "
+                   "published_uv_center_crc=0 published_combined_crc=0x%llx published_matches_decode=%u published_matches_previous_visible=%u fingerprint_level=%u "
+                   "fingerprint_kind=metadata",
+                   static_cast<unsigned long long>(resource->av1_frame_sequence), surface->id, static_cast<unsigned long long>(resource->content_generation), published_path,
+                   vkvv_trace_handle(resource->export_resource.image), resource->exported ? 1U : 0U, resource->export_resource.exported ? 1U : 0U,
+                   resource->import.external ? 1U : 0U, static_cast<unsigned long long>(resource->import_present_generation), crc_valid ? 1U : 0U,
+                   static_cast<unsigned long long>(published_crc), matches_decode ? 1U : 0U, matches_previous ? 1U : 0U, fingerprint_level);
+
+        VKVV_TRACE("av1-visible-frame-identity",
+                   "frame_seq=%llu surface=%u stream=%llu codec=0x%x content_generation=%llu order_hint=%u frame_type=%u tile_source=%s decode_crc=0x%llx published_crc=0x%llx "
+                   "published_matches_decode=%u published_matches_previous_visible=%u output_published=%u",
+                   static_cast<unsigned long long>(resource->av1_frame_sequence), surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                   static_cast<unsigned long long>(resource->content_generation), resource->av1_order_hint, resource->av1_frame_type,
+                   resource->av1_tile_source != nullptr ? resource->av1_tile_source : "unknown", static_cast<unsigned long long>(resource->av1_decode_fingerprint),
+                   static_cast<unsigned long long>(published_crc), matches_decode ? 1U : 0U, matches_previous ? 1U : 0U, published ? 1U : 0U);
+
+        const char* failure_stage = "none";
+        const char* failure_reason = "none";
+        if (!resource->av1_tile_ranges_valid) {
+            failure_stage  = "tile";
+            failure_reason = "invalid-tile-ranges";
+        } else if (!resource->av1_references_valid) {
+            failure_stage  = "dpb";
+            failure_reason = "invalid-references";
+        } else if (!published) {
+            failure_stage  = resource->import.external ? "import" : "publish";
+            failure_reason = resource->import.external ? "unsupported-import-image" : "unpublished-output";
+        } else if (crc_valid && !matches_decode) {
+            failure_stage  = "publish";
+            failure_reason = "published-fingerprint-mismatch";
+        }
+        VKVV_TRACE("av1-visible-frame-audit",
+                   "frame_seq=%llu surface=%u stream=%llu order_hint=%u frame_type=%u show_frame=%u show_existing_frame=%u refresh_frame_flags=0x%02x content_generation=%llu "
+                   "tile_source=%s tile_count=%u tile_ranges_valid=%u tile_sum_size=%u setup_slot=%d target_dpb_slot=%d references_valid=%u reference_count=%u "
+                   "decode_crc_valid=%u decode_crc=0x%llx published_path=%s published_crc_valid=%u published_crc=0x%llx published_matches_decode=%u "
+                   "published_matches_previous_visible=%u output_published=%u failure_stage=%s failure_reason=%s",
+                   static_cast<unsigned long long>(resource->av1_frame_sequence), surface->id, static_cast<unsigned long long>(resource->stream_id), resource->av1_order_hint,
+                   resource->av1_frame_type, resource->av1_visible_show_frame ? 1U : 0U, resource->av1_visible_show_existing_frame ? 1U : 0U,
+                   resource->av1_visible_refresh_frame_flags, static_cast<unsigned long long>(resource->content_generation),
+                   resource->av1_tile_source != nullptr ? resource->av1_tile_source : "unknown", resource->av1_tile_count, resource->av1_tile_ranges_valid ? 1U : 0U,
+                   resource->av1_tile_sum_size, resource->av1_setup_slot, resource->av1_target_dpb_slot, resource->av1_references_valid ? 1U : 0U,
+                   resource->av1_reference_count, crc_valid ? 1U : 0U, static_cast<unsigned long long>(resource->av1_decode_fingerprint), published_path, crc_valid ? 1U : 0U,
+                   static_cast<unsigned long long>(published_crc), matches_decode ? 1U : 0U, matches_previous ? 1U : 0U, published ? 1U : 0U, failure_stage, failure_reason);
+
+        if (published && crc_valid) {
+            resource->av1_previous_visible_fingerprint = published_crc;
+        }
+    }
 
     void trace_av1_visible_output_check(VkvvSurface* surface, SurfaceResource* resource, bool refresh_export) {
         if (surface == nullptr || resource == nullptr || !surface_resource_uses_av1_decode(resource) || !refresh_export || resource->content_generation == 0) {
@@ -31,6 +150,29 @@ namespace {
                    resource->import.external ? 1U : 0U, static_cast<unsigned long long>(resource->import_present_generation), import_published ? 1U : 0U,
                    import_published ? 1U : 0U, resource->exported ? 1U : 0U, resource->export_resource.exported ? 1U : 0U, published ? "published" : "unpublished");
         if (published) {
+            if (resource->import.external && import_published) {
+                VKVV_TRACE("import-output-copy-enter",
+                           "surface=%u stream=%llu codec=0x%x content_gen=%llu import_external=1 import_fd_valid=%u import_fd_dev=%llu import_fd_ino=%llu "
+                           "import_fourcc=0x%x import_modifier_valid=%u import_modifier=0x%llx import_image_handle=0x0 import_memory_handle=0x0 decode_image_handle=0x%llx "
+                           "shadow_image_handle=0x%llx copy_required=%u",
+                           surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                           resource->import.fd.valid ? 1U : 0U, static_cast<unsigned long long>(resource->import.fd.dev), static_cast<unsigned long long>(resource->import.fd.ino),
+                           resource->va_fourcc, resource->has_drm_format_modifier ? 1U : 0U, static_cast<unsigned long long>(resource->drm_format_modifier),
+                           vkvv_trace_handle(resource->image), vkvv_trace_handle(resource->export_resource.image), resource->decode_image_is_imported_image ? 0U : 1U);
+                VKVV_TRACE("import-output-copy-done",
+                           "surface=%u stream=%llu codec=0x%x content_gen=%llu import_external=1 import_present_generation=%llu copy_done=%u layout_before=%d layout_after=%d",
+                           surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                           static_cast<unsigned long long>(resource->import_present_generation), resource->decode_image_is_imported_image ? 1U : 0U, resource->layout, resource->layout);
+                VKVV_TRACE("import-output-release-barrier",
+                           "surface=%u stream=%llu codec=0x%x content_gen=%llu release_barrier_done=%u queue_family_released=%u layout_before=%d layout_after=%d",
+                           surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                           resource->import_present_barrier_done ? 1U : 0U, resource->import_present_barrier_done ? 1U : 0U, resource->layout, resource->layout);
+                VKVV_TRACE("import-present-mark",
+                           "surface=%u stream=%llu codec=0x%x content_gen=%llu import_present_generation=%llu import_fd_dev=%llu import_fd_ino=%llu",
+                           surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                           static_cast<unsigned long long>(resource->import_present_generation), static_cast<unsigned long long>(resource->import_fd_dev),
+                           static_cast<unsigned long long>(resource->import_fd_ino));
+            }
             VKVV_TRACE("av1-visible-output-published",
                        "surface=%u stream=%llu codec=0x%x content_gen=%llu shadow_gen=%llu shadow_published=%u import_published=%u exported=%u shadow_exported=%u "
                        "import_external=%u direct_import_ok=%u import_present_generation=%llu import_fd_dev=%llu import_fd_ino=%llu decode_image=0x%llx import_image=0x0 "
@@ -43,6 +185,14 @@ namespace {
                        import_published ? 1U : 0U);
         } else {
             if (resource->import.external) {
+                VKVV_TRACE("import-output-copy-enter",
+                           "surface=%u stream=%llu codec=0x%x content_gen=%llu import_external=1 import_fd_valid=%u import_fd_dev=%llu import_fd_ino=%llu "
+                           "import_fourcc=0x%x import_modifier_valid=%u import_modifier=0x%llx import_image_handle=0x0 import_memory_handle=0x0 decode_image_handle=0x%llx "
+                           "shadow_image_handle=0x%llx copy_required=1",
+                           surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                           resource->import.fd.valid ? 1U : 0U, static_cast<unsigned long long>(resource->import.fd.dev), static_cast<unsigned long long>(resource->import.fd.ino),
+                           resource->va_fourcc, resource->has_drm_format_modifier ? 1U : 0U, static_cast<unsigned long long>(resource->drm_format_modifier),
+                           vkvv_trace_handle(resource->image), vkvv_trace_handle(resource->export_resource.image));
                 VKVV_TRACE("import-output-copy-failed",
                            "surface=%u stream=%llu codec=0x%x content_gen=%llu shadow_gen=%llu import_external=%u direct_import_ok=%u import_present_generation=%llu "
                            "import_fd_dev=%llu import_fd_ino=%llu decode_image=0x%llx import_image=0x0 copy_done=0 layout_released=0 queue_family_released=0 "
@@ -62,6 +212,7 @@ namespace {
                        static_cast<unsigned long long>(resource->import_present_generation), static_cast<unsigned long long>(resource->import.fd.dev),
                        static_cast<unsigned long long>(resource->import.fd.ino), vkvv_trace_handle(resource->image));
         }
+        trace_av1_publication_fingerprint(surface, resource, refresh_export, shadow_published, import_published, published);
         clear_surface_av1_visible_output_trace(resource);
     }
 
