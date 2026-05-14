@@ -40,19 +40,22 @@ namespace {
 
     vkvv::RetainedExportBacking make_backing() {
         vkvv::RetainedExportBacking backing{};
-        backing.resource.fd_stat_valid           = true;
-        backing.resource.fd_dev                  = 100;
-        backing.resource.fd_ino                  = 200;
-        backing.resource.driver_instance_id      = retained_driver;
-        backing.resource.stream_id               = retained_stream;
-        backing.resource.codec_operation         = codec_vp9;
-        backing.resource.va_fourcc               = fourcc_nv12;
-        backing.resource.format                  = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
-        backing.resource.extent                  = {1920, 1088};
-        backing.resource.allocation_size         = 1920 * 1088 * 3 / 2;
-        backing.resource.has_drm_format_modifier = true;
-        backing.resource.drm_format_modifier     = modifier_linear;
-        backing.fd                               = vkvv::retained_export_fd_identity(backing.resource);
+        backing.resource.fd_stat_valid             = true;
+        backing.resource.fd_dev                    = 100;
+        backing.resource.fd_ino                    = 200;
+        backing.resource.driver_instance_id        = retained_driver;
+        backing.resource.stream_id                 = retained_stream;
+        backing.resource.codec_operation           = codec_vp9;
+        backing.resource.va_fourcc                 = fourcc_nv12;
+        backing.resource.format                    = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+        backing.resource.extent                    = {1920, 1088};
+        backing.resource.allocation_size           = 1920 * 1088 * 3 / 2;
+        backing.resource.has_drm_format_modifier   = true;
+        backing.resource.drm_format_modifier       = modifier_linear;
+        backing.resource.exported                  = true;
+        backing.resource.client_visible_shadow     = true;
+        backing.resource.private_nondisplay_shadow = false;
+        backing.fd                                 = vkvv::retained_export_fd_identity(backing.resource);
         return backing;
     }
 
@@ -182,6 +185,26 @@ namespace {
         vkvv::ExportResource av1_seed = make_window_seed(codec_av1, 2);
         av1_seed.driver_instance_id   = 3;
         ok &= check(vkvv::retained_export_seed_can_replace_window(decode_window, av1_seed), "new decode stream should be allowed to replace active retention window");
+        return ok;
+    }
+
+    bool check_retained_role_policy() {
+        bool                        ok      = true;
+        vkvv::RetainedExportBacking backing = make_backing();
+        VkvvExternalSurfaceImport   import  = make_import();
+
+        ok &= expect_match(backing, import, retained_driver, retained_stream, codec_vp9, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088},
+                           vkvv::RetainedExportMatch::Match, "client-visible retained backing");
+
+        backing.resource.client_visible_shadow     = false;
+        backing.resource.private_nondisplay_shadow = true;
+        backing.resource.exported                  = false;
+        ok &= expect_match(backing, import, retained_driver, retained_stream, codec_vp9, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088},
+                           vkvv::RetainedExportMatch::RoleMismatch, "private decode shadow retained as present backing");
+        ok &= check(std::string_view(vkvv::retained_export_match_reason(vkvv::RetainedExportMatch::RoleMismatch)) == "role-mismatch", "role mismatch reason text should be stable");
+
+        const vkvv::TransitionRetentionWindow decode_window = make_decode_window();
+        ok &= check(!vkvv::retained_export_matches_window(backing.resource, decode_window), "private decode shadow matched the present retention window");
         return ok;
     }
 
@@ -473,6 +496,7 @@ int main() {
     ok &= check_dynamic_budget();
     ok &= check_p010_over_cap_window_stays_retained();
     ok &= check_window_policy();
+    ok &= check_retained_role_policy();
     ok &= check_stats_and_accounting();
     ok &= check_av1_nondisplay_export_state_policy();
     ok &= check_av1_visible_export_copy_policy();

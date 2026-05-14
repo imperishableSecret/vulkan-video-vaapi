@@ -50,6 +50,9 @@ namespace vkvv {
         const VkvvExternalImageIdentity import_key   = vkvv_external_image_identity_from_import(import);
         const VkvvExternalImageIdentity retained_key = retained_export_image_identity(resource);
 
+        if (resource.private_nondisplay_shadow || !resource.exported || !resource.client_visible_shadow) {
+            return RetainedExportMatch::RoleMismatch;
+        }
         if (!import_key.fd.valid || !retained_key.fd.valid) {
             return RetainedExportMatch::MissingFd;
         }
@@ -95,12 +98,13 @@ namespace vkvv {
             case RetainedExportMatch::ModifierMismatch: return "modifier-mismatch";
             case RetainedExportMatch::FormatMismatch: return "format-mismatch";
             case RetainedExportMatch::ExtentMismatch: return "extent-mismatch";
+            case RetainedExportMatch::RoleMismatch: return "role-mismatch";
         }
         return "unknown";
     }
 
     bool retained_export_matches_window(const ExportResource& resource, const TransitionRetentionWindow& window) {
-        return window.active && resource.driver_instance_id == window.driver_instance_id && resource.stream_id == window.stream_id &&
+        return window.active && !resource.private_nondisplay_shadow && resource.driver_instance_id == window.driver_instance_id && resource.stream_id == window.stream_id &&
             resource.codec_operation == window.codec_operation && resource.format == window.format && resource.va_fourcc == window.va_fourcc &&
             resource.extent.width == window.coded_extent.width && resource.extent.height == window.coded_extent.height;
     }
