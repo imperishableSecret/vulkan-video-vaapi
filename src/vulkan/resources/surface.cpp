@@ -77,7 +77,7 @@ namespace vkvv {
             return;
         }
         if (resource->predecode_quarantined) {
-            trace_predecode_quarantine_outcome(nullptr, resource, "destroyed");
+            trace_predecode_quarantine_outcome(nullptr, resource, "destroyed", "surface-destroy", false);
             VKVV_TRACE("export-resource-destroy", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx fd_dev=%llu fd_ino=%llu content_gen=%llu predecode_quarantined=1",
                        resource->owner_surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
                        resource->codec_operation, vkvv_trace_handle(resource->memory), static_cast<unsigned long long>(resource->predecode_fd_dev),

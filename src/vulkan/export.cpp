@@ -1048,7 +1048,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
     if (!valid_decoded_pixels_available && !valid_seed_available && !(placeholder_available && allow_placeholder_export())) {
         VkvvFdIdentity no_fd{};
         if (placeholder_available && exported_shadow != nullptr) {
-            trace_predecode_quarantine_outcome(resource, exported_shadow, "export-failed");
+            trace_predecode_quarantine_outcome(resource, exported_shadow, "export-failed", "no-valid-pixels", false);
         }
         trace_export_summary(exported_shadow, nullptr, false, no_fd, "fail", "no-valid-decoded-or-seed-pixels", VA_STATUS_ERROR_OPERATION_FAILED);
         VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_OPERATION_FAILED,
@@ -1125,7 +1125,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                        seeded_predecode ? exported_shadow->seed_source_surface_id : VA_INVALID_ID,
                        static_cast<unsigned long long>(seeded_predecode ? exported_shadow->seed_source_generation : 0), seeded_predecode ? 1U : 0U);
             if (!seeded_predecode) {
-                trace_predecode_quarantine_outcome(resource, exported_shadow, "placeholder-returned");
+                trace_predecode_quarantine_outcome(resource, exported_shadow, "placeholder-returned", "debug-placeholder-export", true);
             }
         }
         trace_exported_fd_freshness_check(resource, exported_shadow, surface->decoded, surface->decoded,
