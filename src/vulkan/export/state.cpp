@@ -1,4 +1,5 @@
 #include "vulkan/runtime_internal.h"
+#include "telemetry.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -59,7 +60,9 @@ namespace vkvv {
     }
 
     bool surface_resource_has_exported_shadow_output(const SurfaceResource* resource) {
-        return surface_resource_has_current_export_shadow(resource) && resource->exported && resource->export_resource.exported;
+        return surface_resource_has_current_export_shadow(resource) && resource->exported && resource->export_resource.exported &&
+            !resource->export_resource.predecode_quarantined && resource->export_resource.presentable && resource->export_resource.present_pinned &&
+            resource->export_resource.published_visible && resource->export_resource.present_generation == resource->content_generation;
     }
 
     bool surface_resource_has_direct_import_output(const SurfaceResource* resource) {
@@ -198,6 +201,46 @@ namespace vkvv {
         resource->black_placeholder      = false;
         resource->seed_source_surface_id = VA_INVALID_ID;
         resource->seed_source_generation = 0;
+    }
+
+    void clear_predecode_quarantine_state(ExportResource* resource) {
+        if (resource == nullptr) {
+            return;
+        }
+        resource->predecode_quarantined = false;
+        resource->predecode_fd_dev      = 0;
+        resource->predecode_fd_ino      = 0;
+        resource->predecode_generation  = 0;
+    }
+
+    void enter_predecode_quarantine(const SurfaceResource* owner, ExportResource* resource) {
+        if (owner == nullptr || resource == nullptr) {
+            return;
+        }
+        resource->predecode_quarantined = true;
+        resource->predecode_fd_dev      = resource->fd_dev;
+        resource->predecode_fd_ino      = resource->fd_ino;
+        resource->predecode_generation  = resource->content_generation;
+        VKVV_TRACE("predecode-quarantine-enter",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu presentable=0 published_visible=0 predecode_exported=%u "
+                   "predecode_quarantined=1",
+                   owner->surface_id, static_cast<unsigned long long>(owner->driver_instance_id), static_cast<unsigned long long>(owner->stream_id), owner->codec_operation,
+                   static_cast<unsigned long long>(resource->predecode_fd_dev), static_cast<unsigned long long>(resource->predecode_fd_ino),
+                   static_cast<unsigned long long>(resource->predecode_generation), resource->predecode_exported ? 1U : 0U);
+    }
+
+    void exit_predecode_quarantine(const SurfaceResource* owner, ExportResource* resource, bool release_done) {
+        if (owner == nullptr || resource == nullptr || !resource->predecode_quarantined) {
+            return;
+        }
+        const uint64_t fd_dev = resource->predecode_fd_dev;
+        const uint64_t fd_ino = resource->predecode_fd_ino;
+        clear_predecode_quarantine_state(resource);
+        VKVV_TRACE("predecode-quarantine-exit",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu present_gen=%llu release_done=%u predecode_quarantined=0",
+                   owner->surface_id, static_cast<unsigned long long>(owner->driver_instance_id), static_cast<unsigned long long>(owner->stream_id), owner->codec_operation,
+                   static_cast<unsigned long long>(fd_dev), static_cast<unsigned long long>(fd_ino), static_cast<unsigned long long>(owner->content_generation),
+                   static_cast<unsigned long long>(resource->present_generation), release_done ? 1U : 0U);
     }
 
     void clear_nondisplay_predecode_presentation_state(SurfaceResource* resource) {

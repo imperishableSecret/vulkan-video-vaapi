@@ -45,6 +45,10 @@ namespace vkvv {
         bool                          exported                     = false;
         bool                          predecode_exported           = false;
         bool                          predecode_seeded             = false;
+        bool                          predecode_quarantined        = false;
+        uint64_t                      predecode_fd_dev             = 0;
+        uint64_t                      predecode_fd_ino             = 0;
+        uint64_t                      predecode_generation         = 0;
         bool                          black_placeholder            = false;
         VASurfaceID                   seed_source_surface_id       = VA_INVALID_ID;
         uint64_t                      seed_source_generation       = 0;
