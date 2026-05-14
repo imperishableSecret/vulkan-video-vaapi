@@ -431,9 +431,11 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
                        resource->export_resource.seed_source_surface_id, static_cast<unsigned long long>(resource->export_resource.seed_source_generation));
         }
         clear_nondisplay_predecode_presentation_state(resource);
-        const bool  has_exported_backing = resource->export_resource.exported && resource->export_resource.image != VK_NULL_HANDLE;
-        const bool  already_current      = resource->content_generation != 0 && resource->export_resource.content_generation == resource->content_generation;
-        const bool  present_pinned_skip  = has_exported_backing && !already_current && resource->export_resource.present_pinned;
+        constexpr bool private_decode_shadow_supported = false;
+        const bool     has_exported_backing            = resource->export_resource.exported && resource->export_resource.image != VK_NULL_HANDLE;
+        const bool     already_current                 = resource->content_generation != 0 && resource->export_resource.content_generation == resource->content_generation;
+        const bool     present_pinned_skip =
+            private_decode_shadow_supported && has_exported_backing && !already_current && resource->export_resource.present_pinned;
         const char* action               = "no-backing";
         bool        attempted_copy       = false;
         auto trace_nondisplay_post_check = [&](const char* check_action) {
@@ -453,7 +455,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
             } else if (present_pinned_skip) {
                 action = "present-pinned-skip";
             } else {
-                action = "current-refresh-unpinned";
+                action = resource->export_resource.present_pinned ? "current-refresh-pinned-stabilize" : "current-refresh-unpinned";
                 attempted_copy = true;
             }
         }
@@ -477,7 +479,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
                        resource->export_resource.predecode_seeded ? 1U : 0U, "nondisplay-refresh");
             return VA_STATUS_ERROR_OPERATION_FAILED;
         }
-        if (attempted_copy && resource->export_resource.present_pinned) {
+        if (attempted_copy && resource->export_resource.present_pinned && private_decode_shadow_supported) {
             VKVV_TRACE("invalid-nondisplay-present-mutation",
                        "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_gen=%llu present_gen=%llu exported=%u shadow_exported=%u "
                        "copy_reason=%s refresh_export=0",

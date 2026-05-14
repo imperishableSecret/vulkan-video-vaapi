@@ -916,17 +916,16 @@ namespace {
             cleanup();
             return false;
         }
-        const uint64_t visible_present_generation = resource->export_resource.present_generation;
         const uint64_t visible_shadow_generation  = resource->export_resource.content_generation;
         resource->content_generation++;
         status = vkvv_vulkan_refresh_surface_export(runtime, &surface, false, reason, sizeof(reason));
         if (reason[0] != '\0') {
             std::printf("%s\n", reason);
         }
-        if (status != VA_STATUS_SUCCESS || !resource->export_resource.present_pinned || !resource->export_resource.presentable ||
-            resource->export_resource.present_generation != visible_present_generation ||
-            resource->export_resource.content_generation != visible_shadow_generation) {
-            std::fprintf(stderr, "non-display refresh mutated a pinned presentation shadow\n");
+        if (status != VA_STATUS_SUCCESS || resource->export_resource.present_pinned || resource->export_resource.presentable ||
+            resource->export_resource.present_generation != 0 || resource->export_resource.content_generation != resource->content_generation ||
+            resource->export_resource.content_generation == visible_shadow_generation) {
+            std::fprintf(stderr, "non-display refresh did not stabilize the exported shadow before private COW support\n");
             cleanup();
             return false;
         }
