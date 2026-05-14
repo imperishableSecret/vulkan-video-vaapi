@@ -405,6 +405,7 @@ namespace vkvv {
     bool                surface_resource_has_current_export_shadow(const SurfaceResource* resource);
     bool                surface_resource_has_direct_import_output(const SurfaceResource* resource);
     bool                surface_resource_has_published_visible_output(const SurfaceResource* resource);
+    bool                surface_resource_requires_visible_publication(const SurfaceResource* resource, bool refresh_export);
     void                clear_predecode_export_state(ExportResource* resource);
     void                clear_surface_export_attach_state(SurfaceResource* resource);
     void                clear_surface_direct_import_present_state(SurfaceResource* resource);

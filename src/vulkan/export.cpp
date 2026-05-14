@@ -122,6 +122,19 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
     if (resource->export_resource.image == VK_NULL_HANDLE && resource->import.external && resource->import.fd.valid) {
         (void)attach_imported_export_resource_by_fd(runtime, resource);
     }
+    const bool requires_published_visible_output = surface_resource_requires_visible_publication(resource, refresh_export);
+    if (resource->export_resource.image == VK_NULL_HANDLE && requires_published_visible_output) {
+        if (!ensure_export_resource(runtime, resource, reason, reason_size)) {
+            VKVV_TRACE("visible-refresh-shadow-create-failed",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u content_gen=%llu import_external=%u exported=%u shadow_exported=%u direct_import_ok=%u "
+                       "retained=%zu retained_mem=%llu reason=\"%s\"",
+                       surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                       refresh_export ? 1U : 0U, static_cast<unsigned long long>(resource->content_generation), resource->import.external ? 1U : 0U, resource->exported ? 1U : 0U,
+                       resource->export_resource.exported ? 1U : 0U, surface_resource_has_direct_import_output(resource) ? 1U : 0U, runtime_retained_export_count(runtime),
+                       static_cast<unsigned long long>(runtime_retained_export_memory_bytes(runtime)), reason != nullptr ? reason : "");
+            return VA_STATUS_ERROR_OPERATION_FAILED;
+        }
+    }
     if (resource->export_resource.image == VK_NULL_HANDLE) {
         if (refresh_export && resource->content_generation != 0) {
             resource->export_seed_generation = resource->content_generation;
@@ -272,6 +285,23 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
 
     uint32_t seeded_predecode_exports = 0;
     if (!copy_surface_to_export_resource(runtime, resource, &seeded_predecode_exports, reason, reason_size)) {
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    if (requires_published_visible_output && !surface_resource_has_published_visible_output(resource)) {
+        VKVV_TRACE("visible-refresh-unpublished",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu shadow_ok=%u import_external=%u "
+                   "import_present_generation=%llu direct_import_ok=%u exported=%u shadow_exported=%u retained=%zu retained_mem=%llu",
+                   surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                   refresh_export ? 1U : 0U, static_cast<unsigned long long>(resource->content_generation), vkvv_trace_handle(resource->export_resource.memory),
+                   static_cast<unsigned long long>(resource->export_resource.content_generation), surface_resource_has_current_export_shadow(resource) ? 1U : 0U,
+                   resource->import.external ? 1U : 0U, static_cast<unsigned long long>(resource->import_present_generation),
+                   surface_resource_has_direct_import_output(resource) ? 1U : 0U, resource->exported ? 1U : 0U, resource->export_resource.exported ? 1U : 0U,
+                   runtime_retained_export_count(runtime), static_cast<unsigned long long>(runtime_retained_export_memory_bytes(runtime)));
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_OPERATION_FAILED,
+                          "visible AV1 refresh did not publish decoded output: driver=%llu surface=%u stream=%llu codec=0x%x source_generation=%llu shadow_generation=%llu",
+                          static_cast<unsigned long long>(resource->driver_instance_id), surface->id, static_cast<unsigned long long>(resource->stream_id),
+                          resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                          static_cast<unsigned long long>(resource->export_resource.content_generation));
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
     resource->last_display_refresh_generation = resource->content_generation;

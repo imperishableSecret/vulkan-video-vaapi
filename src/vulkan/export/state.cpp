@@ -34,6 +34,11 @@ namespace vkvv {
         return surface_resource_has_current_export_shadow(resource) || surface_resource_has_direct_import_output(resource);
     }
 
+    bool surface_resource_requires_visible_publication(const SurfaceResource* resource, bool refresh_export) {
+        return refresh_export && resource != nullptr && resource->content_generation != 0 && surface_resource_uses_av1_decode(resource) &&
+            (resource->import.external || resource->exported || resource->export_resource.exported);
+    }
+
     bool av1_visible_export_requires_copy(const SurfaceResource* resource) {
         return surface_resource_uses_av1_decode(resource) &&
             (resource->export_resource.predecode_exported || resource->export_resource.predecode_seeded || resource->export_resource.black_placeholder ||
