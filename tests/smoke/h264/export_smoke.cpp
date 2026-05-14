@@ -234,8 +234,7 @@ namespace {
             cleanup();
             return false;
         }
-        if (backup_resource->export_resource.presentable || backup_resource->export_resource.present_pinned ||
-            backup_resource->export_resource.present_generation != 0 ||
+        if (backup_resource->export_resource.presentable || backup_resource->export_resource.present_pinned || backup_resource->export_resource.present_generation != 0 ||
             backup_resource->export_resource.present_source != vkvv::VkvvExportPresentSource::PredecodePlaceholder) {
             std::fprintf(stderr, "predecode export should not be presentable before decode\n");
             cleanup();
@@ -286,8 +285,7 @@ namespace {
             cleanup();
             return false;
         }
-        if (backup_resource->export_resource.presentable || backup_resource->export_resource.present_pinned ||
-            backup_resource->export_resource.present_generation != 0 ||
+        if (backup_resource->export_resource.presentable || backup_resource->export_resource.present_pinned || backup_resource->export_resource.present_generation != 0 ||
             backup_resource->export_resource.present_source != vkvv::VkvvExportPresentSource::PredecodePlaceholder) {
             std::fprintf(stderr, "predecode seed should remain non-presentable\n");
             cleanup();
@@ -383,7 +381,7 @@ namespace {
             cleanup();
             return false;
         }
-        auto* newer_resource = static_cast<vkvv::SurfaceResource*>(newer_visible.vulkan);
+        auto* newer_resource  = static_cast<vkvv::SurfaceResource*>(newer_visible.vulkan);
         newer_visible.decoded = true;
         newer_resource->content_generation++;
         status = vkvv_vulkan_refresh_surface_export(runtime, &newer_visible, true, reason, sizeof(reason));
@@ -395,8 +393,8 @@ namespace {
             return false;
         }
         if (!late_resource->export_resource.predecode_exported || !late_resource->export_resource.predecode_seeded ||
-            late_resource->export_resource.seed_source_surface_id != decoded.id ||
-            late_resource->export_resource.seed_source_generation != decoded_resource->content_generation || late_resource->export_resource.content_generation != 0) {
+            late_resource->export_resource.seed_source_surface_id != decoded.id || late_resource->export_resource.seed_source_generation != decoded_resource->content_generation ||
+            late_resource->export_resource.content_generation != 0) {
             std::fprintf(stderr, "already-seeded predecode placeholder was reseeded by a newer visible frame\n");
             cleanup();
             return false;
@@ -511,13 +509,12 @@ namespace {
         }
         if (nondisplay_resource->export_resource.memory != nondisplay_shadow_memory ||
             nondisplay_resource->export_resource.content_generation != nondisplay_resource->content_generation || vkvv_vulkan_surface_has_predecode_export(&nondisplay) ||
-            nondisplay_resource->export_resource.predecode_seeded ||
-            nondisplay_resource->export_resource.seed_source_surface_id != VA_INVALID_ID) {
+            nondisplay_resource->export_resource.predecode_seeded || nondisplay_resource->export_resource.seed_source_surface_id != VA_INVALID_ID) {
             std::fprintf(stderr, "non-display decode did not refresh its exported shadow from decoded content\n");
             cleanup();
             return false;
         }
-        const uint64_t nondisplay_decoded_generation = nondisplay_resource->export_resource.content_generation;
+        const uint64_t             nondisplay_decoded_generation = nondisplay_resource->export_resource.content_generation;
 
         const vkvv::DecodeImageKey next_display_key = h264_decode_key(typed_session, &next_display, {64, 64});
         if (!vkvv::ensure_surface_resource(runtime, &next_display, next_display_key, reason, sizeof(reason))) {
@@ -536,8 +533,7 @@ namespace {
             cleanup();
             return false;
         }
-        if (nondisplay_resource->export_resource.memory != nondisplay_shadow_memory ||
-            nondisplay_resource->export_resource.content_generation != nondisplay_decoded_generation ||
+        if (nondisplay_resource->export_resource.memory != nondisplay_shadow_memory || nondisplay_resource->export_resource.content_generation != nondisplay_decoded_generation ||
             nondisplay_resource->export_resource.seed_source_surface_id != VA_INVALID_ID) {
             std::fprintf(stderr, "later displayable refresh incorrectly reseeded the non-display predecode export\n");
             cleanup();
@@ -909,23 +905,25 @@ namespace {
             cleanup();
             return false;
         }
-        if (!resource->export_resource.presentable || !resource->export_resource.present_pinned ||
-            resource->export_resource.present_generation != resource->content_generation ||
+        if (!resource->export_resource.presentable || !resource->export_resource.present_pinned || resource->export_resource.present_generation != resource->content_generation ||
             resource->export_resource.present_source != vkvv::VkvvExportPresentSource::VisibleRefresh) {
             std::fprintf(stderr, "pending completion did not pin visible presentation state\n");
             cleanup();
             return false;
         }
+        const uint64_t visible_present_generation = resource->export_resource.present_generation;
         const uint64_t visible_shadow_generation  = resource->export_resource.content_generation;
         resource->content_generation++;
-        status = vkvv_vulkan_refresh_surface_export(runtime, &surface, false, reason, sizeof(reason));
+        const uint64_t nondisplay_generation = resource->content_generation;
+        status                               = vkvv_vulkan_refresh_surface_export(runtime, &surface, false, reason, sizeof(reason));
         if (reason[0] != '\0') {
             std::printf("%s\n", reason);
         }
-        if (status != VA_STATUS_SUCCESS || resource->export_resource.present_pinned || resource->export_resource.presentable ||
-            resource->export_resource.present_generation != 0 || resource->export_resource.content_generation != resource->content_generation ||
-            resource->export_resource.content_generation == visible_shadow_generation) {
-            std::fprintf(stderr, "non-display refresh did not stabilize the exported shadow before private COW support\n");
+        if (status != VA_STATUS_SUCCESS || !resource->export_resource.present_pinned || !resource->export_resource.presentable ||
+            resource->export_resource.present_generation != visible_present_generation || resource->export_resource.content_generation != visible_shadow_generation ||
+            !resource->export_resource.decode_shadow_private_active || resource->export_resource.decode_shadow_generation != nondisplay_generation ||
+            resource->private_decode_shadow.content_generation != nondisplay_generation || vkvv::current_decode_shadow(resource) != &resource->private_decode_shadow) {
+            std::fprintf(stderr, "non-display refresh did not preserve pinned presentation while updating private decode shadow\n");
             cleanup();
             return false;
         }
@@ -1004,8 +1002,7 @@ namespace {
             cleanup();
             return false;
         }
-        if (!resource->export_resource.presentable || !resource->export_resource.present_pinned ||
-            resource->export_resource.present_generation != resource->content_generation ||
+        if (!resource->export_resource.presentable || !resource->export_resource.present_pinned || resource->export_resource.present_generation != resource->content_generation ||
             resource->export_resource.present_source != vkvv::VkvvExportPresentSource::VisibleRefresh) {
             std::fprintf(stderr, "first decode did not pin visible presentation for pre-exported surface\n");
             cleanup();
