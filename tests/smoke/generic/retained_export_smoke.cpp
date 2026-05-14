@@ -381,6 +381,35 @@ namespace {
         return ok;
     }
 
+    bool check_private_decode_shadow_state_policy() {
+        bool                  ok = true;
+        vkvv::SurfaceResource resource{};
+        resource.content_generation                              = 5;
+        resource.export_resource.image                           = fake_handle<VkImage>(1);
+        resource.export_resource.memory                          = fake_handle<VkDeviceMemory>(2);
+        resource.export_resource.content_generation              = 4;
+        resource.export_resource.exported                        = true;
+        resource.export_resource.present_pinned                  = true;
+        resource.export_resource.decode_shadow_generation        = resource.content_generation;
+        resource.export_resource.decode_shadow_private_active    = true;
+        resource.private_decode_shadow.image                     = fake_handle<VkImage>(3);
+        resource.private_decode_shadow.memory                    = fake_handle<VkDeviceMemory>(4);
+        resource.private_decode_shadow.content_generation        = resource.content_generation;
+        resource.private_decode_shadow.private_nondisplay_shadow = true;
+
+        ok &= check(vkvv::client_present_shadow(&resource) == &resource.export_resource, "client present helper did not select exported shadow");
+        ok &= check(vkvv::current_decode_shadow(&resource) == &resource.private_decode_shadow, "private decode shadow was not selected as decode-current");
+        ok &= check(vkvv::surface_resource_export_shadow_stale(&resource), "stale client-present shadow was not detected");
+        ok &= check(!vkvv::surface_resource_decode_shadow_stale(&resource), "current private decode shadow was treated as stale");
+        ok &= check(!vkvv::surface_resource_has_current_export_shadow(&resource), "stale client-present shadow was treated as current export output");
+
+        vkvv::clear_private_decode_shadow_state(&resource);
+        resource.export_resource.content_generation = resource.content_generation;
+        ok &= check(vkvv::current_decode_shadow(&resource) == &resource.export_resource, "present shadow was not selected after private decode state cleared");
+        ok &= check(!resource.export_resource.decode_shadow_private_active, "private decode state did not clear active flag");
+        return ok;
+    }
+
 } // namespace
 
 int main() {
@@ -446,5 +475,6 @@ int main() {
     ok &= check_av1_nondisplay_export_state_policy();
     ok &= check_av1_visible_export_copy_policy();
     ok &= check_visible_output_publication_policy();
+    ok &= check_private_decode_shadow_state_policy();
     return ok ? 0 : 1;
 }

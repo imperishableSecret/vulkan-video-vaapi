@@ -43,6 +43,14 @@ namespace vkvv {
         return resource != nullptr && resource->content_generation != 0 && resource->export_resource.content_generation != resource->content_generation;
     }
 
+    bool surface_resource_decode_shadow_stale(const SurfaceResource* resource) {
+        return resource != nullptr && resource->content_generation != 0 && !surface_resource_has_current_decode_shadow(resource);
+    }
+
+    bool surface_resource_has_current_decode_shadow(const SurfaceResource* resource) {
+        return current_decode_shadow(resource) != nullptr;
+    }
+
     bool surface_resource_has_current_export_shadow(const SurfaceResource* resource) {
         return resource != nullptr && resource->content_generation != 0 && resource->export_resource.image != VK_NULL_HANDLE &&
             resource->export_resource.memory != VK_NULL_HANDLE && resource->export_resource.content_generation == resource->content_generation &&
@@ -85,17 +93,17 @@ namespace vkvv {
         if (resource == nullptr) {
             return;
         }
-        resource->present_pinned           = false;
-        resource->presentable              = false;
-        resource->published_visible        = false;
-        resource->present_generation       = 0;
-        resource->present_fd_dev           = 0;
-        resource->present_fd_ino           = 0;
-        resource->present_surface_id       = VA_INVALID_ID;
-        resource->present_stream_id        = 0;
-        resource->present_codec_operation  = 0;
-        resource->present_source           = VkvvExportPresentSource::None;
-        resource->client_visible_shadow    = false;
+        resource->present_pinned            = false;
+        resource->presentable               = false;
+        resource->published_visible         = false;
+        resource->present_generation        = 0;
+        resource->present_fd_dev            = 0;
+        resource->present_fd_ino            = 0;
+        resource->present_surface_id        = VA_INVALID_ID;
+        resource->present_stream_id         = 0;
+        resource->present_codec_operation   = 0;
+        resource->present_source            = VkvvExportPresentSource::None;
+        resource->client_visible_shadow     = false;
         resource->private_nondisplay_shadow = false;
     }
 
@@ -125,6 +133,61 @@ namespace vkvv {
         resource->private_nondisplay_shadow = false;
     }
 
+    ExportResource* client_present_shadow(SurfaceResource* resource) {
+        if (resource == nullptr || resource->export_resource.image == VK_NULL_HANDLE || resource->export_resource.memory == VK_NULL_HANDLE) {
+            return nullptr;
+        }
+        return &resource->export_resource;
+    }
+
+    const ExportResource* client_present_shadow(const SurfaceResource* resource) {
+        if (resource == nullptr || resource->export_resource.image == VK_NULL_HANDLE || resource->export_resource.memory == VK_NULL_HANDLE) {
+            return nullptr;
+        }
+        return &resource->export_resource;
+    }
+
+    ExportResource* current_decode_shadow(SurfaceResource* resource) {
+        if (resource == nullptr || resource->content_generation == 0) {
+            return nullptr;
+        }
+        ExportResource& present        = resource->export_resource;
+        ExportResource& private_shadow = resource->private_decode_shadow;
+        if (present.decode_shadow_private_active && private_shadow.image != VK_NULL_HANDLE && private_shadow.memory != VK_NULL_HANDLE &&
+            private_shadow.content_generation == resource->content_generation && present.decode_shadow_generation == resource->content_generation) {
+            return &private_shadow;
+        }
+        if (present.image != VK_NULL_HANDLE && present.memory != VK_NULL_HANDLE && present.content_generation == resource->content_generation) {
+            return &present;
+        }
+        return nullptr;
+    }
+
+    const ExportResource* current_decode_shadow(const SurfaceResource* resource) {
+        if (resource == nullptr || resource->content_generation == 0) {
+            return nullptr;
+        }
+        const ExportResource& present        = resource->export_resource;
+        const ExportResource& private_shadow = resource->private_decode_shadow;
+        if (present.decode_shadow_private_active && private_shadow.image != VK_NULL_HANDLE && private_shadow.memory != VK_NULL_HANDLE &&
+            private_shadow.content_generation == resource->content_generation && present.decode_shadow_generation == resource->content_generation) {
+            return &private_shadow;
+        }
+        if (present.image != VK_NULL_HANDLE && present.memory != VK_NULL_HANDLE && present.content_generation == resource->content_generation) {
+            return &present;
+        }
+        return nullptr;
+    }
+
+    void clear_private_decode_shadow_state(SurfaceResource* resource) {
+        if (resource == nullptr) {
+            return;
+        }
+        resource->export_resource.decode_shadow_generation     = resource->export_resource.content_generation;
+        resource->export_resource.decode_shadow_private_active = false;
+        resource->private_decode_shadow.content_generation     = 0;
+    }
+
     void clear_predecode_export_state(ExportResource* resource) {
         if (resource == nullptr) {
             return;
@@ -142,10 +205,10 @@ namespace vkvv {
         }
 
         clear_predecode_export_state(&resource->export_resource);
-        resource->export_seed_generation                    = 0;
-        resource->last_nondisplay_skip_generation           = resource->content_generation;
-        resource->last_nondisplay_skip_shadow_generation    = resource->export_resource.content_generation;
-        resource->last_nondisplay_skip_shadow_memory        = resource->export_resource.memory;
+        resource->export_seed_generation                 = 0;
+        resource->last_nondisplay_skip_generation        = resource->content_generation;
+        resource->last_nondisplay_skip_shadow_generation = resource->export_resource.content_generation;
+        resource->last_nondisplay_skip_shadow_memory     = resource->export_resource.memory;
     }
 
     void clear_surface_export_attach_state(SurfaceResource* resource) {
