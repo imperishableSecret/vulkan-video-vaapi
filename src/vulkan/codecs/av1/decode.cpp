@@ -20,6 +20,10 @@ namespace {
         return pic->pic_info_fields.bits.frame_type == STD_VIDEO_AV1_FRAME_TYPE_KEY || pic->pic_info_fields.bits.frame_type == STD_VIDEO_AV1_FRAME_TYPE_INTRA_ONLY;
     }
 
+    bool av1_frame_is_switch(const VkvvAV1DecodeInput* input) {
+        return input != nullptr && input->pic != nullptr && input->pic->pic_info_fields.bits.frame_type == STD_VIDEO_AV1_FRAME_TYPE_SWITCH;
+    }
+
     uint8_t av1_va_ref_frame_index(const VADecPictureParameterBufferAV1* pic, uint32_t index) {
         if (pic == nullptr || index >= VKVV_AV1_ACTIVE_REFERENCE_COUNT) {
             return max_av1_reference_slots;
@@ -79,7 +83,10 @@ namespace {
         }
     }
 
-    StdVideoAV1FrameType av1_frame_type(uint8_t frame_type) {
+    StdVideoAV1FrameType av1_effective_frame_type(uint8_t frame_type) {
+        if (frame_type == STD_VIDEO_AV1_FRAME_TYPE_SWITCH) {
+            return STD_VIDEO_AV1_FRAME_TYPE_INTER;
+        }
         if (frame_type <= STD_VIDEO_AV1_FRAME_TYPE_SWITCH) {
             return static_cast<StdVideoAV1FrameType>(frame_type);
         }
@@ -107,31 +114,41 @@ namespace {
         return STD_VIDEO_AV1_FRAME_RESTORATION_TYPE_NONE;
     }
 
-    uint16_t av1_restoration_size(uint32_t type, uint8_t lr_unit_shift, bool chroma, bool lr_uv_shift) {
+    bool av1_restoration_size_code(uint32_t type, uint8_t lr_unit_shift, bool chroma, bool lr_uv_shift, uint16_t* code, char* reason, size_t reason_size) {
+        if (code == nullptr) {
+            std::snprintf(reason, reason_size, "missing AV1 restoration size output");
+            return false;
+        }
         if (type == 0) {
-            return 0;
+            *code = 0;
+            return true;
         }
         uint32_t shift = 6U + lr_unit_shift;
         if (chroma && lr_uv_shift && shift > 0) {
             shift--;
         }
-        return static_cast<uint16_t>(1U << shift);
+        const uint32_t size = 1U << shift;
+        switch (size) {
+            case 32:
+            case 64:
+            case 128:
+            case 256: *code = static_cast<uint16_t>(shift - 5U); return true;
+            default:
+                std::snprintf(reason, reason_size, "invalid AV1 loop restoration size: type=%u size=%u shift=%u chroma=%u uv_shift=%u", type, size, lr_unit_shift, chroma ? 1U : 0U,
+                              lr_uv_shift ? 1U : 0U);
+                return false;
+        }
     }
 
-    struct AV1PictureStdData {
-        std::array<uint16_t, STD_VIDEO_AV1_MAX_TILE_COLS + 1> mi_col_starts{};
-        std::array<uint16_t, STD_VIDEO_AV1_MAX_TILE_ROWS + 1> mi_row_starts{};
-        std::array<uint16_t, STD_VIDEO_AV1_MAX_TILE_COLS>     width_in_sbs_minus1{};
-        std::array<uint16_t, STD_VIDEO_AV1_MAX_TILE_ROWS>     height_in_sbs_minus1{};
-        StdVideoAV1TileInfo                                   tile_info{};
-        StdVideoAV1Quantization                               quantization{};
-        StdVideoAV1Segmentation                               segmentation{};
-        StdVideoAV1LoopFilter                                 loop_filter{};
-        StdVideoAV1CDEF                                       cdef{};
-        StdVideoAV1LoopRestoration                            restoration{};
-        StdVideoAV1GlobalMotion                               global_motion{};
-        StdVideoDecodeAV1PictureInfo                          picture{};
-    };
+    uint8_t av1_ref_frame_sign_bias_mask(const VkvvAV1FrameHeader& header) {
+        uint8_t mask = 0;
+        for (uint32_t i = 0; i < VKVV_AV1_REFERENCE_COUNT; i++) {
+            if (header.ref_frame_sign_bias[i]) {
+                mask |= static_cast<uint8_t>(1U << i);
+            }
+        }
+        return mask;
+    }
 
     void build_av1_tile_info(const VkvvAV1DecodeInput* input, AV1PictureStdData* std_data) {
         const VADecPictureParameterBufferAV1* pic         = input->pic;
@@ -176,7 +193,37 @@ namespace {
         std_data->tile_info.pHeightInSbsMinus1              = std_data->height_in_sbs_minus1.data();
     }
 
-    void build_av1_picture_std_data(const VkvvAV1DecodeInput* input, AV1PictureStdData* std_data) {
+    bool validate_av1_switch_frame_impl(const VkvvAV1DecodeInput* input, char* reason, size_t reason_size) {
+        if (!av1_frame_is_switch(input)) {
+            return true;
+        }
+        if (!input->header.error_resilient_mode || input->pic->pic_info_fields.bits.error_resilient_mode == 0) {
+            std::snprintf(reason, reason_size, "invalid AV1 switch frame: error_resilient_mode must be set");
+            return false;
+        }
+        if (!input->header.frame_size_override_flag) {
+            std::snprintf(reason, reason_size, "invalid AV1 switch frame: frame_size_override_flag must be set");
+            return false;
+        }
+        if (input->header.refresh_frame_flags != 0xff) {
+            std::snprintf(reason, reason_size, "invalid AV1 switch frame: refresh_frame_flags=0x%02x expected=0xff", input->header.refresh_frame_flags);
+            return false;
+        }
+        if (input->pic->primary_ref_frame != STD_VIDEO_AV1_PRIMARY_REF_NONE) {
+            std::snprintf(reason, reason_size, "invalid AV1 switch frame: primary_ref_frame=%u expected=%u", input->pic->primary_ref_frame, STD_VIDEO_AV1_PRIMARY_REF_NONE);
+            return false;
+        }
+        return true;
+    }
+
+    bool build_av1_picture_std_data_impl(AV1VideoSession* session, const VkvvAV1DecodeInput* input, AV1PictureStdData* std_data, char* reason, size_t reason_size) {
+        if (session == nullptr || input == nullptr || input->pic == nullptr || std_data == nullptr) {
+            std::snprintf(reason, reason_size, "missing AV1 std-picture input");
+            return false;
+        }
+        if (!validate_av1_switch_frame_impl(input, reason, reason_size)) {
+            return false;
+        }
         const VADecPictureParameterBufferAV1* pic    = input->pic;
         const VkvvAV1FrameHeader&             header = input->header;
 
@@ -207,10 +254,25 @@ namespace {
         std_data->loop_filter.loop_filter_level[2]            = pic->filter_level_u;
         std_data->loop_filter.loop_filter_level[3]            = pic->filter_level_v;
         std_data->loop_filter.loop_filter_sharpness           = pic->loop_filter_info_fields.bits.sharpness_level;
-        std_data->loop_filter.update_ref_delta                = pic->loop_filter_info_fields.bits.mode_ref_delta_update;
-        std_data->loop_filter.update_mode_delta               = pic->loop_filter_info_fields.bits.mode_ref_delta_update;
-        std::memcpy(std_data->loop_filter.loop_filter_ref_deltas, pic->ref_deltas, sizeof(std_data->loop_filter.loop_filter_ref_deltas));
-        std::memcpy(std_data->loop_filter.loop_filter_mode_deltas, pic->mode_deltas, sizeof(std_data->loop_filter.loop_filter_mode_deltas));
+        if (pic->primary_ref_frame == STD_VIDEO_AV1_PRIMARY_REF_NONE) {
+            session->loop_filter_ref_deltas  = {1, 0, 0, 0, -1, 0, -1, -1};
+            session->loop_filter_mode_deltas = {0, 0};
+        }
+        if (pic->loop_filter_info_fields.bits.mode_ref_delta_update) {
+            std_data->loop_filter.update_ref_delta  = 0xff;
+            std_data->loop_filter.update_mode_delta = 0x03;
+            for (uint32_t i = 0; i < STD_VIDEO_AV1_TOTAL_REFS_PER_FRAME; i++) {
+                session->loop_filter_ref_deltas[i] = pic->ref_deltas[i];
+            }
+            for (uint32_t i = 0; i < STD_VIDEO_AV1_LOOP_FILTER_ADJUSTMENTS; i++) {
+                session->loop_filter_mode_deltas[i] = pic->mode_deltas[i];
+            }
+        } else {
+            std_data->loop_filter.update_ref_delta  = 0;
+            std_data->loop_filter.update_mode_delta = 0;
+        }
+        std::memcpy(std_data->loop_filter.loop_filter_ref_deltas, session->loop_filter_ref_deltas.data(), sizeof(std_data->loop_filter.loop_filter_ref_deltas));
+        std::memcpy(std_data->loop_filter.loop_filter_mode_deltas, session->loop_filter_mode_deltas.data(), sizeof(std_data->loop_filter.loop_filter_mode_deltas));
 
         std_data->cdef                      = {};
         std_data->cdef.cdef_damping_minus_3 = pic->cdef_damping_minus_3;
@@ -226,12 +288,14 @@ namespace {
         std_data->restoration.FrameRestorationType[0] = av1_restoration_type(pic->loop_restoration_fields.bits.yframe_restoration_type);
         std_data->restoration.FrameRestorationType[1] = av1_restoration_type(pic->loop_restoration_fields.bits.cbframe_restoration_type);
         std_data->restoration.FrameRestorationType[2] = av1_restoration_type(pic->loop_restoration_fields.bits.crframe_restoration_type);
-        std_data->restoration.LoopRestorationSize[0] =
-            av1_restoration_size(pic->loop_restoration_fields.bits.yframe_restoration_type, pic->loop_restoration_fields.bits.lr_unit_shift, false, false);
-        std_data->restoration.LoopRestorationSize[1] = av1_restoration_size(pic->loop_restoration_fields.bits.cbframe_restoration_type,
-                                                                            pic->loop_restoration_fields.bits.lr_unit_shift, true, pic->loop_restoration_fields.bits.lr_uv_shift);
-        std_data->restoration.LoopRestorationSize[2] = av1_restoration_size(pic->loop_restoration_fields.bits.crframe_restoration_type,
-                                                                            pic->loop_restoration_fields.bits.lr_unit_shift, true, pic->loop_restoration_fields.bits.lr_uv_shift);
+        if (!av1_restoration_size_code(pic->loop_restoration_fields.bits.yframe_restoration_type, pic->loop_restoration_fields.bits.lr_unit_shift, false, false,
+                                       &std_data->restoration.LoopRestorationSize[0], reason, reason_size) ||
+            !av1_restoration_size_code(pic->loop_restoration_fields.bits.cbframe_restoration_type, pic->loop_restoration_fields.bits.lr_unit_shift, true,
+                                       pic->loop_restoration_fields.bits.lr_uv_shift, &std_data->restoration.LoopRestorationSize[1], reason, reason_size) ||
+            !av1_restoration_size_code(pic->loop_restoration_fields.bits.crframe_restoration_type, pic->loop_restoration_fields.bits.lr_unit_shift, true,
+                                       pic->loop_restoration_fields.bits.lr_uv_shift, &std_data->restoration.LoopRestorationSize[2], reason, reason_size)) {
+            return false;
+        }
 
         std_data->global_motion                                                  = {};
         std_data->global_motion.GmType[STD_VIDEO_AV1_REFERENCE_NAME_INTRA_FRAME] = VAAV1TransformationIdentity;
@@ -274,7 +338,7 @@ namespace {
             pic->loop_restoration_fields.bits.crframe_restoration_type != 0;
         std_data->picture.flags.usesChromaLr   = pic->loop_restoration_fields.bits.cbframe_restoration_type != 0 || pic->loop_restoration_fields.bits.crframe_restoration_type != 0;
         std_data->picture.flags.apply_grain    = false;
-        std_data->picture.frame_type           = av1_frame_type(pic->pic_info_fields.bits.frame_type);
+        std_data->picture.frame_type           = av1_effective_frame_type(pic->pic_info_fields.bits.frame_type);
         std_data->picture.current_frame_id     = header.current_frame_id;
         std_data->picture.OrderHint            = static_cast<uint8_t>(pic->order_hint);
         std_data->picture.primary_ref_frame    = pic->primary_ref_frame;
@@ -296,14 +360,15 @@ namespace {
         std_data->picture.pCDEF            = &std_data->cdef;
         std_data->picture.pLoopRestoration = &std_data->restoration;
         std_data->picture.pGlobalMotion    = &std_data->global_motion;
+        return true;
     }
 
-    StdVideoDecodeAV1ReferenceInfo build_current_reference_info(const VkvvAV1DecodeInput* input) {
+    StdVideoDecodeAV1ReferenceInfo build_av1_current_reference_info_impl(const VkvvAV1DecodeInput* input) {
         StdVideoDecodeAV1ReferenceInfo info{};
         info.flags.disable_frame_end_update_cdf = input->pic->pic_info_fields.bits.disable_frame_end_update_cdf;
         info.flags.segmentation_enabled         = input->pic->seg_info.segment_info_fields.bits.enabled;
-        info.frame_type                         = input->pic->pic_info_fields.bits.frame_type;
-        info.RefFrameSignBias                   = 0;
+        info.frame_type                         = static_cast<uint8_t>(av1_effective_frame_type(input->pic->pic_info_fields.bits.frame_type));
+        info.RefFrameSignBias                   = av1_ref_frame_sign_bias_mask(input->header);
         info.OrderHint                          = static_cast<uint8_t>(input->pic->order_hint);
         std::memcpy(info.SavedOrderHints, input->header.order_hints, sizeof(info.SavedOrderHints));
         return info;
@@ -434,6 +499,22 @@ namespace {
 
 } // namespace
 
+namespace vkvv {
+
+    bool validate_av1_switch_frame(const VkvvAV1DecodeInput* input, char* reason, size_t reason_size) {
+        return validate_av1_switch_frame_impl(input, reason, reason_size);
+    }
+
+    bool build_av1_picture_std_data(AV1VideoSession* session, const VkvvAV1DecodeInput* input, AV1PictureStdData* std_data, char* reason, size_t reason_size) {
+        return build_av1_picture_std_data_impl(session, input, std_data, reason, reason_size);
+    }
+
+    StdVideoDecodeAV1ReferenceInfo build_av1_current_reference_info(const VkvvAV1DecodeInput* input) {
+        return build_av1_current_reference_info_impl(input);
+    }
+
+} // namespace vkvv
+
 VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver* drv, VkvvContext* vctx, VkvvSurface* target, VAProfile profile, const VkvvAV1DecodeInput* input,
                                 char* reason, size_t reason_size) {
     auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
@@ -467,6 +548,9 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (!validate_av1_decode_input_bounds(input, reason, reason_size)) {
+        return VA_STATUS_ERROR_INVALID_BUFFER;
+    }
+    if (!validate_av1_switch_frame(input, reason, reason_size)) {
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if ((session->decode_flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR) == 0) {
@@ -596,7 +680,6 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
             record.resource                    = resource;
             record.picture                     = make_picture_resource(resource, resource->extent);
             record.std_ref                     = stored_slot->info;
-            record.std_ref.RefFrameSignBias    = input->header.ref_frame_sign_bias[i + 1];
             record.av1_slot.sType              = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_DPB_SLOT_INFO_KHR;
             record.av1_slot.pStdReferenceInfo  = &record.std_ref;
             record.slot.sType                  = VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR;
@@ -723,7 +806,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     VkVideoPictureResourceInfoKHR      setup_picture{};
     const VkVideoReferenceSlotInfoKHR* setup_slot_ptr = nullptr;
     if (has_setup_slot) {
-        setup_std_ref                    = build_current_reference_info(input);
+        setup_std_ref                    = build_av1_current_reference_info(input);
         setup_picture                    = make_picture_resource(target_resource, coded_extent);
         setup_av1_slot.sType             = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_DPB_SLOT_INFO_KHR;
         setup_av1_slot.pStdReferenceInfo = &setup_std_ref;
@@ -754,7 +837,10 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     runtime->cmd_begin_video_coding(runtime->command_buffer, &video_begin);
 
     AV1PictureStdData std_data{};
-    build_av1_picture_std_data(input, &std_data);
+    if (!build_av1_picture_std_data(session, input, &std_data, reason, reason_size)) {
+        runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
+        return VA_STATUS_ERROR_INVALID_BUFFER;
+    }
 
     std::array<uint32_t, VKVV_AV1_MAX_TILES> tile_offsets{};
     std::array<uint32_t, VKVV_AV1_MAX_TILES> tile_sizes{};

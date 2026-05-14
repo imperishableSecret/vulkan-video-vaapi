@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <vector>
 
@@ -93,6 +94,59 @@ namespace {
         sequence.matrix_coefficients            = STD_VIDEO_AV1_MATRIX_COEFFICIENTS_BT_709;
         sequence.chroma_sample_position         = STD_VIDEO_AV1_CHROMA_SAMPLE_POSITION_UNKNOWN;
         return sequence;
+    }
+
+    struct AV1StdInputFixture {
+        VADecPictureParameterBufferAV1 pic{};
+        VkvvAV1DecodeInput             input{};
+
+        AV1StdInputFixture() {
+            pic.profile                                             = 0;
+            pic.frame_width_minus1                                  = 63;
+            pic.frame_height_minus1                                 = 63;
+            pic.tile_cols                                           = 1;
+            pic.tile_rows                                           = 1;
+            pic.primary_ref_frame                                   = STD_VIDEO_AV1_PRIMARY_REF_NONE;
+            pic.pic_info_fields.bits.frame_type                     = STD_VIDEO_AV1_FRAME_TYPE_INTER;
+            pic.pic_info_fields.bits.uniform_tile_spacing_flag      = 1;
+            pic.seq_info_fields.fields.use_128x128_superblock       = 0;
+            pic.loop_filter_info_fields.bits.mode_ref_delta_enabled = 1;
+            for (VASurfaceID& surface : pic.ref_frame_map) {
+                surface = VA_INVALID_ID;
+            }
+
+            input.pic                            = &pic;
+            input.sequence                       = make_av1_sequence(8);
+            input.bit_depth                      = 8;
+            input.rt_format                      = VA_RT_FORMAT_YUV420;
+            input.fourcc                         = VA_FOURCC_NV12;
+            input.frame_width                    = 64;
+            input.frame_height                   = 64;
+            input.header.valid                   = true;
+            input.header.frame_type              = STD_VIDEO_AV1_FRAME_TYPE_INTER;
+            input.header.primary_ref_frame       = STD_VIDEO_AV1_PRIMARY_REF_NONE;
+            input.header.tile_size_bytes_minus_1 = 3;
+        }
+    };
+
+    bool check_loop_filter_ref_deltas(const StdVideoAV1LoopFilter& loop_filter, const int8_t expected[STD_VIDEO_AV1_TOTAL_REFS_PER_FRAME], const char* label) {
+        for (uint32_t i = 0; i < STD_VIDEO_AV1_TOTAL_REFS_PER_FRAME; i++) {
+            if (loop_filter.loop_filter_ref_deltas[i] != expected[i]) {
+                std::fprintf(stderr, "%s ref_delta[%u] expected=%d actual=%d\n", label, i, expected[i], loop_filter.loop_filter_ref_deltas[i]);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool check_loop_filter_mode_deltas(const StdVideoAV1LoopFilter& loop_filter, const int8_t expected[STD_VIDEO_AV1_LOOP_FILTER_ADJUSTMENTS], const char* label) {
+        for (uint32_t i = 0; i < STD_VIDEO_AV1_LOOP_FILTER_ADJUSTMENTS; i++) {
+            if (loop_filter.loop_filter_mode_deltas[i] != expected[i]) {
+                std::fprintf(stderr, "%s mode_delta[%u] expected=%d actual=%d\n", label, i, expected[i], loop_filter.loop_filter_mode_deltas[i]);
+                return false;
+            }
+        }
+        return true;
     }
 
     bool configure_session_for_p010(void* runtime, void* session) {
@@ -227,6 +281,155 @@ namespace {
         return check(session.has_sequence_key && session.sequence_key.max_frame_width_minus_1 == 1919 && vkvv::av1_reference_slot_for_index(&session, 0) == nullptr &&
                          vkvv::av1_surface_slot_for_surface(&session, 101) == nullptr && session.max_dpb_slots == 0 && session.next_dpb_slot == 0,
                      "AV1 sequence change did not reset reference slots and DPB metadata");
+    }
+
+    bool check_av1_restoration_translation() {
+        AV1StdInputFixture      fixture{};
+        vkvv::AV1VideoSession   session{};
+        vkvv::AV1PictureStdData std_data{};
+        char                    reason[512] = {};
+
+        fixture.pic.loop_restoration_fields.bits.yframe_restoration_type  = STD_VIDEO_AV1_FRAME_RESTORATION_TYPE_WIENER;
+        fixture.pic.loop_restoration_fields.bits.cbframe_restoration_type = STD_VIDEO_AV1_FRAME_RESTORATION_TYPE_SGRPROJ;
+        fixture.pic.loop_restoration_fields.bits.crframe_restoration_type = STD_VIDEO_AV1_FRAME_RESTORATION_TYPE_NONE;
+        fixture.pic.loop_restoration_fields.bits.lr_unit_shift            = 0;
+        fixture.pic.loop_restoration_fields.bits.lr_uv_shift              = 1;
+
+        bool ok = check(vkvv::build_av1_picture_std_data(&session, &fixture.input, &std_data, reason, sizeof(reason)), "AV1 restoration std data build failed");
+        if (!ok) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        ok = check(std_data.restoration.LoopRestorationSize[0] == 1 && std_data.restoration.LoopRestorationSize[1] == 0 && std_data.restoration.LoopRestorationSize[2] == 0,
+                   "AV1 loop restoration sizes were not translated to Vulkan size codes") &&
+            ok;
+
+        fixture.pic.loop_restoration_fields.bits.cbframe_restoration_type = STD_VIDEO_AV1_FRAME_RESTORATION_TYPE_NONE;
+        fixture.pic.loop_restoration_fields.bits.lr_unit_shift            = 2;
+        std_data                                                          = {};
+        reason[0]                                                         = '\0';
+        ok = check(vkvv::build_av1_picture_std_data(&session, &fixture.input, &std_data, reason, sizeof(reason)), "AV1 256 restoration std data build failed") && ok;
+        ok = check(std_data.restoration.LoopRestorationSize[0] == 3, "AV1 256-pixel loop restoration size was not translated to code 3") && ok;
+
+        fixture.pic.loop_restoration_fields.bits.lr_unit_shift = 3;
+        std_data                                               = {};
+        reason[0]                                              = '\0';
+        ok = check(!vkvv::build_av1_picture_std_data(&session, &fixture.input, &std_data, reason, sizeof(reason)), "AV1 accepted an invalid loop restoration unit size") && ok;
+        return check(std::strstr(reason, "invalid AV1 loop restoration size") != nullptr, "AV1 invalid restoration size did not explain the rejection") && ok;
+    }
+
+    bool check_av1_loop_filter_delta_translation() {
+        AV1StdInputFixture      fixture{};
+        vkvv::AV1VideoSession   session{};
+        vkvv::AV1PictureStdData std_data{};
+        char                    reason[512] = {};
+
+        fixture.pic.primary_ref_frame = 0;
+        for (uint32_t i = 0; i < STD_VIDEO_AV1_TOTAL_REFS_PER_FRAME; i++) {
+            fixture.pic.ref_deltas[i] = 7;
+        }
+        fixture.pic.mode_deltas[0] = 7;
+        fixture.pic.mode_deltas[1] = 7;
+
+        bool ok = check(vkvv::build_av1_picture_std_data(&session, &fixture.input, &std_data, reason, sizeof(reason)), "AV1 loop-filter inherited std data build failed");
+        if (!ok) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        const int8_t default_ref_deltas[STD_VIDEO_AV1_TOTAL_REFS_PER_FRAME]     = {1, 0, 0, 0, -1, 0, -1, -1};
+        const int8_t default_mode_deltas[STD_VIDEO_AV1_LOOP_FILTER_ADJUSTMENTS] = {0, 0};
+        ok = check(std_data.loop_filter.update_ref_delta == 0 && std_data.loop_filter.update_mode_delta == 0, "AV1 inherited loop-filter deltas set update masks") && ok;
+        ok = check_loop_filter_ref_deltas(std_data.loop_filter, default_ref_deltas, "AV1 inherited loop-filter") && ok;
+        ok = check_loop_filter_mode_deltas(std_data.loop_filter, default_mode_deltas, "AV1 inherited loop-filter") && ok;
+
+        fixture.pic.loop_filter_info_fields.bits.mode_ref_delta_update          = 1;
+        const int8_t updated_ref_deltas[STD_VIDEO_AV1_TOTAL_REFS_PER_FRAME]     = {2, 3, 4, 5, 6, 7, 8, 9};
+        const int8_t updated_mode_deltas[STD_VIDEO_AV1_LOOP_FILTER_ADJUSTMENTS] = {-1, 1};
+        for (uint32_t i = 0; i < STD_VIDEO_AV1_TOTAL_REFS_PER_FRAME; i++) {
+            fixture.pic.ref_deltas[i] = updated_ref_deltas[i];
+        }
+        for (uint32_t i = 0; i < STD_VIDEO_AV1_LOOP_FILTER_ADJUSTMENTS; i++) {
+            fixture.pic.mode_deltas[i] = updated_mode_deltas[i];
+        }
+        std_data  = {};
+        reason[0] = '\0';
+        ok        = check(vkvv::build_av1_picture_std_data(&session, &fixture.input, &std_data, reason, sizeof(reason)), "AV1 loop-filter update std data build failed") && ok;
+        ok        = check(std_data.loop_filter.update_ref_delta == 0xff && std_data.loop_filter.update_mode_delta == 0x03, "AV1 loop-filter update masks were incomplete") && ok;
+        ok        = check_loop_filter_ref_deltas(std_data.loop_filter, updated_ref_deltas, "AV1 updated loop-filter") && ok;
+        ok        = check_loop_filter_mode_deltas(std_data.loop_filter, updated_mode_deltas, "AV1 updated loop-filter") && ok;
+
+        fixture.pic.loop_filter_info_fields.bits.mode_ref_delta_update = 0;
+        for (uint32_t i = 0; i < STD_VIDEO_AV1_TOTAL_REFS_PER_FRAME; i++) {
+            fixture.pic.ref_deltas[i] = 63;
+        }
+        fixture.pic.mode_deltas[0] = 63;
+        fixture.pic.mode_deltas[1] = 63;
+        std_data                   = {};
+        reason[0]                  = '\0';
+        ok = check(vkvv::build_av1_picture_std_data(&session, &fixture.input, &std_data, reason, sizeof(reason)), "AV1 loop-filter persisted std data build failed") && ok;
+        ok = check(std_data.loop_filter.update_ref_delta == 0 && std_data.loop_filter.update_mode_delta == 0, "AV1 persisted loop-filter deltas set update masks") && ok;
+        ok = check_loop_filter_ref_deltas(std_data.loop_filter, updated_ref_deltas, "AV1 persisted loop-filter") && ok;
+        ok = check_loop_filter_mode_deltas(std_data.loop_filter, updated_mode_deltas, "AV1 persisted loop-filter") && ok;
+
+        fixture.pic.primary_ref_frame = STD_VIDEO_AV1_PRIMARY_REF_NONE;
+        std_data                      = {};
+        reason[0]                     = '\0';
+        ok = check(vkvv::build_av1_picture_std_data(&session, &fixture.input, &std_data, reason, sizeof(reason)), "AV1 loop-filter reset std data build failed") && ok;
+        ok = check_loop_filter_ref_deltas(std_data.loop_filter, default_ref_deltas, "AV1 reset loop-filter") && ok;
+        return check_loop_filter_mode_deltas(std_data.loop_filter, default_mode_deltas, "AV1 reset loop-filter") && ok;
+    }
+
+    bool check_av1_reference_info_sign_bias() {
+        AV1StdInputFixture fixture{};
+        fixture.input.header.ref_frame_sign_bias[1] = 1;
+        fixture.input.header.ref_frame_sign_bias[7] = 1;
+
+        const StdVideoDecodeAV1ReferenceInfo info          = vkvv::build_av1_current_reference_info(&fixture.input);
+        const uint8_t                        expected_bias = (1U << 1U) | (1U << 7U);
+        bool                                 ok            = check(info.RefFrameSignBias == expected_bias, "AV1 current reference info did not preserve full sign-bias mask");
+
+        vkvv::AV1VideoSession                session{};
+        fixture.input.header.refresh_frame_flags = 1U << 2U;
+        vkvv::av1_update_reference_slots_from_refresh(&session, &fixture.input, 77, 4, info);
+        const vkvv::AV1ReferenceSlot* slot = vkvv::av1_reference_slot_for_index(&session, 2);
+        return check(slot != nullptr && slot->info.RefFrameSignBias == expected_bias, "AV1 refreshed reference slot did not store full sign-bias mask") && ok;
+    }
+
+    bool check_av1_switch_frame_translation() {
+        AV1StdInputFixture      fixture{};
+        vkvv::AV1VideoSession   session{};
+        vkvv::AV1PictureStdData std_data{};
+        char                    reason[512] = {};
+
+        fixture.pic.pic_info_fields.bits.frame_type           = STD_VIDEO_AV1_FRAME_TYPE_SWITCH;
+        fixture.pic.pic_info_fields.bits.error_resilient_mode = 1;
+        fixture.pic.primary_ref_frame                         = STD_VIDEO_AV1_PRIMARY_REF_NONE;
+        fixture.input.header.frame_type                       = STD_VIDEO_AV1_FRAME_TYPE_SWITCH;
+        fixture.input.header.error_resilient_mode             = true;
+        fixture.input.header.frame_size_override_flag         = true;
+        fixture.input.header.refresh_frame_flags              = 0xff;
+
+        bool ok = check(vkvv::validate_av1_switch_frame(&fixture.input, reason, sizeof(reason)), "valid AV1 switch frame was rejected");
+        if (!ok) {
+            std::fprintf(stderr, "%s\n", reason);
+            return false;
+        }
+        ok = check(vkvv::build_av1_picture_std_data(&session, &fixture.input, &std_data, reason, sizeof(reason)), "valid AV1 switch frame std data build failed") && ok;
+        ok = check(std_data.picture.frame_type == STD_VIDEO_AV1_FRAME_TYPE_INTER, "AV1 switch frame was not translated to effective inter frame type") && ok;
+
+        const StdVideoDecodeAV1ReferenceInfo info = vkvv::build_av1_current_reference_info(&fixture.input);
+        ok = check(info.frame_type == STD_VIDEO_AV1_FRAME_TYPE_INTER, "AV1 switch reference info was not translated to effective inter frame type") && ok;
+
+        fixture.input.header.refresh_frame_flags = 0xfe;
+        reason[0]                                = '\0';
+        ok = check(!vkvv::validate_av1_switch_frame(&fixture.input, reason, sizeof(reason)), "AV1 switch frame accepted incomplete refresh flags") && ok;
+        ok = check(std::strstr(reason, "refresh_frame_flags") != nullptr, "AV1 switch frame refresh rejection did not explain the failed constraint") && ok;
+
+        fixture.input.header.refresh_frame_flags  = 0xff;
+        fixture.input.header.error_resilient_mode = false;
+        reason[0]                                 = '\0';
+        ok = check(!vkvv::validate_av1_switch_frame(&fixture.input, reason, sizeof(reason)), "AV1 switch frame accepted missing error resilient mode") && ok;
+        return check(std::strstr(reason, "error_resilient_mode") != nullptr, "AV1 switch frame resilient-mode rejection did not explain the failed constraint") && ok;
     }
 
     bool check_av1_dpb_slots() {
@@ -654,6 +857,10 @@ namespace {
 int main(void) {
     bool ok = check_av1_sequence_parameters();
     ok      = check_av1_sequence_key_reset() && ok;
+    ok      = check_av1_restoration_translation() && ok;
+    ok      = check_av1_loop_filter_delta_translation() && ok;
+    ok      = check_av1_reference_info_sign_bias() && ok;
+    ok      = check_av1_switch_frame_translation() && ok;
     ok      = check_av1_dpb_slots() && ok;
     ok      = check_av1_refresh_retention() && ok;
     ok      = check_av1_surface_reconciliation() && ok;
