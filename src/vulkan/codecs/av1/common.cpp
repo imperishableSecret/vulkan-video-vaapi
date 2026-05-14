@@ -278,6 +278,35 @@ namespace vkvv {
         return reference_identity_matches(slot->metadata, surface, resource, drv, vctx, session, current_decode_key, reason, reason_size);
     }
 
+    const AV1ReferenceSlot* validate_av1_show_existing_reference(const AV1VideoSession* session, const VkvvAV1DecodeInput* input, const VkvvSurface* surface,
+                                                                 const SurfaceResource* resource, const VkvvDriver* drv, const VkvvContext* vctx,
+                                                                 const DecodeImageKey& current_decode_key, char* reason, size_t reason_size) {
+        if (session == nullptr || input == nullptr || !input->header.show_existing_frame) {
+            std::snprintf(reason, reason_size, "missing AV1 show-existing frame state");
+            return nullptr;
+        }
+        if (input->header.frame_to_show_map_idx < 0 || input->header.frame_to_show_map_idx >= static_cast<int8_t>(max_av1_reference_slots)) {
+            std::snprintf(reason, reason_size, "invalid AV1 show-existing reference index: map_idx=%d", input->header.frame_to_show_map_idx);
+            return nullptr;
+        }
+
+        const auto* slot = av1_reference_slot_for_index(session, static_cast<uint32_t>(input->header.frame_to_show_map_idx));
+        if (!validate_av1_reference_slot(session, slot, surface, resource, drv, vctx, current_decode_key, reason, reason_size)) {
+            return nullptr;
+        }
+        if (!slot->metadata.showable) {
+            std::snprintf(reason, reason_size, "AV1 show-existing reference is not showable: surface=%u map_idx=%d slot=%d", slot->surface_id, input->header.frame_to_show_map_idx,
+                          slot->slot);
+            return nullptr;
+        }
+        if (input->sequence.frame_id_numbers_present_flag && slot->metadata.frame_id != input->header.display_frame_id) {
+            std::snprintf(reason, reason_size, "AV1 show-existing display frame id mismatch: surface=%u map_idx=%d expected=%u actual=%u", slot->surface_id,
+                          input->header.frame_to_show_map_idx, slot->metadata.frame_id, input->header.display_frame_id);
+            return nullptr;
+        }
+        return slot;
+    }
+
     bool av1_decode_needs_export_refresh(const VkvvAV1DecodeInput* input) {
         if (input == nullptr || input->pic == nullptr) {
             return true;

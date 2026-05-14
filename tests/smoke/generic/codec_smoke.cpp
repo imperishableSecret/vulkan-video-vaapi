@@ -146,12 +146,21 @@ namespace {
 
     std::vector<uint8_t> make_av1_keyframe() {
         return {
-            0x12, 0x00, 0x0a, 0x0a, 0x00, 0x00, 0x00, 0x01, 0x9f, 0xf9, 0xb5, 0xf2, 0x00, 0x80, 0x32, 0x80, 0x01, 0x10, 0x00, 0xc0, 0x00, 0x10, 0x40, 0x00, 0x28,
-            0xba, 0xe8, 0xc9, 0x67, 0x40, 0xbb, 0x06, 0x62, 0x12, 0x4e, 0xf8, 0x58, 0x4b, 0xa5, 0xfc, 0xee, 0xc6, 0x54, 0x25, 0x89, 0x00, 0xbf, 0x94, 0x0b, 0x7d,
-            0xb1, 0xb7, 0x1a, 0x34, 0x30, 0x25, 0xac, 0xe5, 0x7b, 0xd8, 0x28, 0x5a, 0x8a, 0x10, 0x49, 0xdd, 0x3f, 0x74, 0x9b, 0x64, 0xf1, 0xeb, 0x11, 0x7f, 0x68,
-            0xa2, 0x7b, 0xff, 0x9f, 0x51, 0xc8, 0x62, 0x7d, 0x9f, 0xe3, 0x03, 0xed, 0x4a, 0x75, 0xcd, 0xe6, 0x5d, 0x15, 0xab, 0xab, 0x91, 0xba, 0x9a, 0x13, 0xf3,
-            0x7c, 0x88, 0xbf, 0xf1, 0x80, 0xb2, 0x31, 0x9e, 0x20, 0xbe, 0x85, 0xc5, 0xd7, 0xdc, 0x95, 0x4d, 0xaf, 0xbf, 0x3b, 0x9c, 0x53, 0xfb, 0x7b, 0xf7, 0x87,
-            0xbc, 0x7c, 0xc8, 0xee, 0x69, 0xd8, 0x40, 0x0e, 0x61, 0xe2, 0xa0, 0x11, 0xd7, 0xcf, 0x94, 0xa8, 0x33, 0x86, 0xf8, 0x8d,
+            0x12, 0x00, 0x0a, 0x0a, 0x00, 0x00, 0x00, 0x01, 0x9f, 0xf9, 0xb5, 0xf3, 0x00, 0x80, 0x32, 0x11, 0x10,
+            0x00, 0xd0, 0x00, 0x00, 0x02, 0x80, 0x00, 0x00, 0x02, 0x06, 0x39, 0x66, 0xe3, 0x82, 0x4a, 0xc0,
+        };
+    }
+
+    std::vector<uint8_t> make_av1_hidden_showable_frame() {
+        return {
+            0x12, 0x00, 0x32, 0x1d, 0x28, 0x10, 0xe0, 0x40, 0x00, 0x00, 0x03, 0x61, 0x80, 0x00, 0x01, 0x45, 0x80,
+            0x00, 0x40, 0x00, 0x7d, 0x9f, 0xe3, 0x72, 0xe4, 0xaa, 0x8d, 0xfe, 0xe2, 0x47, 0x79, 0x56, 0x38,
+        };
+    }
+
+    std::vector<uint8_t> make_av1_show_existing_frame() {
+        return {
+            0x12, 0x00, 0x1a, 0x01, 0x98,
         };
     }
 
@@ -393,6 +402,55 @@ namespace {
                          input.sequence.bit_depth, input.fourcc);
         }
         ok = check(parsed, "AV1 parser did not expose expected keyframe values") && ok;
+
+        std::vector<uint8_t> hidden_showable = make_av1_hidden_showable_frame();
+        tile.slice_data_offset               = 0;
+        tile.slice_data_size                 = static_cast<uint32_t>(hidden_showable.size());
+        data_buffer.size                     = static_cast<unsigned int>(hidden_showable.size());
+        data_buffer.data                     = hidden_showable.data();
+
+        av1->begin_picture(state);
+        ok        = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 hidden-showable picture buffer ingestion failed") && ok;
+        ok        = check(av1->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS, "AV1 hidden-showable slice data ingestion failed") && ok;
+        ok        = check(av1->render_buffer(state, &tile_buffer) == VA_STATUS_SUCCESS, "AV1 hidden-showable tile parameter ingestion failed") && ok;
+        width     = 0;
+        height    = 0;
+        reason[0] = '\0';
+        ok        = check(av1->prepare_decode(state, &width, &height, reason, sizeof(reason)) == VA_STATUS_SUCCESS, "AV1 hidden-showable prepare_decode failed") && ok;
+        if (!ok) {
+            std::fprintf(stderr, "%s\n", reason);
+        }
+        VkvvAV1DecodeInput hidden_input{};
+        ok = check(vkvv_av1_get_decode_input(state, &hidden_input) == VA_STATUS_SUCCESS, "AV1 hidden-showable input extraction failed") && ok;
+        ok = check(hidden_input.header.valid && !hidden_input.header.show_existing_frame && hidden_input.header.showable_frame && hidden_input.header.refresh_frame_flags == 0x02 &&
+                       hidden_input.tile_count == 1 && hidden_input.bitstream_size == hidden_showable.size(),
+                   "AV1 hidden showable frame did not update parser reference state") &&
+            ok;
+
+        std::vector<uint8_t> show_existing = make_av1_show_existing_frame();
+        data_buffer.size                   = static_cast<unsigned int>(show_existing.size());
+        data_buffer.data                   = show_existing.data();
+
+        av1->begin_picture(state);
+        ok        = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 show-existing picture buffer ingestion failed") && ok;
+        ok        = check(av1->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS, "AV1 show-existing frame header ingestion failed") && ok;
+        width     = 0;
+        height    = 0;
+        reason[0] = '\0';
+        ok        = check(av1->prepare_decode(state, &width, &height, reason, sizeof(reason)) == VA_STATUS_SUCCESS, "AV1 show-existing prepare_decode failed") && ok;
+        if (!ok) {
+            std::fprintf(stderr, "%s\n", reason);
+        }
+        VkvvAV1DecodeInput show_input{};
+        ok = check(vkvv_av1_get_decode_input(state, &show_input) == VA_STATUS_SUCCESS, "AV1 show-existing input extraction failed") && ok;
+        ok = check(width == 16 && height == 16 && show_input.header.show_existing_frame && show_input.header.frame_to_show_map_idx == 1 && show_input.tile_count == 0 &&
+                       show_input.tiles == nullptr && show_input.bitstream == nullptr && show_input.bitstream_size == 0 && show_input.sequence.valid,
+                   "AV1 show-existing frame was not exposed as presentation-only input") &&
+            ok;
+
+        tile.slice_data_size = static_cast<uint32_t>(bitstream.size());
+        data_buffer.size     = static_cast<unsigned int>(bitstream.size());
+        data_buffer.data     = bitstream.data();
 
         av1->begin_picture(state);
         ok        = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 second picture buffer ingestion failed") && ok;

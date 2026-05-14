@@ -666,6 +666,7 @@ namespace {
         metadata.va_rt_format       = resource.va_rt_format;
         metadata.va_fourcc          = resource.va_fourcc;
         metadata.bit_depth          = session.bit_depth;
+        metadata.frame_id           = 99;
         metadata.showable           = true;
 
         StdVideoDecodeAV1ReferenceInfo info{};
@@ -675,6 +676,35 @@ namespace {
         char                          reason[512] = {};
         bool                          ok =
             check(vkvv::validate_av1_reference_slot(&session, slot, &surface, &resource, &drv, &vctx, key, reason, sizeof(reason)), "valid AV1 reference identity was rejected");
+
+        VkvvAV1DecodeInput show_input{};
+        show_input.header.show_existing_frame             = true;
+        show_input.header.frame_to_show_map_idx           = 0;
+        show_input.header.display_frame_id                = metadata.frame_id;
+        show_input.sequence.frame_id_numbers_present_flag = true;
+        ok = check(vkvv::validate_av1_show_existing_reference(&session, &show_input, &surface, &resource, &drv, &vctx, key, reason, sizeof(reason)) == slot,
+                   "valid AV1 show-existing reference was rejected") &&
+            ok;
+
+        show_input.header.display_frame_id = metadata.frame_id + 1;
+        reason[0]                          = '\0';
+        ok = check(vkvv::validate_av1_show_existing_reference(&session, &show_input, &surface, &resource, &drv, &vctx, key, reason, sizeof(reason)) == nullptr &&
+                       std::strstr(reason, "display frame id mismatch") != nullptr,
+                   "AV1 show-existing validation accepted a wrong display frame id") &&
+            ok;
+        show_input.header.display_frame_id = metadata.frame_id;
+
+        metadata.showable = false;
+        vkvv::av1_set_reference_slot(&session, 0, surface.id, 1, info, &metadata);
+        slot      = vkvv::av1_reference_slot_for_index(&session, 0);
+        reason[0] = '\0';
+        ok        = check(vkvv::validate_av1_show_existing_reference(&session, &show_input, &surface, &resource, &drv, &vctx, key, reason, sizeof(reason)) == nullptr &&
+                              std::strstr(reason, "not showable") != nullptr,
+                          "AV1 show-existing validation accepted a non-showable reference") &&
+            ok;
+        metadata.showable = true;
+        vkvv::av1_set_reference_slot(&session, 0, surface.id, 1, info, &metadata);
+        slot = vkvv::av1_reference_slot_for_index(&session, 0);
 
         surface.stream_id = 24;
         reason[0]         = '\0';

@@ -110,7 +110,7 @@ namespace vkvv {
     }
 
     VkImageUsageFlags av1_surface_image_usage() {
-        return VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        return VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     }
 
     void destroy_av1_video_session(VulkanRuntime* runtime, AV1VideoSession* session) {
@@ -437,8 +437,8 @@ VAStatus vkvv_vulkan_ensure_av1_session(void* runtime_ptr, void* session_ptr, un
     }
 
     DecodeFormatSelection format_selection{};
-    if (!choose_decode_format(runtime, &profile_chain.profile, VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR,
-                              preferred_vk_format_for_rt_format(session->va_rt_format), runtime->surface_export, &format_selection, reason, reason_size)) {
+    if (!choose_decode_format(runtime, &profile_chain.profile, av1_surface_image_usage(), preferred_vk_format_for_rt_format(session->va_rt_format), runtime->surface_export,
+                              &format_selection, reason, reason_size)) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
 

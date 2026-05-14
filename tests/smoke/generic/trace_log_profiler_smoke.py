@@ -32,6 +32,7 @@ nvidia-vulkan-vaapi: trace seq=21 event=av1-decode-plan driver=2 ctx_stream=2 ta
 nvidia-vulkan-vaapi: trace seq=22 event=pending-submit slot=1 use=decode pending=1 operation=AV1 decode surface=8 driver=2 stream=2 codec=0x4 refresh_export=0 decoded=0 content_gen=0 shadow_mem=0x2 shadow_gen=0 predecode=0 upload_mem=2048
 nvidia-vulkan-vaapi: trace seq=23 event=pending-complete-after use=decode operation=AV1 decode surface=8 status=0 refresh_export=0 decoded=1 content_gen=1 shadow_mem=0x2 shadow_gen=0 predecode=0 exported=0
 nvidia-vulkan-vaapi: trace seq=24 event=av1-submit driver=2 ctx_stream=2 target=8 slot=1 refresh=0x01 refresh_export=0 hdr_existing=0 hdr_show=0 hdr_showable=1 depth=8 fourcc=0x3231564e refs=0 bytes=64 upload_mem=2048 session_mem=4096
+nvidia-vulkan-vaapi: trace seq=25 event=av1-show-existing driver=2 ctx_stream=2 target=9 source=8 map_idx=1 slot=1 display_frame_id=0 target_gen=1 source_gen=1 refresh_export=1
 [1:2:0512/000000.000000:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:3552] vaEndPicture failed, VA error: operation failed
 nvidia-vulkan-vaapi: device-lost call=vkWaitForFences operation=AV1 decode result=-4 decode_submitted=1 decode_completed=0
 """
@@ -84,7 +85,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 23, "trace record count mismatch")
+    check(data["trace_records"] == 24, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -103,6 +104,7 @@ def main() -> int:
     check(totals["nondisplay_shadow_seeds"] == 1, "nondisplay shadow seed aggregate mismatch")
     check(totals["export_copy_publish_skips"] == 1, "export copy publish skip aggregate mismatch")
     check(data["events"].get("av1-submit") == 1, "AV1 submit event count mismatch")
+    check(data["events"].get("av1-show-existing") == 1, "AV1 show-existing event count mismatch")
     check(data["browser_dropped_frames_observed"] is False, "browser dropped-frame observation mismatch")
     check(totals["device_lost"] == 1, "device-lost aggregate mismatch")
     check(totals["va_end_failed"] == 1, "VA end failure aggregate mismatch")
