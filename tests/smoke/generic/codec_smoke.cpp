@@ -151,6 +151,13 @@ namespace {
         };
     }
 
+    std::vector<uint8_t> make_av1_two_tile_group_keyframe() {
+        return {
+            0x12, 0x00, 0x0a, 0x0a, 0x00, 0x00, 0x00, 0x03, 0x2f, 0xff, 0xcd, 0xaf, 0x98, 0x04, 0x32, 0x14, 0x10, 0x00,
+            0xc6, 0x40, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x03, 0x0a, 0x05, 0x78, 0x86, 0x0a, 0x05, 0x78, 0x86,
+        };
+    }
+
     std::vector<uint8_t> make_av1_hidden_showable_frame() {
         return {
             0x12, 0x00, 0x32, 0x1d, 0x28, 0x10, 0xe0, 0x40, 0x00, 0x00, 0x03, 0x61, 0x80, 0x00, 0x01, 0x45, 0x80,
@@ -393,8 +400,8 @@ namespace {
         const bool parsed = input.header.valid && input.header.frame_type == STD_VIDEO_AV1_FRAME_TYPE_KEY && input.header.refresh_frame_flags == 0xff && input.sequence.valid &&
             input.sequence.seq_profile == 0 && input.sequence.bit_depth == expected_bit_depth && input.sequence.subsampling_x == 1 && input.sequence.subsampling_y == 1 &&
             static_cast<uint32_t>(input.sequence.max_frame_width_minus_1) + 1 >= input.frame_width &&
-            static_cast<uint32_t>(input.sequence.max_frame_height_minus_1) + 1 >= input.frame_height && input.tile_count == 1 && input.tiles[0].offset == 0 &&
-            input.tiles[0].size == bitstream.size() && input.bitstream_size == bitstream.size() && input.bit_depth == expected_bit_depth && input.fourcc == expected_fourcc;
+            static_cast<uint32_t>(input.sequence.max_frame_height_minus_1) + 1 >= input.frame_height && input.tile_count == 1 && input.decode_window_offset == 14 &&
+            input.tiles[0].offset == 11 && input.tiles[0].size == 8 && input.bitstream_size == 19 && input.bit_depth == expected_bit_depth && input.fourcc == expected_fourcc;
         if (!parsed) {
             std::fprintf(stderr, "%s parsed header mismatch: valid=%u seq=%u frame=%u refresh=0x%02x tiles=%zu off0=%u size0=%u bytes=%zu depth=%u seq_depth=%u fourcc=0x%x\n",
                          label, input.header.valid, input.sequence.valid, input.header.frame_type, input.header.refresh_frame_flags, input.tile_count,
@@ -423,7 +430,8 @@ namespace {
         VkvvAV1DecodeInput hidden_input{};
         ok = check(vkvv_av1_get_decode_input(state, &hidden_input) == VA_STATUS_SUCCESS, "AV1 hidden-showable input extraction failed") && ok;
         ok = check(hidden_input.header.valid && !hidden_input.header.show_existing_frame && hidden_input.header.showable_frame && hidden_input.header.refresh_frame_flags == 0x02 &&
-                       hidden_input.tile_count == 1 && hidden_input.bitstream_size == hidden_showable.size(),
+                       hidden_input.tile_count == 1 && hidden_input.decode_window_offset == 2 && hidden_input.tiles[0].offset == 18 && hidden_input.tiles[0].size == 13 &&
+                       hidden_input.bitstream_size == hidden_showable.size() - 2,
                    "AV1 hidden showable frame did not update parser reference state") &&
             ok;
 
@@ -466,7 +474,8 @@ namespace {
         VkvvAV1DecodeInput second_input{};
         ok = check(vkvv_av1_get_decode_input(state, &second_input) == VA_STATUS_SUCCESS, "AV1 second decode input extraction failed") && ok;
         ok = check(second_input.header.valid && second_input.sequence.valid && second_input.header.refresh_frame_flags == 0xff && second_input.tile_count == 1 &&
-                       second_input.bitstream_size == bitstream.size() && second_input.bit_depth == expected_bit_depth && second_input.fourcc == expected_fourcc,
+                       second_input.tiles[0].offset == 11 && second_input.tiles[0].size == 8 && second_input.bitstream_size == 19 && second_input.bit_depth == expected_bit_depth &&
+                       second_input.fourcc == expected_fourcc,
                    "AV1 parser failed to reuse state for a second picture") &&
             ok;
 
@@ -475,11 +484,11 @@ namespace {
         multi_frame.insert(multi_frame.end(), bitstream.begin(), bitstream.end());
         multi_frame.insert(multi_frame.end(), bitstream.begin(), bitstream.end());
         multi_frame.insert(multi_frame.end(), bitstream.begin(), bitstream.end());
-        const uint32_t target_tile_offset = static_cast<uint32_t>(bitstream.size() + (bitstream.size() / 2));
-        tile.slice_data_offset            = target_tile_offset;
-        tile.slice_data_size              = 16;
-        data_buffer.size                  = static_cast<unsigned int>(multi_frame.size());
-        data_buffer.data                  = multi_frame.data();
+        const uint32_t target_frame_offset = static_cast<uint32_t>(bitstream.size() + 14);
+        tile.slice_data_offset             = target_frame_offset;
+        tile.slice_data_size               = static_cast<uint32_t>(bitstream.size() - 14);
+        data_buffer.size                   = static_cast<unsigned int>(multi_frame.size());
+        data_buffer.data                   = multi_frame.data();
 
         av1->begin_picture(state);
         ok        = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 multi-frame picture buffer ingestion failed") && ok;
@@ -493,14 +502,42 @@ namespace {
             std::fprintf(stderr, "%s\n", reason);
         }
         VkvvAV1DecodeInput multi_input{};
-        ok                                  = check(vkvv_av1_get_decode_input(state, &multi_input) == VA_STATUS_SUCCESS, "AV1 multi-frame decode input extraction failed") && ok;
-        const bool     valid_window_offset  = multi_input.decode_window_offset > 0 && multi_input.decode_window_offset < target_tile_offset;
-        const uint32_t expected_tile_offset = valid_window_offset ? target_tile_offset - multi_input.decode_window_offset : 0;
-        const size_t   expected_window_size = static_cast<size_t>(expected_tile_offset) + tile.slice_data_size;
-        ok = check(multi_input.header.frame_header_offset == 0 && valid_window_offset && multi_input.tiles[0].offset == expected_tile_offset &&
-                       multi_input.tiles[0].size == tile.slice_data_size && multi_input.bitstream_size == expected_window_size && multi_input.bitstream_size < multi_frame.size() &&
-                       multi_input.sequence.valid && multi_input.bit_depth == expected_bit_depth && multi_input.fourcc == expected_fourcc,
+        ok = check(vkvv_av1_get_decode_input(state, &multi_input) == VA_STATUS_SUCCESS, "AV1 multi-frame decode input extraction failed") && ok;
+        ok = check(multi_input.header.frame_header_offset == 0 && multi_input.decode_window_offset == target_frame_offset && multi_input.tiles[0].offset == 11 &&
+                       multi_input.tiles[0].size == 8 && multi_input.bitstream_size == 19 && multi_input.bitstream_size < multi_frame.size() && multi_input.sequence.valid &&
+                       multi_input.bit_depth == expected_bit_depth && multi_input.fourcc == expected_fourcc,
                    "AV1 parser did not normalize the selected frame window for a packed buffer") &&
+            ok;
+
+        std::vector<uint8_t> two_tile_group = make_av1_two_tile_group_keyframe();
+        pic.frame_width_minus1              = 127;
+        pic.frame_height_minus1             = 63;
+        pic.tile_cols                       = 2;
+        pic.tile_rows                       = 1;
+        tile.slice_data_offset              = 0;
+        tile.slice_data_size                = static_cast<uint32_t>(two_tile_group.size());
+        tile.tile_row                       = 0;
+        tile.tile_column                    = 0;
+        data_buffer.size                    = static_cast<unsigned int>(two_tile_group.size());
+        data_buffer.data                    = two_tile_group.data();
+
+        av1->begin_picture(state);
+        ok        = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 tile-group picture buffer ingestion failed") && ok;
+        ok        = check(av1->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS, "AV1 tile-group slice data ingestion failed") && ok;
+        ok        = check(av1->render_buffer(state, &tile_buffer) == VA_STATUS_SUCCESS, "AV1 tile-group parameter ingestion failed") && ok;
+        width     = 0;
+        height    = 0;
+        reason[0] = '\0';
+        ok        = check(av1->prepare_decode(state, &width, &height, reason, sizeof(reason)) == VA_STATUS_SUCCESS, "AV1 tile-group prepare_decode failed") && ok;
+        if (!ok) {
+            std::fprintf(stderr, "%s\n", reason);
+        }
+        VkvvAV1DecodeInput two_tile_input{};
+        ok = check(vkvv_av1_get_decode_input(state, &two_tile_input) == VA_STATUS_SUCCESS, "AV1 tile-group decode input extraction failed") && ok;
+        ok = check(width == 128 && height == 64 && two_tile_input.header.valid && two_tile_input.decode_window_offset == 14 && two_tile_input.header.frame_header_offset == 0 &&
+                       two_tile_input.tile_count == 2 && two_tile_input.tiles[0].tile_index == 0 && two_tile_input.tiles[0].offset == 14 && two_tile_input.tiles[0].size == 4 &&
+                       two_tile_input.tiles[1].tile_index == 1 && two_tile_input.tiles[1].offset == 18 && two_tile_input.tiles[1].size == 4 && two_tile_input.bitstream_size == 22,
+                   "AV1 tile-group parser did not expand the submitted group into per-tile decode ranges") &&
             ok;
 
         av1->state_destroy(state);
@@ -577,6 +614,55 @@ namespace {
         const VAStatus status      = av1->prepare_decode(state, &width, &height, reason, sizeof(reason));
         ok                         = check(status == VA_STATUS_ERROR_INVALID_BUFFER && std::strstr(reason, "sequence header does not match") != nullptr,
                                            "AV1 parser accepted a 10-bit VA picture for an 8-bit sequence header") &&
+            ok;
+
+        av1->state_destroy(state);
+        return ok;
+    }
+
+    bool check_av1_large_scale_tile_rejected(const VkvvDecodeOps* av1) {
+        void* state = av1 != nullptr ? av1->state_create() : nullptr;
+        if (!check(state != nullptr, "AV1 codec state allocation failed for large-scale-tile smoke")) {
+            return false;
+        }
+
+        av1->begin_picture(state);
+
+        std::vector<uint8_t>           bitstream = make_av1_keyframe();
+
+        VADecPictureParameterBufferAV1 pic{};
+        pic.profile                                        = 0;
+        pic.bit_depth_idx                                  = 0;
+        pic.frame_width_minus1                             = 15;
+        pic.frame_height_minus1                            = 15;
+        pic.seq_info_fields.fields.subsampling_x           = 1;
+        pic.seq_info_fields.fields.subsampling_y           = 1;
+        pic.pic_info_fields.bits.large_scale_tile          = 1;
+        pic.pic_info_fields.bits.uniform_tile_spacing_flag = 1;
+        pic.tile_cols                                      = 1;
+        pic.tile_rows                                      = 1;
+
+        VkvvBuffer pic_buffer{};
+        pic_buffer.type         = VAPictureParameterBufferType;
+        pic_buffer.size         = sizeof(pic);
+        pic_buffer.num_elements = 1;
+        pic_buffer.data         = &pic;
+
+        VkvvBuffer data_buffer{};
+        data_buffer.type         = VASliceDataBufferType;
+        data_buffer.size         = static_cast<unsigned int>(bitstream.size());
+        data_buffer.num_elements = 1;
+        data_buffer.data         = bitstream.data();
+
+        bool ok = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 large-scale-tile picture buffer ingestion failed");
+        ok      = check(av1->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS, "AV1 large-scale-tile slice data ingestion failed") && ok;
+
+        unsigned int   width       = 0;
+        unsigned int   height      = 0;
+        char           reason[512] = {};
+        const VAStatus status      = av1->prepare_decode(state, &width, &height, reason, sizeof(reason));
+        ok                         = check(status == VA_STATUS_ERROR_UNIMPLEMENTED && std::strstr(reason, "large-scale tile mode") != nullptr,
+                                           "AV1 large-scale tile mode did not fail with the stable unimplemented reason") &&
             ok;
 
         av1->state_destroy(state);
@@ -784,6 +870,7 @@ int main(void) {
         ok = check(std::strcmp(av1->name, "av1") == 0, "AV1 decode ops used the wrong name") && ok;
         ok = check_av1_parser(av1, 0, 8, VA_FOURCC_NV12, "AV1 NV12") && ok;
         ok = check_av1_bit_depth_mismatch_rejected(av1) && ok;
+        ok = check_av1_large_scale_tile_rejected(av1) && ok;
     }
     ok =
         check(vkvv_encode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointEncSlice) == nullptr, "H.264 EncSlice should not have encode ops before encode is wired") && ok;
