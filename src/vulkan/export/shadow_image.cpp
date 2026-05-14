@@ -23,29 +23,30 @@ namespace vkvv {
             return;
         }
         VKVV_TRACE("export-present-state",
-                   "action=%s surface=%u codec=0x%x stream=%llu fd_dev=%llu fd_ino=%llu content_gen=%llu shadow_gen=%llu present_gen=%llu presentable=%u "
-                   "present_pinned=%u published_visible=%u predecode=%u seeded=%u placeholder=%u refresh_export=%u display_visible=%u present_source=%s client_visible_shadow=%u",
+                   "action=%s surface=%u codec=0x%x stream=%llu fd_dev=%llu fd_ino=%llu content_gen=%llu present_shadow_gen=%llu private_shadow_gen=%llu "
+                   "decode_shadow_gen=%llu present_gen=%llu presentable=%u present_pinned=%u published_visible=%u decode_shadow_private_active=%u predecode=%u seeded=%u "
+                   "placeholder=%u refresh_export=%u display_visible=%u present_source=%s client_visible_shadow=%u private_only=%u",
                    action != nullptr ? action : "unknown", owner->surface_id, owner->codec_operation, static_cast<unsigned long long>(owner->stream_id),
-                   static_cast<unsigned long long>(resource->fd_dev), static_cast<unsigned long long>(resource->fd_ino),
-                   static_cast<unsigned long long>(owner->content_generation), static_cast<unsigned long long>(resource->content_generation),
-                   static_cast<unsigned long long>(resource->present_generation), resource->presentable ? 1U : 0U, resource->present_pinned ? 1U : 0U,
-                   resource->published_visible ? 1U : 0U, resource->predecode_exported ? 1U : 0U, resource->predecode_seeded ? 1U : 0U,
-                   resource->black_placeholder ? 1U : 0U, refresh_export ? 1U : 0U, display_visible ? 1U : 0U,
-                   vkvv_export_present_source_name(resource->present_source), resource->client_visible_shadow ? 1U : 0U);
+                   static_cast<unsigned long long>(resource->fd_dev), static_cast<unsigned long long>(resource->fd_ino), static_cast<unsigned long long>(owner->content_generation),
+                   static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(owner->private_decode_shadow.content_generation),
+                   static_cast<unsigned long long>(resource->decode_shadow_generation), static_cast<unsigned long long>(resource->present_generation),
+                   resource->presentable ? 1U : 0U, resource->present_pinned ? 1U : 0U, resource->published_visible ? 1U : 0U, resource->decode_shadow_private_active ? 1U : 0U,
+                   resource->predecode_exported ? 1U : 0U, resource->predecode_seeded ? 1U : 0U, resource->black_placeholder ? 1U : 0U, refresh_export ? 1U : 0U,
+                   display_visible ? 1U : 0U, vkvv_export_present_source_name(resource->present_source), resource->client_visible_shadow ? 1U : 0U,
+                   resource->private_nondisplay_shadow ? 1U : 0U);
         if (resource->content_generation == 0 && resource->presentable) {
             VKVV_TRACE("invalid-presentable-undecoded-surface",
-                       "surface=%u codec=0x%x stream=%llu content_gen=%llu shadow_gen=%llu present_gen=%llu presentable=1 present_pinned=%u action=%s",
-                       owner->surface_id, owner->codec_operation, static_cast<unsigned long long>(owner->stream_id),
-                       static_cast<unsigned long long>(owner->content_generation), static_cast<unsigned long long>(resource->content_generation),
-                       static_cast<unsigned long long>(resource->present_generation), resource->present_pinned ? 1U : 0U, action != nullptr ? action : "unknown");
+                       "surface=%u codec=0x%x stream=%llu content_gen=%llu shadow_gen=%llu present_gen=%llu presentable=1 present_pinned=%u action=%s", owner->surface_id,
+                       owner->codec_operation, static_cast<unsigned long long>(owner->stream_id), static_cast<unsigned long long>(owner->content_generation),
+                       static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->present_generation),
+                       resource->present_pinned ? 1U : 0U, action != nullptr ? action : "unknown");
         }
         if (resource->present_generation > owner->content_generation) {
             VKVV_TRACE("invalid-present-generation",
-                       "surface=%u codec=0x%x stream=%llu content_gen=%llu shadow_gen=%llu present_gen=%llu presentable=%u present_pinned=%u action=%s",
-                       owner->surface_id, owner->codec_operation, static_cast<unsigned long long>(owner->stream_id),
-                       static_cast<unsigned long long>(owner->content_generation), static_cast<unsigned long long>(resource->content_generation),
-                       static_cast<unsigned long long>(resource->present_generation), resource->presentable ? 1U : 0U, resource->present_pinned ? 1U : 0U,
-                       action != nullptr ? action : "unknown");
+                       "surface=%u codec=0x%x stream=%llu content_gen=%llu shadow_gen=%llu present_gen=%llu presentable=%u present_pinned=%u action=%s", owner->surface_id,
+                       owner->codec_operation, static_cast<unsigned long long>(owner->stream_id), static_cast<unsigned long long>(owner->content_generation),
+                       static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->present_generation),
+                       resource->presentable ? 1U : 0U, resource->present_pinned ? 1U : 0U, action != nullptr ? action : "unknown");
         }
     }
 
@@ -287,8 +288,8 @@ namespace vkvv {
 
     } // namespace
 
-    bool create_export_resource_with_tiling(VulkanRuntime* runtime, ExportResource* resource, const ExportFormatInfo* format, VkExtent2D extent, VkImageTiling tiling, char* reason,
-                                            size_t reason_size) {
+    bool create_image_resource_with_tiling(VulkanRuntime* runtime, ExportResource* resource, const ExportFormatInfo* format, VkExtent2D extent, VkImageTiling tiling,
+                                           VkImageUsageFlags usage, bool export_memory, const char* trace_role, char* reason, size_t reason_size) {
         if (format == nullptr) {
             std::snprintf(reason, reason_size, "missing surface export format");
             return false;
@@ -313,7 +314,7 @@ namespace vkvv {
 
         VkImageCreateInfo image_info{};
         image_info.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        image_info.pNext         = &external_image;
+        image_info.pNext         = export_memory ? &external_image : nullptr;
         image_info.imageType     = VK_IMAGE_TYPE_2D;
         image_info.format        = format->vk_format;
         image_info.extent        = {extent.width, extent.height, 1};
@@ -321,12 +322,12 @@ namespace vkvv {
         image_info.arrayLayers   = 1;
         image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
         image_info.tiling        = tiling;
-        image_info.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        image_info.usage         = usage;
         image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
         image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
         VkResult result = vkCreateImage(runtime->device, &image_info, nullptr, &resource->image);
-        if (!record_vk_result(runtime, result, "vkCreateImage", "export shadow image", reason, reason_size)) {
+        if (!record_vk_result(runtime, result, "vkCreateImage", trace_role, reason, reason_size)) {
             return false;
         }
 
@@ -352,26 +353,28 @@ namespace vkvv {
 
         VkMemoryAllocateInfo allocate_info{};
         allocate_info.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocate_info.pNext           = &export_allocate;
+        allocate_info.pNext           = export_memory ? static_cast<const void*>(&export_allocate) : static_cast<const void*>(&dedicated_allocate);
         allocate_info.allocationSize  = requirements.size;
         allocate_info.memoryTypeIndex = memory_type_index;
 
         result = vkAllocateMemory(runtime->device, &allocate_info, nullptr, &resource->memory);
-        if (!record_vk_result(runtime, result, "vkAllocateMemory", "export shadow image", reason, reason_size)) {
+        if (!record_vk_result(runtime, result, "vkAllocateMemory", trace_role, reason, reason_size)) {
             destroy_export_resource(runtime, resource);
             return false;
         }
 
         result = vkBindImageMemory(runtime->device, resource->image, resource->memory, 0);
-        if (!record_vk_result(runtime, result, "vkBindImageMemory", "export shadow image", reason, reason_size)) {
+        if (!record_vk_result(runtime, result, "vkBindImageMemory", trace_role, reason, reason_size)) {
             destroy_export_resource(runtime, resource);
             return false;
         }
 
-        for (uint32_t i = 0; i < format->layer_count; i++) {
-            VkImageSubresource plane{};
-            plane.aspectMask = format->layers[i].aspect;
-            vkGetImageSubresourceLayout(runtime->device, resource->image, &plane, &resource->plane_layouts[i]);
+        if (tiling != VK_IMAGE_TILING_OPTIMAL) {
+            for (uint32_t i = 0; i < format->layer_count; i++) {
+                VkImageSubresource plane{};
+                plane.aspectMask = format->layers[i].aspect;
+                vkGetImageSubresourceLayout(runtime->device, resource->image, &plane, &resource->plane_layouts[i]);
+            }
         }
 
         resource->extent             = extent;
@@ -380,13 +383,14 @@ namespace vkvv {
         resource->allocation_size    = requirements.size;
         resource->plane_count        = format->layer_count;
         resource->content_generation = 0;
-        VKVV_TRACE("export-image-create", "format=%d fourcc=0x%x extent=%ux%u export_mem=%llu planes=%u", resource->format, resource->va_fourcc, resource->extent.width,
-                   resource->extent.height, static_cast<unsigned long long>(resource->allocation_size), resource->plane_count);
+        VKVV_TRACE("export-image-create", "role=%s format=%d fourcc=0x%x extent=%ux%u exportable_memory=%u export_mem=%llu planes=%u", trace_role, resource->format,
+                   resource->va_fourcc, resource->extent.width, resource->extent.height, export_memory ? 1U : 0U, static_cast<unsigned long long>(resource->allocation_size),
+                   resource->plane_count);
         if (tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
             VkImageDrmFormatModifierPropertiesEXT modifier_properties{};
             modifier_properties.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT;
             result                    = runtime->get_image_drm_format_modifier_properties(runtime->device, resource->image, &modifier_properties);
-            if (!record_vk_result(runtime, result, "vkGetImageDrmFormatModifierPropertiesEXT", "export shadow image", reason, reason_size)) {
+            if (!record_vk_result(runtime, result, "vkGetImageDrmFormatModifierPropertiesEXT", trace_role, reason, reason_size)) {
                 destroy_export_resource(runtime, resource);
                 return false;
             }
@@ -397,6 +401,11 @@ namespace vkvv {
             resource->has_drm_format_modifier = true;
         }
         return true;
+    }
+
+    bool create_export_resource_with_tiling(VulkanRuntime* runtime, ExportResource* resource, const ExportFormatInfo* format, VkExtent2D extent, VkImageTiling tiling, char* reason,
+                                            size_t reason_size) {
+        return create_image_resource_with_tiling(runtime, resource, format, extent, tiling, VK_IMAGE_USAGE_TRANSFER_DST_BIT, true, "export shadow image", reason, reason_size);
     }
 
     bool ensure_export_resource(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size) {
@@ -481,6 +490,68 @@ namespace vkvv {
             destroy_export_resource(runtime, resource);
             return false;
         }
+        return true;
+    }
+
+    bool private_decode_shadow_matches_surface(const ExportResource& shadow, const SurfaceResource* source) {
+        return source != nullptr && shadow.image != VK_NULL_HANDLE && shadow.memory != VK_NULL_HANDLE && shadow.driver_instance_id == source->driver_instance_id &&
+            shadow.stream_id == source->stream_id && shadow.codec_operation == source->codec_operation && shadow.format == source->format &&
+            shadow.va_fourcc == source->va_fourcc && shadow.extent.width >= source->coded_extent.width && shadow.extent.height >= source->coded_extent.height && !shadow.exported &&
+            shadow.private_nondisplay_shadow && !shadow.client_visible_shadow;
+    }
+
+    bool ensure_private_decode_shadow(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size) {
+        if (!ensure_runtime_usable(runtime, reason, reason_size, "private decode shadow")) {
+            return false;
+        }
+        if (source == nullptr || source->image == VK_NULL_HANDLE || source->content_generation == 0) {
+            std::snprintf(reason, reason_size, "missing decoded source for private decode shadow");
+            return false;
+        }
+        const ExportFormatInfo* format = export_format_for_surface(nullptr, source, reason, reason_size);
+        if (format == nullptr) {
+            return false;
+        }
+
+        ExportResource* shadow = &source->private_decode_shadow;
+        if (private_decode_shadow_matches_surface(*shadow, source)) {
+            shadow->driver_instance_id = source->driver_instance_id;
+            shadow->stream_id          = source->stream_id;
+            shadow->codec_operation    = source->codec_operation;
+            shadow->owner_surface_id   = source->surface_id;
+            return true;
+        }
+
+        if (shadow->image != VK_NULL_HANDLE || shadow->memory != VK_NULL_HANDLE) {
+            destroy_export_resource(runtime, shadow);
+        }
+
+        constexpr VkImageUsageFlags private_shadow_usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        if (!create_image_resource_with_tiling(runtime, shadow, format, source->coded_extent, VK_IMAGE_TILING_OPTIMAL, private_shadow_usage, false, "private decode shadow image",
+                                               reason, reason_size)) {
+            destroy_export_resource(runtime, shadow);
+            if (!create_image_resource_with_tiling(runtime, shadow, format, source->coded_extent, VK_IMAGE_TILING_LINEAR, private_shadow_usage, false,
+                                                   "private decode shadow image", reason, reason_size)) {
+                return false;
+            }
+        }
+
+        shadow->driver_instance_id                           = source->driver_instance_id;
+        shadow->stream_id                                    = source->stream_id;
+        shadow->codec_operation                              = source->codec_operation;
+        shadow->owner_surface_id                             = source->surface_id;
+        shadow->exported                                     = false;
+        shadow->client_visible_shadow                        = false;
+        shadow->private_nondisplay_shadow                    = true;
+        shadow->present_source                               = VkvvExportPresentSource::PrivateNondisplay;
+        shadow->decode_shadow_generation                     = 0;
+        shadow->decode_shadow_private_active                 = false;
+        source->export_resource.decode_shadow_private_active = false;
+        VKVV_TRACE("private-decode-shadow-create",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x format=%d fourcc=0x%x extent=%ux%u memory_size=%llu private_only=1 exported=0 image=0x%llx memory=0x%llx",
+                   source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
+                   shadow->format, shadow->va_fourcc, shadow->extent.width, shadow->extent.height, static_cast<unsigned long long>(shadow->allocation_size),
+                   vkvv_trace_handle(shadow->image), vkvv_trace_handle(shadow->memory));
         return true;
     }
 
@@ -703,8 +774,7 @@ namespace vkvv {
             .surface_id         = resource->surface_id,
             .content_generation = resource->export_seed_generation,
         });
-        VKVV_TRACE("export-seed-register",
-                   "codec=0x%x stream=%llu source_surface=%u source_content_gen=%llu source_shadow_gen=%llu visible=1 refresh_export=1 published=%u",
+        VKVV_TRACE("export-seed-register", "codec=0x%x stream=%llu source_surface=%u source_content_gen=%llu source_shadow_gen=%llu visible=1 refresh_export=1 published=%u",
                    resource->codec_operation, static_cast<unsigned long long>(resource->stream_id), resource->surface_id,
                    static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->export_resource.content_generation),
                    surface_resource_has_published_visible_output(resource) ? 1U : 0U);
@@ -1019,11 +1089,10 @@ namespace vkvv {
             VKVV_TRACE("export-copy-proof",
                        "codec=0x%x surface=%u source_surface=%u target_surface=%u source_content_gen=%llu target_content_gen_before=%llu target_content_gen_after=%llu "
                        "source_shadow_gen=%llu target_shadow_gen_before=%llu target_shadow_gen_after=%llu copy_reason=%s refresh_export=%u",
-                       source->codec_operation, source->surface_id, source->surface_id, owner_export->owner_surface_id,
-                       static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(owner_snapshot.content_generation),
-                       static_cast<unsigned long long>(owner_export->content_generation), static_cast<unsigned long long>(source_shadow_generation),
+                       source->codec_operation, source->surface_id, source->surface_id, owner_export->owner_surface_id, static_cast<unsigned long long>(source->content_generation),
                        static_cast<unsigned long long>(owner_snapshot.content_generation), static_cast<unsigned long long>(owner_export->content_generation),
-                       vkvv_export_copy_reason_name(owner_copy_reason), owner_refresh_export ? 1U : 0U);
+                       static_cast<unsigned long long>(source_shadow_generation), static_cast<unsigned long long>(owner_snapshot.content_generation),
+                       static_cast<unsigned long long>(owner_export->content_generation), vkvv_export_copy_reason_name(owner_copy_reason), owner_refresh_export ? 1U : 0U);
         }
         for (size_t i = 0; i < predecode_seed_targets.size(); i++) {
             ExportResource*                 target   = predecode_seed_targets[i];
@@ -1061,11 +1130,10 @@ namespace vkvv {
             VKVV_TRACE("export-copy-proof",
                        "codec=0x%x surface=%u source_surface=%u target_surface=%u source_content_gen=%llu target_content_gen_before=%llu target_content_gen_after=%llu "
                        "source_shadow_gen=%llu target_shadow_gen_before=%llu target_shadow_gen_after=%llu copy_reason=%s refresh_export=1",
-                       source->codec_operation, source->surface_id, source->surface_id, target->owner_surface_id,
-                       static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(snapshot.content_generation),
-                       static_cast<unsigned long long>(target->content_generation), static_cast<unsigned long long>(source_shadow_generation),
+                       source->codec_operation, source->surface_id, source->surface_id, target->owner_surface_id, static_cast<unsigned long long>(source->content_generation),
                        static_cast<unsigned long long>(snapshot.content_generation), static_cast<unsigned long long>(target->content_generation),
-                       vkvv_export_copy_reason_name(VkvvExportCopyReason::PredecodePlaceholderSeed));
+                       static_cast<unsigned long long>(source_shadow_generation), static_cast<unsigned long long>(snapshot.content_generation),
+                       static_cast<unsigned long long>(target->content_generation), vkvv_export_copy_reason_name(VkvvExportCopyReason::PredecodePlaceholderSeed));
             trace_export_present_state(source, target, "predecode-seed-nonpresentable", true, false);
             if (!target->predecode_exported) {
                 VKVV_TRACE("export-transition-published",
@@ -1235,17 +1303,16 @@ namespace vkvv {
                        "surface=%u driver=%llu stream=%llu codec=0x%x source_surface=%u target_gen=%llu shadow_gen=%llu target_decoded=%u predecode=%u seeded=%u "
                        "seed_surface=%u seed_gen=%llu source_driver=%llu source_stream=%llu source_codec=0x%x source_format=%d source_fourcc=0x%x source_extent=%ux%u",
                        target->surface_id, static_cast<unsigned long long>(target->driver_instance_id), static_cast<unsigned long long>(target->stream_id), target->codec_operation,
-                       source->surface_id, static_cast<unsigned long long>(target->content_generation),
-                       static_cast<unsigned long long>(target->export_resource.content_generation), target->content_generation != 0 ? 1U : 0U,
-                       target->export_resource.predecode_exported ? 1U : 0U, target->export_resource.predecode_seeded ? 1U : 0U,
+                       source->surface_id, static_cast<unsigned long long>(target->content_generation), static_cast<unsigned long long>(target->export_resource.content_generation),
+                       target->content_generation != 0 ? 1U : 0U, target->export_resource.predecode_exported ? 1U : 0U, target->export_resource.predecode_seeded ? 1U : 0U,
                        target->export_resource.seed_source_surface_id, static_cast<unsigned long long>(target->export_resource.seed_source_generation),
                        static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation, source->format,
                        source->va_fourcc, source->coded_extent.width, source->coded_extent.height);
             return true;
         }
         VKVV_TRACE("predecode-seed-policy",
-                   "surface=%u source_surface=%u action=seed-old-visible presentable=0 present_pinned=0 thumbnail_like=%u content_gen=%llu target_mem=0x%llx",
-                   target->surface_id, source->surface_id, predecode_seed_target_thumbnail_like(&target->export_resource) ? 1U : 0U,
+                   "surface=%u source_surface=%u action=seed-old-visible presentable=0 present_pinned=0 thumbnail_like=%u content_gen=%llu target_mem=0x%llx", target->surface_id,
+                   source->surface_id, predecode_seed_target_thumbnail_like(&target->export_resource) ? 1U : 0U,
                    static_cast<unsigned long long>(target->export_resource.content_generation), vkvv_trace_handle(target->export_resource.memory));
         VKVV_TRACE("export-seed-hit",
                    "surface=%u driver=%llu stream=%llu codec=0x%x source_surface=%u source_gen=%llu source_seed_gen=%llu source_shadow_gen=%llu target_mem=0x%llx target_gen=%llu",

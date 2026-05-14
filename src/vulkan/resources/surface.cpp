@@ -84,31 +84,33 @@ namespace vkvv {
             vkFreeMemory(runtime->device, resource->memory, nullptr);
             resource->memory = VK_NULL_HANDLE;
         }
-        resource->driver_instance_id      = 0;
-        resource->stream_id               = 0;
-        resource->codec_operation         = 0;
-        resource->owner_surface_id        = VA_INVALID_ID;
-        resource->extent                  = {};
-        resource->format                  = VK_FORMAT_UNDEFINED;
-        resource->va_fourcc               = 0;
-        resource->allocation_size         = 0;
-        resource->plane_layouts[0]        = {};
-        resource->plane_layouts[1]        = {};
-        resource->plane_count             = 0;
-        resource->drm_format_modifier     = 0;
-        resource->has_drm_format_modifier = false;
-        resource->exported                = false;
-        resource->predecode_exported      = false;
-        resource->predecode_seeded        = false;
-        resource->black_placeholder       = false;
-        resource->seed_source_surface_id  = VA_INVALID_ID;
-        resource->seed_source_generation  = 0;
-        resource->content_generation      = 0;
-        resource->fd_stat_valid           = false;
-        resource->fd_dev                  = 0;
-        resource->fd_ino                  = 0;
+        resource->driver_instance_id           = 0;
+        resource->stream_id                    = 0;
+        resource->codec_operation              = 0;
+        resource->owner_surface_id             = VA_INVALID_ID;
+        resource->extent                       = {};
+        resource->format                       = VK_FORMAT_UNDEFINED;
+        resource->va_fourcc                    = 0;
+        resource->allocation_size              = 0;
+        resource->plane_layouts[0]             = {};
+        resource->plane_layouts[1]             = {};
+        resource->plane_count                  = 0;
+        resource->drm_format_modifier          = 0;
+        resource->has_drm_format_modifier      = false;
+        resource->exported                     = false;
+        resource->predecode_exported           = false;
+        resource->predecode_seeded             = false;
+        resource->black_placeholder            = false;
+        resource->seed_source_surface_id       = VA_INVALID_ID;
+        resource->seed_source_generation       = 0;
+        resource->content_generation           = 0;
+        resource->decode_shadow_generation     = 0;
+        resource->decode_shadow_private_active = false;
+        resource->fd_stat_valid                = false;
+        resource->fd_dev                       = 0;
+        resource->fd_ino                       = 0;
         clear_export_present_state(resource);
-        resource->layout                  = VK_IMAGE_LAYOUT_UNDEFINED;
+        resource->layout = VK_IMAGE_LAYOUT_UNDEFINED;
     }
 
     VkDeviceSize export_memory_bytes(const SurfaceResource* resource) {
@@ -518,6 +520,7 @@ namespace vkvv {
         resource->last_nondisplay_skip_shadow_generation = 0;
         resource->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
         resource->last_display_refresh_generation        = 0;
+        destroy_export_resource(runtime, &resource->private_decode_shadow);
         clear_surface_export_attach_state(resource);
         clear_surface_direct_import_present_state(resource);
         clear_surface_av1_visible_output_trace(resource);
@@ -573,6 +576,7 @@ namespace vkvv {
                 existing->last_nondisplay_skip_shadow_generation = 0;
                 existing->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
                 existing->last_display_refresh_generation        = 0;
+                destroy_export_resource(runtime, &existing->private_decode_shadow);
                 clear_surface_direct_import_present_state(existing);
                 clear_surface_av1_visible_output_trace(existing);
             }
