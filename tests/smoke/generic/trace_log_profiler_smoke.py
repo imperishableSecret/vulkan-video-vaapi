@@ -54,6 +54,9 @@ nvidia-vulkan-vaapi: trace seq=43 event=predecode-quarantine-enter surface=7 dri
 nvidia-vulkan-vaapi: trace seq=44 event=predecode-quarantine-exit surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 content_gen=1 present_gen=1 release_done=1 predecode_quarantined=0
 nvidia-vulkan-vaapi: trace seq=45 event=export-visible-acquire surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 acquired_generation=0 acquire_required=0 acquire_done=1 acquire_mode=implicit-sync-only src_queue_family=4294967295 dst_queue_family=4294967295
 nvidia-vulkan-vaapi: trace seq=46 event=export-visible-release surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 content_gen=1 present_gen=0 old_layout=7 new_layout=1 src_queue_family=4294967295 dst_queue_family=4294967295 release_required=0 release_done=1 release_mode=implicit-sync-only
+nvidia-vulkan-vaapi: trace seq=47 event=decode-pixel-proof surface=7 codec=0x8 stream=1 content_gen=1 order_hint_or_frame_num=1 decode_crc_valid=1 decode_crc=0xabc sample_bytes=4096
+nvidia-vulkan-vaapi: trace seq=48 event=present-pixel-proof surface=7 codec=0x8 stream=1 content_gen=1 present_gen=1 present_shadow_crc_valid=1 present_shadow_crc=0xabc previous_present_crc=0x0 matches_decode=1 matches_previous=0 sample_bytes=4096
+nvidia-vulkan-vaapi: trace seq=49 event=private-shadow-pixel-proof surface=7 codec=0x8 stream=1 content_gen=3 decode_crc_valid=1 decode_crc=0xdef private_shadow_crc_valid=1 private_shadow_crc=0xdef matches_decode=1 decode_sample_bytes=4096 private_sample_bytes=4096
 [1:2:0512/000000.000000:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:3552] vaEndPicture failed, VA error: operation failed
 nvidia-vulkan-vaapi: device-lost call=vkWaitForFences operation=AV1 decode result=-4 decode_submitted=1 decode_completed=0
 """
@@ -106,7 +109,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 45, "trace record count mismatch")
+    check(data["trace_records"] == 48, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -138,6 +141,10 @@ def main() -> int:
     check(totals["export_visible_releases"] == 1, "export visible release aggregate mismatch")
     check(totals["export_visible_acquires"] == 1, "export visible acquire aggregate mismatch")
     check(totals["export_visible_release_missing"] == 0, "export visible release missing aggregate mismatch")
+    check(totals["decode_pixel_proofs"] == 1 and totals["present_pixel_proofs"] == 1, "visible pixel proof aggregate mismatch")
+    check(totals["present_pixel_mismatches"] == 0, "present pixel mismatch aggregate mismatch")
+    check(totals["private_shadow_pixel_proofs"] == 1 and totals["private_shadow_pixel_mismatches"] == 0, "private pixel proof aggregate mismatch")
+    check(totals["pixel_proof_unavailable"] == 0, "pixel proof unavailable aggregate mismatch")
     check(totals["nondisplay_present_pinned_skips"] == 0, "nondisplay present-pinned skip aggregate mismatch")
     check(totals["invalid_nondisplay_stale_export_shadows"] == 0, "invalid nondisplay stale shadow aggregate mismatch")
     check(totals["invalid_presentable_undecoded_surfaces"] == 0, "invalid undecoded presentable aggregate mismatch")
@@ -176,6 +183,7 @@ def main() -> int:
     check(codec["visible_present_pins"] == 1 and codec["nondisplay_present_pinned_skips"] == 0, "codec present aggregate mismatch")
     check(codec["predecode_quarantine_enters"] == 1 and codec["predecode_quarantine_exits"] == 1, "codec predecode quarantine aggregate mismatch")
     check(codec["export_visible_releases"] == 1 and codec["export_visible_acquires"] == 1, "codec visible handoff aggregate mismatch")
+    check(codec["decode_pixel_proofs"] == 1 and codec["present_pixel_proofs"] == 1 and codec["private_shadow_pixel_proofs"] == 1, "codec pixel proof aggregate mismatch")
     stream = data["streams"][0]
     check(stream["codec"] == "vp9/0x8", "stream codec mismatch")
     check(stream["width"] == 3840 and stream["height"] == 2160, "stream size mismatch")
@@ -200,6 +208,7 @@ def main() -> int:
     check(stream["present_state_traces"] == 3 and stream["visible_present_pins"] == 1, "stream present state mismatch")
     check(stream["predecode_quarantine_enters"] == 1 and stream["predecode_quarantine_exits"] == 1, "stream predecode quarantine mismatch")
     check(stream["export_visible_releases"] == 1 and stream["export_visible_acquires"] == 1, "stream visible handoff mismatch")
+    check(stream["decode_pixel_proofs"] == 1 and stream["present_pixel_proofs"] == 1 and stream["private_shadow_pixel_proofs"] == 1, "stream pixel proof mismatch")
     check(stream["nondisplay_present_pinned_skips"] == 0, "stream nondisplay present-pinned skip mismatch")
     check(stream["export_copy_publish_skips"] == 1, "stream publish skip mismatch")
     av1_stream = data["streams"][1]
@@ -218,6 +227,9 @@ def main() -> int:
     check("predecode_quarantine_exits=1" in text_result.stdout, "text predecode quarantine exit aggregate missing")
     check("export_visible_releases=1" in text_result.stdout, "text export visible release aggregate missing")
     check("export_visible_acquires=1" in text_result.stdout, "text export visible acquire aggregate missing")
+    check("decode_pixel_proofs=1" in text_result.stdout, "text decode pixel proof aggregate missing")
+    check("present_pixel_proofs=1" in text_result.stdout, "text present pixel proof aggregate missing")
+    check("private_shadow_pixel_proofs=1" in text_result.stdout, "text private pixel proof aggregate missing")
     check("nondisplay_present_pinned_skips=0" in text_result.stdout, "text nondisplay present-pinned skip aggregate missing")
     check("invalid_nondisplay_stale_export_shadows=0" in text_result.stdout, "text invalid nondisplay stale shadow aggregate missing")
     check("invalid_visible_without_present_pins=0" in text_result.stdout, "text invalid visible without present pin missing")

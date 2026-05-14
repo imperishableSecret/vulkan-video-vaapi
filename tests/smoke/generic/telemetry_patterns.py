@@ -142,6 +142,10 @@ def main() -> int:
         '"export-resource-destroy"',
         '"export-visible-release"',
         '"export-visible-acquire"',
+        '"decode-pixel-proof"',
+        '"present-pixel-proof"',
+        '"private-shadow-pixel-proof"',
+        '"pixel-proof-unavailable"',
         '"private-decode-shadow-create"',
         '"private-decode-shadow-copy-enter"',
         '"private-decode-shadow-copy-done"',
@@ -213,6 +217,12 @@ def main() -> int:
         "acquire_mode=",
         "external_release_done=",
         "external_release_mode=",
+        "decode_crc=",
+        "present_shadow_crc=",
+        "private_shadow_crc=",
+        "matches_decode=",
+        "matches_previous=",
+        "sample_bytes=",
         "mutation_action=",
         "client_visible_shadow_mutated=0",
         "present_shadow_gen=",
@@ -253,6 +263,7 @@ def main() -> int:
         "VKVV_AV1_TRACE_PUBLICATION",
         "VKVV_AV1_DISABLE_IMPORTED_OUTPUT",
         "VKVV_AV1_FORCE_EXPORTED_SHADOW",
+        "VKVV_EXPORT_PIXEL_PROOF",
     ):
         if toggle not in export_text and toggle not in export_state_text and toggle not in shadow_text:
             fail(f"AV1 publication telemetry toggle is missing: {toggle}")

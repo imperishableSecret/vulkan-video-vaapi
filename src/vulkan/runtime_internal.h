@@ -280,6 +280,16 @@ namespace vkvv {
         uint64_t                      av1_previous_visible_fingerprint       = 0;
         uint64_t                      av1_publish_fingerprint                = 0;
         const char*                   av1_tile_source                        = "unknown";
+        bool                          decode_pixel_proof_valid               = false;
+        bool                          present_pixel_proof_valid              = false;
+        bool                          private_shadow_pixel_proof_valid       = false;
+        bool                          present_pixel_matches_decode           = false;
+        bool                          private_shadow_pixel_matches_decode    = false;
+        bool                          present_pixel_matches_previous         = false;
+        uint64_t                      decode_pixel_crc                       = 0;
+        uint64_t                      present_pixel_crc                      = 0;
+        uint64_t                      private_shadow_pixel_crc               = 0;
+        uint64_t                      previous_present_pixel_crc             = 0;
         ExportResource                export_resource{};
         ExportResource                private_decode_shadow{};
         uint64_t                      content_generation     = 0;

@@ -585,6 +585,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
                            resource->export_resource.exported ? 1U : 0U, vkvv_export_copy_reason_name(VkvvExportCopyReason::NondisplayPrivateRefresh));
                 return VA_STATUS_ERROR_OPERATION_FAILED;
             }
+            (void)trace_private_shadow_pixel_proof(runtime, resource, reason, reason_size);
             VKVV_TRACE(
                 "nondisplay-private-shadow-refresh",
                 "surface=%u codec=0x%x stream=%llu driver=%llu content_gen=%llu present_gen=%llu present_shadow_gen=%llu private_shadow_gen=%llu decode_shadow_gen=%llu "
@@ -634,6 +635,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
     clear_private_decode_shadow_state(resource);
+    (void)trace_visible_pixel_proof(runtime, resource, reason, reason_size);
     const bool                    display_visible = refresh_has_visible_display(resource, refresh_export);
     const VkvvExportPresentSource present_source  = visible_present_source(resource);
     const bool visible_shadow_ready = display_visible && surface_resource_has_current_export_shadow(resource) && resource->exported && resource->export_resource.exported &&

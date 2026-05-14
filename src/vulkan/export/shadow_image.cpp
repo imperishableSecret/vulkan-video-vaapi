@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -16,6 +17,11 @@ namespace vkvv {
 
     void add_raw_image_barrier(std::vector<VkImageMemoryBarrier2>* barriers, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout, VkPipelineStageFlags2 src_stage,
                                VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access);
+
+    bool export_pixel_proof_enabled();
+
+    bool readback_image_luma_sample(VulkanRuntime* runtime, VkImage image, VkImageLayout* layout, const ExportFormatInfo* format, VkExtent2D extent, const char* label,
+                                    uint64_t* crc, VkDeviceSize* sample_bytes, char* reason, size_t reason_size);
 
     void trace_export_present_state(const SurfaceResource* owner, const ExportResource* resource, const char* action, bool refresh_export, bool display_visible) {
         if (owner == nullptr || resource == nullptr) {
@@ -109,15 +115,16 @@ namespace vkvv {
             }
         }
 
-        bool create_staging_transfer_buffer(VulkanRuntime* runtime, VkDeviceSize size, UploadBuffer* staging, char* reason, size_t reason_size) {
+        bool create_staging_transfer_buffer(VulkanRuntime* runtime, VkDeviceSize size, VkBufferUsageFlags usage, UploadBuffer* staging, const char* label, char* reason,
+                                            size_t reason_size) {
             VkBufferCreateInfo buffer_info{};
             buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
             buffer_info.size        = size;
-            buffer_info.usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+            buffer_info.usage       = usage;
             buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
             VkResult result = vkCreateBuffer(runtime->device, &buffer_info, nullptr, &staging->buffer);
-            if (!record_vk_result(runtime, result, "vkCreateBuffer", "export shadow init", reason, reason_size)) {
+            if (!record_vk_result(runtime, result, "vkCreateBuffer", label, reason, reason_size)) {
                 return false;
             }
 
@@ -134,7 +141,7 @@ namespace vkvv {
                 staging->coherent = false;
                 if (!find_memory_type(runtime->memory_properties, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &memory_type_index)) {
                     destroy_upload_buffer(runtime, staging);
-                    std::snprintf(reason, reason_size, "no host-visible memory type for export shadow init");
+                    std::snprintf(reason, reason_size, "no host-visible memory type for %s", label != nullptr ? label : "transfer staging");
                     return false;
                 }
             }
@@ -144,13 +151,13 @@ namespace vkvv {
             allocate_info.allocationSize  = requirements.size;
             allocate_info.memoryTypeIndex = memory_type_index;
             result                        = vkAllocateMemory(runtime->device, &allocate_info, nullptr, &staging->memory);
-            if (!record_vk_result(runtime, result, "vkAllocateMemory", "export shadow init", reason, reason_size)) {
+            if (!record_vk_result(runtime, result, "vkAllocateMemory", label, reason, reason_size)) {
                 destroy_upload_buffer(runtime, staging);
                 return false;
             }
 
             result = vkBindBufferMemory(runtime->device, staging->buffer, staging->memory, 0);
-            if (!record_vk_result(runtime, result, "vkBindBufferMemory", "export shadow init", reason, reason_size)) {
+            if (!record_vk_result(runtime, result, "vkBindBufferMemory", label, reason, reason_size)) {
                 destroy_upload_buffer(runtime, staging);
                 return false;
             }
@@ -190,7 +197,7 @@ namespace vkvv {
             }
 
             ScopedUploadBuffer staging(runtime);
-            if (!create_staging_transfer_buffer(runtime, staging_size, &staging.buffer, reason, reason_size)) {
+            if (!create_staging_transfer_buffer(runtime, staging_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &staging.buffer, "export shadow init", reason, reason_size)) {
                 return false;
             }
 
@@ -401,7 +408,8 @@ namespace vkvv {
 
     bool create_export_resource_with_tiling(VulkanRuntime* runtime, ExportResource* resource, const ExportFormatInfo* format, VkExtent2D extent, VkImageTiling tiling, char* reason,
                                             size_t reason_size) {
-        return create_image_resource_with_tiling(runtime, resource, format, extent, tiling, VK_IMAGE_USAGE_TRANSFER_DST_BIT, true, "export shadow image", reason, reason_size);
+        return create_image_resource_with_tiling(runtime, resource, format, extent, tiling, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, true,
+                                                 "export shadow image", reason, reason_size);
     }
 
     bool ensure_export_resource(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size) {
@@ -708,6 +716,91 @@ namespace vkvv {
         return true;
     }
 
+    bool trace_visible_pixel_proof(VulkanRuntime* runtime, SurfaceResource* source, char*, size_t) {
+        if (!export_pixel_proof_enabled() || source == nullptr || source->content_generation == 0 || source->export_resource.image == VK_NULL_HANDLE) {
+            return true;
+        }
+
+        char                    proof_reason[256] = {};
+        const ExportFormatInfo* format            = export_format_for_surface(nullptr, source, proof_reason, sizeof(proof_reason));
+        uint64_t                decode_crc        = 0;
+        uint64_t                present_crc       = 0;
+        VkDeviceSize            decode_bytes      = 0;
+        VkDeviceSize            present_bytes     = 0;
+        const bool              decode_ok         = format != nullptr &&
+            readback_image_luma_sample(runtime, source->image, &source->layout, format, source->coded_extent, "decode pixel proof", &decode_crc, &decode_bytes, proof_reason,
+                                       sizeof(proof_reason));
+        const bool present_ok = format != nullptr &&
+            readback_image_luma_sample(runtime, source->export_resource.image, &source->export_resource.layout, format, source->export_resource.extent, "present pixel proof",
+                                       &present_crc, &present_bytes, proof_reason, sizeof(proof_reason));
+
+        source->decode_pixel_proof_valid       = decode_ok;
+        source->present_pixel_proof_valid      = present_ok;
+        source->decode_pixel_crc               = decode_ok ? decode_crc : 0;
+        source->present_pixel_crc              = present_ok ? present_crc : 0;
+        source->present_pixel_matches_decode   = decode_ok && present_ok && decode_crc == present_crc;
+        source->present_pixel_matches_previous = present_ok && source->previous_present_pixel_crc != 0 && source->previous_present_pixel_crc == source->present_pixel_crc;
+
+        const uint64_t order_hint_or_frame_num = surface_resource_uses_av1_decode(source) ? source->av1_order_hint : source->content_generation;
+        VKVV_TRACE("decode-pixel-proof", "surface=%u codec=0x%x stream=%llu content_gen=%llu order_hint_or_frame_num=%llu decode_crc_valid=%u decode_crc=0x%llx sample_bytes=%llu",
+                   source->surface_id, source->codec_operation, static_cast<unsigned long long>(source->stream_id), static_cast<unsigned long long>(source->content_generation),
+                   static_cast<unsigned long long>(order_hint_or_frame_num), decode_ok ? 1U : 0U, static_cast<unsigned long long>(source->decode_pixel_crc),
+                   static_cast<unsigned long long>(decode_bytes));
+        VKVV_TRACE("present-pixel-proof",
+                   "surface=%u codec=0x%x stream=%llu content_gen=%llu present_gen=%llu present_shadow_crc_valid=%u present_shadow_crc=0x%llx previous_present_crc=0x%llx "
+                   "matches_decode=%u matches_previous=%u sample_bytes=%llu",
+                   source->surface_id, source->codec_operation, static_cast<unsigned long long>(source->stream_id), static_cast<unsigned long long>(source->content_generation),
+                   static_cast<unsigned long long>(source->export_resource.present_generation), present_ok ? 1U : 0U, static_cast<unsigned long long>(source->present_pixel_crc),
+                   static_cast<unsigned long long>(source->previous_present_pixel_crc), source->present_pixel_matches_decode ? 1U : 0U,
+                   source->present_pixel_matches_previous ? 1U : 0U, static_cast<unsigned long long>(present_bytes));
+        if (present_ok) {
+            source->previous_present_pixel_crc = source->present_pixel_crc;
+        }
+        if (!decode_ok || !present_ok) {
+            VKVV_TRACE("pixel-proof-unavailable", "surface=%u codec=0x%x stream=%llu proof=visible reason=\"%s\"", source->surface_id, source->codec_operation,
+                       static_cast<unsigned long long>(source->stream_id), proof_reason);
+        }
+        return true;
+    }
+
+    bool trace_private_shadow_pixel_proof(VulkanRuntime* runtime, SurfaceResource* source, char*, size_t) {
+        if (!export_pixel_proof_enabled() || source == nullptr || source->content_generation == 0 || source->private_decode_shadow.image == VK_NULL_HANDLE) {
+            return true;
+        }
+
+        char                    proof_reason[256] = {};
+        const ExportFormatInfo* format            = export_format_for_surface(nullptr, source, proof_reason, sizeof(proof_reason));
+        uint64_t                decode_crc        = 0;
+        uint64_t                private_crc       = 0;
+        VkDeviceSize            decode_bytes      = 0;
+        VkDeviceSize            private_bytes     = 0;
+        const bool              decode_ok         = format != nullptr &&
+            readback_image_luma_sample(runtime, source->image, &source->layout, format, source->coded_extent, "decode pixel proof", &decode_crc, &decode_bytes, proof_reason,
+                                       sizeof(proof_reason));
+        const bool private_ok = format != nullptr &&
+            readback_image_luma_sample(runtime, source->private_decode_shadow.image, &source->private_decode_shadow.layout, format, source->private_decode_shadow.extent,
+                                       "private shadow pixel proof", &private_crc, &private_bytes, proof_reason, sizeof(proof_reason));
+
+        source->decode_pixel_proof_valid            = decode_ok;
+        source->private_shadow_pixel_proof_valid    = private_ok;
+        source->decode_pixel_crc                    = decode_ok ? decode_crc : 0;
+        source->private_shadow_pixel_crc            = private_ok ? private_crc : 0;
+        source->private_shadow_pixel_matches_decode = decode_ok && private_ok && decode_crc == private_crc;
+
+        VKVV_TRACE("private-shadow-pixel-proof",
+                   "surface=%u codec=0x%x stream=%llu content_gen=%llu decode_crc_valid=%u decode_crc=0x%llx private_shadow_crc_valid=%u private_shadow_crc=0x%llx "
+                   "matches_decode=%u decode_sample_bytes=%llu private_sample_bytes=%llu",
+                   source->surface_id, source->codec_operation, static_cast<unsigned long long>(source->stream_id), static_cast<unsigned long long>(source->content_generation),
+                   decode_ok ? 1U : 0U, static_cast<unsigned long long>(source->decode_pixel_crc), private_ok ? 1U : 0U,
+                   static_cast<unsigned long long>(source->private_shadow_pixel_crc), source->private_shadow_pixel_matches_decode ? 1U : 0U,
+                   static_cast<unsigned long long>(decode_bytes), static_cast<unsigned long long>(private_bytes));
+        if (!decode_ok || !private_ok) {
+            VKVV_TRACE("pixel-proof-unavailable", "surface=%u codec=0x%x stream=%llu proof=private-shadow reason=\"%s\"", source->surface_id, source->codec_operation,
+                       static_cast<unsigned long long>(source->stream_id), proof_reason);
+        }
+        return true;
+    }
+
     bool attach_imported_export_resource_by_fd(VulkanRuntime* runtime, SurfaceResource* source) {
         if (runtime == nullptr || source == nullptr || source->export_resource.image != VK_NULL_HANDLE || !source->import.external || !source->import.fd.valid) {
             return false;
@@ -871,6 +964,131 @@ namespace vkvv {
 
     bool can_seed_predecode_target(const ExportResource* target, const SurfaceResource* source) {
         return predecode_seed_target_matches(target, source) && !predecode_seed_policy_keeps_placeholder(target);
+    }
+
+    bool export_pixel_proof_enabled() {
+        const char* value = std::getenv("VKVV_EXPORT_PIXEL_PROOF");
+        return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 && std::strcmp(value, "off") != 0;
+    }
+
+    uint64_t fnv1a64_bytes(const uint8_t* bytes, size_t size) {
+        uint64_t hash = 1469598103934665603ull;
+        for (size_t i = 0; i < size; i++) {
+            hash ^= bytes[i];
+            hash *= 1099511628211ull;
+        }
+        return hash;
+    }
+
+    bool readback_image_luma_sample(VulkanRuntime* runtime, VkImage image, VkImageLayout* layout, const ExportFormatInfo* format, VkExtent2D extent, const char* label,
+                                    uint64_t* crc, VkDeviceSize* sample_bytes, char* reason, size_t reason_size) {
+        if (runtime == nullptr || image == VK_NULL_HANDLE || layout == nullptr || format == nullptr || crc == nullptr || sample_bytes == nullptr || format->layer_count == 0) {
+            std::snprintf(reason, reason_size, "missing pixel proof input");
+            return false;
+        }
+
+        const ExportLayerInfo& layer           = format->layers[0];
+        const uint32_t         bytes_per_pixel = export_plane_bytes_per_pixel(layer.drm_format);
+        if (bytes_per_pixel == 0) {
+            std::snprintf(reason, reason_size, "unsupported pixel proof plane format 0x%x", layer.drm_format);
+            return false;
+        }
+
+        const VkExtent3D luma_extent = export_layer_extent(extent, layer);
+        const VkExtent3D sample_extent{
+            std::max(1u, std::min<uint32_t>(luma_extent.width, 64u)),
+            std::max(1u, std::min<uint32_t>(luma_extent.height, 64u)),
+            1,
+        };
+        *sample_bytes = static_cast<VkDeviceSize>(sample_extent.width) * sample_extent.height * bytes_per_pixel;
+        ScopedUploadBuffer readback(runtime);
+        if (!create_staging_transfer_buffer(runtime, *sample_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, &readback.buffer, label, reason, reason_size)) {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+        if (!ensure_command_resources(runtime, reason, reason_size)) {
+            return false;
+        }
+
+        VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
+        if (!record_vk_result(runtime, result, "vkResetFences", label, reason, reason_size)) {
+            return false;
+        }
+        result = vkResetCommandBuffer(runtime->command_buffer, 0);
+        if (!record_vk_result(runtime, result, "vkResetCommandBuffer", label, reason, reason_size)) {
+            return false;
+        }
+
+        VkCommandBufferBeginInfo begin_info{};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        result           = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
+        if (!record_vk_result(runtime, result, "vkBeginCommandBuffer", label, reason, reason_size)) {
+            return false;
+        }
+
+        const VkImageLayout                old_layout = *layout;
+        std::vector<VkImageMemoryBarrier2> barriers;
+        add_raw_image_barrier(&barriers, image, old_layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                              VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+        if (!barriers.empty()) {
+            VkDependencyInfo dependency{};
+            dependency.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+            dependency.pImageMemoryBarriers    = barriers.data();
+            vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
+        }
+        *layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+
+        VkBufferImageCopy region{};
+        region.bufferOffset                    = 0;
+        region.bufferRowLength                 = 0;
+        region.bufferImageHeight               = 0;
+        region.imageSubresource.aspectMask     = layer.aspect;
+        region.imageSubresource.mipLevel       = 0;
+        region.imageSubresource.baseArrayLayer = 0;
+        region.imageSubresource.layerCount     = 1;
+        region.imageOffset                     = {0, 0, 0};
+        region.imageExtent                     = sample_extent;
+        vkCmdCopyImageToBuffer(runtime->command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer.buffer, 1, &region);
+
+        barriers.clear();
+        add_raw_image_barrier(&barriers, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, old_layout, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                              VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+        if (!barriers.empty()) {
+            VkDependencyInfo dependency{};
+            dependency.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+            dependency.pImageMemoryBarriers    = barriers.data();
+            vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
+        }
+        *layout = old_layout;
+
+        result = vkEndCommandBuffer(runtime->command_buffer);
+        if (!record_vk_result(runtime, result, "vkEndCommandBuffer", label, reason, reason_size)) {
+            return false;
+        }
+        if (!submit_command_buffer_and_wait(runtime, reason, reason_size, label, CommandUse::Export)) {
+            return false;
+        }
+
+        result = vkMapMemory(runtime->device, readback.buffer.memory, 0, readback.buffer.size, 0, &readback.buffer.mapped);
+        if (!record_vk_result(runtime, result, "vkMapMemory", label, reason, reason_size)) {
+            return false;
+        }
+        if (!readback.buffer.coherent) {
+            VkMappedMemoryRange range{};
+            range.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+            range.memory = readback.buffer.memory;
+            range.offset = 0;
+            range.size   = VK_WHOLE_SIZE;
+            vkInvalidateMappedMemoryRanges(runtime->device, 1, &range);
+        }
+        *crc = fnv1a64_bytes(static_cast<const uint8_t*>(readback.buffer.mapped), static_cast<size_t>(*sample_bytes));
+        vkUnmapMemory(runtime->device, readback.buffer.memory);
+        readback.buffer.mapped = nullptr;
+        return true;
     }
 
     void trace_predecode_keep_placeholder(const ExportResource* target, const SurfaceResource* source) {
