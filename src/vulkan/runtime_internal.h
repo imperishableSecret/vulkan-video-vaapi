@@ -17,6 +17,16 @@ namespace vkvv {
     inline constexpr uint32_t invalid_queue_family = UINT32_MAX;
     inline constexpr size_t   command_slot_count   = 4;
 
+    enum class VkvvExportPresentSource {
+        None,
+        VisibleRefresh,
+        ShowExisting,
+        PredecodePlaceholder,
+        PrivateNondisplay,
+    };
+
+    const char* vkvv_export_present_source_name(VkvvExportPresentSource source);
+
     struct ExportResource {
         VkImage                       image              = VK_NULL_HANDLE;
         VkDeviceMemory                memory             = VK_NULL_HANDLE;
@@ -42,6 +52,18 @@ namespace vkvv {
         bool                          fd_stat_valid           = false;
         uint64_t                      fd_dev                  = 0;
         uint64_t                      fd_ino                  = 0;
+        bool                          present_pinned          = false;
+        bool                          presentable             = false;
+        bool                          published_visible       = false;
+        uint64_t                      present_generation      = 0;
+        uint64_t                      present_fd_dev          = 0;
+        uint64_t                      present_fd_ino          = 0;
+        VASurfaceID                   present_surface_id      = VA_INVALID_ID;
+        uint64_t                      present_stream_id       = 0;
+        VkVideoCodecOperationFlagsKHR present_codec_operation = 0;
+        VkvvExportPresentSource       present_source          = VkvvExportPresentSource::None;
+        bool                          client_visible_shadow   = false;
+        bool                          private_nondisplay_shadow = false;
         VkImageLayout                 layout                  = VK_IMAGE_LAYOUT_UNDEFINED;
     };
 
@@ -435,6 +457,9 @@ namespace vkvv {
     bool                surface_resource_has_direct_import_output(const SurfaceResource* resource);
     bool                surface_resource_has_published_visible_output(const SurfaceResource* resource);
     bool                surface_resource_requires_visible_publication(const SurfaceResource* resource, bool refresh_export);
+    void                clear_export_present_state(ExportResource* resource);
+    void                mark_export_predecode_nonpresentable(ExportResource* resource);
+    void trace_export_present_state(const SurfaceResource* owner, const ExportResource* resource, const char* action, bool refresh_export, bool display_visible);
     void                clear_predecode_export_state(ExportResource* resource);
     void                clear_nondisplay_predecode_presentation_state(SurfaceResource* resource);
     void                clear_surface_export_attach_state(SurfaceResource* resource);
