@@ -43,6 +43,7 @@ namespace vkvv {
             unsigned int                  va_rt_format = 0;
             unsigned int                  va_fourcc    = 0;
             uint8_t                       bit_depth    = 0;
+            uint32_t                      frame_id     = 0;
             bool                          showable     = false;
             bool                          displayed    = false;
         } metadata{};
@@ -123,6 +124,9 @@ namespace vkvv {
     bool           validate_av1_switch_frame(const VkvvAV1DecodeInput* input, char* reason, size_t reason_size);
     bool           build_av1_picture_std_data(AV1VideoSession* session, const VkvvAV1DecodeInput* input, AV1PictureStdData* std_data, char* reason, size_t reason_size);
     StdVideoDecodeAV1ReferenceInfo build_av1_current_reference_info(const VkvvAV1DecodeInput* input);
+    const AV1ReferenceSlot*        validate_av1_show_existing_reference(const AV1VideoSession* session, const VkvvAV1DecodeInput* input, const VkvvSurface* surface,
+                                                                        const SurfaceResource* resource, const VkvvDriver* drv, const VkvvContext* vctx,
+                                                                        const DecodeImageKey& current_decode_key, char* reason, size_t reason_size);
     bool create_av1_session_parameters(VulkanRuntime* runtime, AV1VideoSession* session, const AV1SessionStdParameters* std_params, VkVideoSessionParametersKHR* parameters,
                                        char* reason, size_t reason_size);
 

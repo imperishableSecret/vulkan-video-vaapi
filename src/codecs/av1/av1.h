@@ -51,11 +51,13 @@ typedef struct {
     uint8_t  interpolation_filter;
     uint8_t  tx_mode;
     uint8_t  tile_size_bytes_minus_1;
+    int8_t   frame_to_show_map_idx;
     uint8_t  skip_mode_frame[2];
     int8_t   ref_frame_idx[VKVV_AV1_ACTIVE_REFERENCE_COUNT];
     uint8_t  order_hints[VKVV_AV1_REFERENCE_COUNT];
     uint8_t  ref_frame_sign_bias[VKVV_AV1_REFERENCE_COUNT];
     uint32_t current_frame_id;
+    uint32_t display_frame_id;
     uint32_t order_hint;
     int32_t  expected_frame_id[VKVV_AV1_ACTIVE_REFERENCE_COUNT];
     uint32_t frame_header_offset;

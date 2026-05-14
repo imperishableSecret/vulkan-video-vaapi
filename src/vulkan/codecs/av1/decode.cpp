@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "api.h"
 #include "telemetry.h"
+#include "vulkan/export/internal.h"
+#include "vulkan/runtime.h"
 
 #include <algorithm>
 #include <array>
@@ -148,6 +150,123 @@ namespace {
             }
         }
         return mask;
+    }
+
+    void add_av1_copy_barrier(std::vector<VkImageMemoryBarrier2>* barriers, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout, VkPipelineStageFlags2 src_stage,
+                              VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) {
+        if (barriers == nullptr || old_layout == new_layout) {
+            return;
+        }
+
+        VkImageMemoryBarrier2 barrier{};
+        barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        barrier.srcStageMask                    = src_stage;
+        barrier.srcAccessMask                   = src_access;
+        barrier.dstStageMask                    = dst_stage;
+        barrier.dstAccessMask                   = dst_access;
+        barrier.oldLayout                       = old_layout;
+        barrier.newLayout                       = new_layout;
+        barrier.srcQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image                           = image;
+        barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel   = 0;
+        barrier.subresourceRange.levelCount     = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount     = 1;
+        barriers->push_back(barrier);
+    }
+
+    bool copy_av1_show_existing_surface(VulkanRuntime* runtime, SurfaceResource* source, SurfaceResource* target, char* reason, size_t reason_size) {
+        if (runtime == nullptr || source == nullptr || target == nullptr || source->image == VK_NULL_HANDLE || target->image == VK_NULL_HANDLE) {
+            std::snprintf(reason, reason_size, "missing AV1 show-existing copy resources");
+            return false;
+        }
+        if (source == target) {
+            return true;
+        }
+        if (source->format != target->format || source->va_fourcc != target->va_fourcc || source->coded_extent.width < target->coded_extent.width ||
+            source->coded_extent.height < target->coded_extent.height) {
+            std::snprintf(reason, reason_size, "AV1 show-existing copy resource mismatch: source_format=%d target_format=%d source=%ux%u target=%ux%u", source->format,
+                          target->format, source->coded_extent.width, source->coded_extent.height, target->coded_extent.width, target->coded_extent.height);
+            return false;
+        }
+
+        const ExportFormatInfo* format = export_format_for_surface(nullptr, target, reason, reason_size);
+        if (format == nullptr) {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+        if (!ensure_command_resources(runtime, reason, reason_size)) {
+            return false;
+        }
+
+        VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
+        if (!record_vk_result(runtime, result, "vkResetFences", "AV1 show-existing copy", reason, reason_size)) {
+            return false;
+        }
+        result = vkResetCommandBuffer(runtime->command_buffer, 0);
+        if (!record_vk_result(runtime, result, "vkResetCommandBuffer", "AV1 show-existing copy", reason, reason_size)) {
+            return false;
+        }
+
+        VkCommandBufferBeginInfo begin_info{};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        result           = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
+        if (!record_vk_result(runtime, result, "vkBeginCommandBuffer", "AV1 show-existing copy", reason, reason_size)) {
+            return false;
+        }
+
+        std::vector<VkImageMemoryBarrier2> barriers;
+        add_av1_copy_barrier(&barriers, source->image, source->layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                             VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+        add_av1_copy_barrier(&barriers, target->image, target->layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                             VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        if (!barriers.empty()) {
+            VkDependencyInfo dependency{};
+            dependency.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+            dependency.pImageMemoryBarriers    = barriers.data();
+            vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
+        }
+        source->layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        target->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+
+        VkImageCopy regions[2]{};
+        for (uint32_t i = 0; i < format->layer_count; i++) {
+            regions[i].srcSubresource.aspectMask = format->layers[i].aspect;
+            regions[i].srcSubresource.layerCount = 1;
+            regions[i].dstSubresource.aspectMask = format->layers[i].aspect;
+            regions[i].dstSubresource.layerCount = 1;
+            regions[i].extent                    = export_layer_extent(target->coded_extent, format->layers[i]);
+        }
+        vkCmdCopyImage(runtime->command_buffer, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, format->layer_count,
+                       regions);
+
+        barriers.clear();
+        add_av1_copy_barrier(&barriers, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                             VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
+                             VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR | VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR);
+        add_av1_copy_barrier(&barriers, target->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                             VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
+                             VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR | VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR);
+        if (!barriers.empty()) {
+            VkDependencyInfo dependency{};
+            dependency.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+            dependency.pImageMemoryBarriers    = barriers.data();
+            vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
+        }
+        source->layout = VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR;
+        target->layout = VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR;
+
+        result = vkEndCommandBuffer(runtime->command_buffer);
+        if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "AV1 show-existing copy", reason, reason_size)) {
+            return false;
+        }
+        return submit_command_buffer_and_wait(runtime, reason, reason_size, "AV1 show-existing copy");
     }
 
     void build_av1_tile_info(const VkvvAV1DecodeInput* input, AV1PictureStdData* std_data) {
@@ -390,6 +509,7 @@ namespace {
         metadata.va_rt_format       = target->rt_format;
         metadata.va_fourcc          = target->fourcc;
         metadata.bit_depth          = input->bit_depth;
+        metadata.frame_id           = input->header.current_frame_id;
         metadata.showable           = input->header.showable_frame;
         metadata.displayed          = displayed;
         return metadata;
@@ -519,8 +639,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
                                 char* reason, size_t reason_size) {
     auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
     auto* session = static_cast<AV1VideoSession*>(session_ptr);
-    if (runtime == nullptr || session == nullptr || drv == nullptr || vctx == nullptr || target == nullptr || input == nullptr || input->pic == nullptr ||
-        input->tiles == nullptr) {
+    if (runtime == nullptr || session == nullptr || drv == nullptr || vctx == nullptr || target == nullptr || input == nullptr || input->pic == nullptr) {
         std::snprintf(reason, reason_size, "missing AV1 decode state");
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
@@ -543,15 +662,21 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         std::snprintf(reason, reason_size, "missing AV1 video session");
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
-    if (input->bitstream == nullptr || input->bitstream_size == 0 || !input->header.valid || input->tile_count == 0) {
-        std::snprintf(reason, reason_size, "missing AV1 bitstream/header/tile data");
+    if (!input->header.valid) {
+        std::snprintf(reason, reason_size, "missing AV1 frame header");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
-    if (!validate_av1_decode_input_bounds(input, reason, reason_size)) {
-        return VA_STATUS_ERROR_INVALID_BUFFER;
-    }
-    if (!validate_av1_switch_frame(input, reason, reason_size)) {
-        return VA_STATUS_ERROR_INVALID_BUFFER;
+    if (!input->header.show_existing_frame) {
+        if (input->bitstream == nullptr || input->bitstream_size == 0 || input->tiles == nullptr || input->tile_count == 0) {
+            std::snprintf(reason, reason_size, "missing AV1 bitstream/header/tile data");
+            return VA_STATUS_ERROR_INVALID_BUFFER;
+        }
+        if (!validate_av1_decode_input_bounds(input, reason, reason_size)) {
+            return VA_STATUS_ERROR_INVALID_BUFFER;
+        }
+        if (!validate_av1_switch_frame(input, reason, reason_size)) {
+            return VA_STATUS_ERROR_INVALID_BUFFER;
+        }
     }
     if ((session->decode_flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR) == 0) {
         std::snprintf(reason, reason_size, "AV1 decode requires coincident DPB/output support");
@@ -618,6 +743,63 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
                    input->header.show_frame ? 1U : 0U, input->header.showable_frame ? 1U : 0U, refresh_export ? 1U : 0U, input->header.refresh_frame_flags,
                    input->pic->primary_ref_frame, input->bit_depth, input->fourcc, input->bitstream_size, input->header.frame_header_offset, input->tile_count, ref_map.c_str(),
                    ref_slots_before.c_str(), surface_slots_before.c_str());
+    }
+
+    if (input->header.show_existing_frame) {
+        if (input->tile_count != 0 || input->bitstream_size != 0) {
+            std::snprintf(reason, reason_size, "AV1 show-existing frame must not carry decode tiles: tiles=%zu bytes=%zu", input->tile_count, input->bitstream_size);
+            return VA_STATUS_ERROR_INVALID_BUFFER;
+        }
+        if (input->header.frame_to_show_map_idx < 0 || input->header.frame_to_show_map_idx >= static_cast<int8_t>(max_av1_reference_slots)) {
+            std::snprintf(reason, reason_size, "invalid AV1 show-existing reference index: map_idx=%d", input->header.frame_to_show_map_idx);
+            return VA_STATUS_ERROR_INVALID_BUFFER;
+        }
+
+        const auto* show_slot = av1_reference_slot_for_index(session, static_cast<uint32_t>(input->header.frame_to_show_map_idx));
+        if (show_slot == nullptr) {
+            std::snprintf(reason, reason_size, "missing AV1 show-existing reference slot: map_idx=%d", input->header.frame_to_show_map_idx);
+            return VA_STATUS_ERROR_INVALID_SURFACE;
+        }
+
+        auto* ref_surface = static_cast<VkvvSurface*>(vkvv_object_get(drv, show_slot->surface_id, VKVV_OBJECT_SURFACE));
+        if (ref_surface == nullptr) {
+            std::snprintf(reason, reason_size, "AV1 show-existing reference surface %u is missing: map_idx=%d", show_slot->surface_id, input->header.frame_to_show_map_idx);
+            return VA_STATUS_ERROR_INVALID_SURFACE;
+        }
+        VAStatus ref_status = complete_pending_surface_work_if_needed(runtime, ref_surface, "AV1 show-existing reference", reason, reason_size);
+        if (ref_status != VA_STATUS_SUCCESS) {
+            return ref_status;
+        }
+
+        auto* ref_resource = static_cast<SurfaceResource*>(ref_surface->vulkan);
+        show_slot          = validate_av1_show_existing_reference(session, input, ref_surface, ref_resource, drv, vctx, decode_key, reason, reason_size);
+        if (show_slot == nullptr) {
+            return VA_STATUS_ERROR_INVALID_SURFACE;
+        }
+
+        auto* target_resource = static_cast<SurfaceResource*>(target->vulkan);
+        if (!copy_av1_show_existing_surface(runtime, ref_resource, target_resource, reason, reason_size)) {
+            return VA_STATUS_ERROR_OPERATION_FAILED;
+        }
+        target->decoded     = true;
+        target->work_state  = VKVV_SURFACE_WORK_READY;
+        target->sync_status = VA_STATUS_SUCCESS;
+        if (target_resource != ref_resource) {
+            target_resource->content_generation++;
+        }
+
+        VAStatus export_status = vkvv_vulkan_refresh_surface_export(runtime, target, true, reason, reason_size);
+        if (export_status != VA_STATUS_SUCCESS) {
+            return export_status;
+        }
+
+        VKVV_TRACE("av1-show-existing", "driver=%llu ctx_stream=%llu target=%u source=%u map_idx=%d slot=%d display_frame_id=%u target_gen=%llu source_gen=%llu refresh_export=1",
+                   static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id), target_surface_id, show_slot->surface_id,
+                   input->header.frame_to_show_map_idx, show_slot->slot, input->header.display_frame_id, static_cast<unsigned long long>(target_resource->content_generation),
+                   static_cast<unsigned long long>(ref_resource->content_generation));
+        VKVV_SUCCESS_REASON(reason, reason_size, "presented AV1 show-existing frame: target=%u source=%u map_idx=%d slot=%d depth=%u fourcc=0x%x", target_surface_id,
+                            show_slot->surface_id, input->header.frame_to_show_map_idx, show_slot->slot, input->bit_depth, input->fourcc);
+        return VA_STATUS_SUCCESS;
     }
 
     if (!av1_frame_is_intra(input->pic)) {

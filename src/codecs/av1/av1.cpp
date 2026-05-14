@@ -220,7 +220,9 @@ namespace {
         dst->interpolation_filter             = static_cast<uint8_t>(src.interpolation_filter);
         dst->tx_mode                          = static_cast<uint8_t>(src.tx_mode);
         dst->tile_size_bytes_minus_1          = src.tile_info.tile_size_bytes_minus_1;
+        dst->frame_to_show_map_idx            = src.frame_to_show_map_idx;
         dst->current_frame_id                 = src.current_frame_id;
+        dst->display_frame_id                 = src.display_frame_id;
         dst->order_hint                       = src.order_hint;
         dst->frame_header_offset              = frame_header_offset;
         std::copy(std::begin(src.skip_mode_frame), std::end(src.skip_mode_frame), dst->skip_mode_frame);
@@ -549,10 +551,6 @@ VAStatus vkvv_av1_prepare_decode(void* state, unsigned int* width, unsigned int*
         VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing AV1 slice data");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
-    if (!av1->pending_slices.empty()) {
-        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing AV1 slice data for pending tile parameters");
-        return VA_STATUS_ERROR_INVALID_BUFFER;
-    }
     if (av1->pic.profile != 0) {
         VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_PROFILE, "AV1 path currently supports only Profile0/Main");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
@@ -574,9 +572,6 @@ VAStatus vkvv_av1_prepare_decode(void* state, unsigned int* width, unsigned int*
         VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "AV1 picture dimensions are invalid");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
-    if (!sort_and_validate_tiles(av1, reason, reason_size)) {
-        return VA_STATUS_ERROR_INVALID_BUFFER;
-    }
     if (!parse_av1_frame_header(av1, reason, reason_size)) {
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
@@ -592,17 +587,34 @@ VAStatus vkvv_av1_prepare_decode(void* state, unsigned int* width, unsigned int*
         VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT, "AV1 path currently supports only 4:2:0");
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
+    *width  = static_cast<unsigned int>(av1->pic.frame_width_minus1) + 1;
+    *height = static_cast<unsigned int>(av1->pic.frame_height_minus1) + 1;
+
     if (av1->header.show_existing_frame) {
-        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNIMPLEMENTED, "AV1 show-existing-frame is not implemented yet");
-        return VA_STATUS_ERROR_UNIMPLEMENTED;
+        if (!av1->pending_slices.empty()) {
+            VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "AV1 show-existing frame must not carry pending tile parameters");
+            return VA_STATUS_ERROR_INVALID_BUFFER;
+        }
+        av1->decode_tiles.clear();
+        av1->decode_window_offset = 0;
+        av1->decode_window_size   = 0;
+        VKVV_SUCCESS_REASON(reason, reason_size, "captured AV1 show-existing frame: %ux%u profile=%u depth=%u fourcc=0x%x map_idx=%d display_frame_id=%u bitstream=%zu header=%u",
+                            *width, *height, av1->pic.profile, bit_depth, av1_fourcc(bit_depth), av1->header.frame_to_show_map_idx, av1->header.display_frame_id,
+                            av1->bitstream.size(), av1->header.frame_header_offset);
+        return VA_STATUS_SUCCESS;
+    }
+    if (!av1->pending_slices.empty()) {
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing AV1 slice data for pending tile parameters");
+        return VA_STATUS_ERROR_INVALID_BUFFER;
+    }
+    if (!sort_and_validate_tiles(av1, reason, reason_size)) {
+        return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     uint32_t window_offset = 0;
     if (!av1_decode_window(av1, &window_offset, reason, reason_size)) {
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
 
-    *width                     = static_cast<unsigned int>(av1->pic.frame_width_minus1) + 1;
-    *height                    = static_cast<unsigned int>(av1->pic.frame_height_minus1) + 1;
     uint32_t first_tile_offset = 0;
     if (!av1->decode_tiles.empty()) {
         first_tile_offset = av1->decode_tiles[0].offset;
@@ -622,17 +634,23 @@ VAStatus vkvv_av1_get_decode_input(void* state, VkvvAV1DecodeInput* input) {
         return VA_STATUS_ERROR_INVALID_PARAMETER;
     }
     auto* av1 = static_cast<AV1State*>(state);
-    if (av1 == nullptr || !av1->has_pic || !av1->has_slice_data || !av1->has_header || av1->decode_tiles.empty() || av1->decode_window_size == 0 ||
-        av1->decode_window_offset > av1->bitstream.size() || av1->decode_window_size > av1->bitstream.size() - av1->decode_window_offset) {
+    if (av1 == nullptr || !av1->has_pic || !av1->has_slice_data || !av1->has_header) {
+        return VA_STATUS_ERROR_INVALID_CONTEXT;
+    }
+
+    const bool presentation_only = av1->header.show_existing_frame;
+    if (!presentation_only &&
+        (av1->decode_tiles.empty() || av1->decode_window_size == 0 || av1->decode_window_offset > av1->bitstream.size() ||
+         av1->decode_window_size > av1->bitstream.size() - av1->decode_window_offset)) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
 
     *input                      = {};
     input->pic                  = &av1->pic;
-    input->tiles                = av1->decode_tiles.data();
-    input->tile_count           = av1->decode_tiles.size();
-    input->bitstream            = av1->bitstream.data() + av1->decode_window_offset;
-    input->bitstream_size       = av1->decode_window_size;
+    input->tiles                = presentation_only ? nullptr : av1->decode_tiles.data();
+    input->tile_count           = presentation_only ? 0 : av1->decode_tiles.size();
+    input->bitstream            = presentation_only ? nullptr : av1->bitstream.data() + av1->decode_window_offset;
+    input->bitstream_size       = presentation_only ? 0 : av1->decode_window_size;
     input->decode_window_offset = av1->decode_window_offset;
     input->header               = av1->header;
     input->sequence             = av1->sequence;
