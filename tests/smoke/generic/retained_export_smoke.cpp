@@ -1,6 +1,7 @@
 #include "vulkan/runtime_internal.h"
 #include "va/surface_import.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <string_view>
 
@@ -26,6 +27,15 @@ namespace {
             std::fprintf(stderr, "%s\n", message);
         }
         return condition;
+    }
+
+    template <typename Handle>
+    Handle fake_handle(std::uintptr_t value) {
+#if defined(VK_USE_64_BIT_PTR_DEFINES) && VK_USE_64_BIT_PTR_DEFINES
+        return reinterpret_cast<Handle>(value);
+#else
+        return static_cast<Handle>(value);
+#endif
     }
 
     vkvv::RetainedExportBacking make_backing() {
@@ -286,6 +296,62 @@ namespace {
         return ok;
     }
 
+    void mark_direct_import_current(vkvv::SurfaceResource* resource) {
+        resource->import.external                = true;
+        resource->import.fd.valid                = true;
+        resource->import.fd.dev                  = 100;
+        resource->import.fd.ino                  = 200;
+        resource->direct_import_presentable      = true;
+        resource->decode_image_is_imported_image = true;
+        resource->import_present_barrier_done    = true;
+        resource->import_fd_stat_valid           = true;
+        resource->import_present_generation      = resource->content_generation;
+        resource->import_fd_dev                  = resource->import.fd.dev;
+        resource->import_fd_ino                  = resource->import.fd.ino;
+        resource->import_driver_instance_id      = resource->driver_instance_id;
+        resource->import_stream_id               = resource->stream_id;
+        resource->import_codec_operation         = resource->codec_operation;
+    }
+
+    bool check_visible_output_publication_policy() {
+        bool                  ok = true;
+        vkvv::SurfaceResource resource{};
+        resource.driver_instance_id = retained_driver;
+        resource.stream_id          = retained_stream;
+        resource.codec_operation    = codec_av1;
+        resource.content_generation = 12;
+
+        ok &= check(!vkvv::surface_resource_has_current_export_shadow(&resource), "empty shadow was treated as current");
+        ok &= check(!vkvv::surface_resource_has_published_visible_output(&resource), "empty resource was treated as published");
+
+        resource.export_resource.image              = fake_handle<VkImage>(1);
+        resource.export_resource.memory             = fake_handle<VkDeviceMemory>(2);
+        resource.export_resource.content_generation = 11;
+        ok &= check(!vkvv::surface_resource_has_current_export_shadow(&resource), "stale shadow was treated as current");
+        ok &= check(!vkvv::surface_resource_has_published_visible_output(&resource), "stale shadow was treated as published");
+
+        resource.export_resource.content_generation = resource.content_generation;
+        ok &= check(vkvv::surface_resource_has_current_export_shadow(&resource), "current shadow was not treated as current");
+        ok &= check(vkvv::surface_resource_has_published_visible_output(&resource), "current shadow was not treated as published");
+
+        resource.export_resource = {};
+        mark_direct_import_current(&resource);
+        ok &= check(vkvv::surface_resource_has_direct_import_output(&resource), "current direct import was not treated as published output");
+        ok &= check(vkvv::surface_resource_has_published_visible_output(&resource), "current direct import did not satisfy visible publication");
+
+        resource.import.fd.ino++;
+        ok &= check(!vkvv::surface_resource_has_direct_import_output(&resource), "direct import identity drift was not rejected");
+        resource.import.fd.ino = resource.import_fd_ino;
+
+        resource.import_present_generation--;
+        ok &= check(!vkvv::surface_resource_has_direct_import_output(&resource), "stale direct import generation was not rejected");
+        resource.import_present_generation = resource.content_generation;
+
+        vkvv::clear_surface_direct_import_present_state(&resource);
+        ok &= check(!vkvv::surface_resource_has_direct_import_output(&resource), "cleared direct import state still published");
+        return ok;
+    }
+
 } // namespace
 
 int main() {
@@ -350,5 +416,6 @@ int main() {
     ok &= check_stats_and_accounting();
     ok &= check_av1_nondisplay_export_state_policy();
     ok &= check_av1_visible_export_copy_policy();
+    ok &= check_visible_output_publication_policy();
     return ok ? 0 : 1;
 }
