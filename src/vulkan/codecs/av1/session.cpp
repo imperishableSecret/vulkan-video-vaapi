@@ -120,6 +120,10 @@ namespace vkvv {
         for (UploadBuffer& upload : session->uploads) {
             destroy_upload_buffer(runtime, &upload);
         }
+        for (SurfaceResource*& resource : session->retained_dpb_resources) {
+            destroy_surface_resource_raw(runtime, resource);
+            resource = nullptr;
+        }
         destroy_video_session(runtime, &session->video);
         for (AV1ReferenceSlot& slot : session->reference_slots) {
             slot = {};

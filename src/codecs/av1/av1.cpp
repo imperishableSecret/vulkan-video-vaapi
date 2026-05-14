@@ -417,6 +417,10 @@ namespace {
         bool                     have_pending_header         = false;
         bool                     pending_tiles_authoritative = false;
         std::vector<VkvvAV1Tile> pending_tiles;
+        GstAV1OBU                pending_header_obu{};
+        uint32_t                 pending_header_obu_offset                  = 0;
+        bool                     have_pending_header_obu                    = false;
+        bool                     pending_header_obu_updates_reference_state = false;
         GstAV1FrameHeaderOBU     selected_header{};
         uint32_t                 selected_header_offset           = 0;
         bool                     have_selected_header             = false;
@@ -432,6 +436,37 @@ namespace {
 
         auto                     selected_has_required_tiles = [&]() {
             return selected_header.show_existing_frame || (selected_tiles_authoritative && expected_tiles != 0 && selected_tiles.size() >= expected_tiles);
+        };
+
+        auto parse_pending_header_obu = [&]() {
+            if (have_pending_header) {
+                return true;
+            }
+            if (!have_pending_header_obu) {
+                std::snprintf(reason, reason_size, "AV1 tile group did not have a preceding frame header");
+                return false;
+            }
+
+            GstAV1FrameHeaderOBU     frame_header{};
+            GstAV1OBU                obu_copy     = pending_header_obu;
+            const GstAV1ParserResult parse_result = gst_av1_parser_parse_frame_header_obu(av1->parser, &obu_copy, &frame_header);
+            if (parse_result != GST_AV1_PARSER_OK) {
+                std::snprintf(reason, reason_size, "failed to parse selected AV1 frame header: parser_result=%d offset=%u", parse_result, pending_header_obu_offset);
+                return false;
+            }
+
+            pending_header              = frame_header;
+            pending_header_offset       = pending_header_obu_offset;
+            have_pending_header         = true;
+            pending_tiles_authoritative = false;
+            pending_tiles.clear();
+            have_fallback_header             = true;
+            fallback_header                  = frame_header;
+            fallback_header_offset           = pending_header_obu_offset;
+            fallback_updates_reference_state = pending_header_obu_updates_reference_state;
+            fallback_tiles.clear();
+            fallback_tiles_authoritative = false;
+            return true;
         };
 
         while (offset < av1->bitstream.size()) {
@@ -467,6 +502,22 @@ namespace {
                     return false;
                 }
             } else if (obu.obu_type == GST_AV1_OBU_FRAME_HEADER || obu.obu_type == GST_AV1_OBU_REDUNDANT_FRAME_HEADER) {
+                const bool header_matches_target =
+                    have_target_tile && obu_contains_offset(av1->bitstream.data(), av1->bitstream.size(), obu, obu_start, consumed, target_tile_offset);
+                if (have_target_tile && !header_matches_target) {
+                    if (obu.obu_type != GST_AV1_OBU_REDUNDANT_FRAME_HEADER) {
+                        pending_header_obu                         = obu;
+                        pending_header_obu_offset                  = offset;
+                        have_pending_header_obu                    = true;
+                        pending_header_obu_updates_reference_state = true;
+                        have_pending_header                        = false;
+                        pending_tiles_authoritative                = false;
+                        pending_tiles.clear();
+                    }
+                    offset += consumed;
+                    continue;
+                }
+
                 GstAV1FrameHeaderOBU     frame_header{};
                 const GstAV1ParserResult parse_result = gst_av1_parser_parse_frame_header_obu(av1->parser, &obu, &frame_header);
                 if (parse_result != GST_AV1_PARSER_OK) {
@@ -483,10 +534,11 @@ namespace {
                     pending_header              = frame_header;
                     pending_header_offset       = offset;
                     have_pending_header         = true;
+                    have_pending_header_obu     = false;
                     pending_tiles_authoritative = false;
                     pending_tiles.clear();
                 }
-                if (have_target_tile && obu_contains_offset(av1->bitstream.data(), av1->bitstream.size(), obu, obu_start, consumed, target_tile_offset)) {
+                if (header_matches_target) {
                     selected_header                  = frame_header;
                     selected_header_offset           = offset;
                     selected_updates_reference_state = obu.obu_type != GST_AV1_OBU_REDUNDANT_FRAME_HEADER;
@@ -495,33 +547,36 @@ namespace {
                     have_selected_header         = true;
                 }
             } else if (obu.obu_type == GST_AV1_OBU_FRAME) {
+                const bool frame_matches_target =
+                    have_target_tile && obu_contains_offset(av1->bitstream.data(), av1->bitstream.size(), obu, obu_start, consumed, target_tile_offset);
+                const bool frame_intersects_submitted = submitted_ranges_intersect(av1, obu_start, consumed);
+                const bool frame_candidate            = !have_target_tile || frame_matches_target || frame_intersects_submitted;
+                if (!frame_candidate) {
+                    offset += consumed;
+                    continue;
+                }
+
                 GstAV1FrameOBU           frame{};
                 const GstAV1ParserResult parse_result = gst_av1_parser_parse_frame_obu(av1->parser, &obu, &frame);
                 if (parse_result != GST_AV1_PARSER_OK) {
                     std::snprintf(reason, reason_size, "failed to parse AV1 frame OBU: parser_result=%d offset=%u", parse_result, offset);
                     return false;
                 }
-                const bool frame_matches_target =
-                    have_target_tile && obu_contains_offset(av1->bitstream.data(), av1->bitstream.size(), obu, obu_start, consumed, target_tile_offset);
-                const bool               frame_intersects_submitted = submitted_ranges_intersect(av1, obu_start, consumed);
-                const bool               frame_candidate            = !have_target_tile || frame_matches_target || frame_intersects_submitted;
                 std::vector<VkvvAV1Tile> frame_tiles;
                 bool                     frame_tiles_authoritative = false;
-                if (frame_candidate && !frame.frame_header.show_existing_frame) {
+                if (!frame.frame_header.show_existing_frame) {
                     if (!append_tile_group_tiles(av1, obu, frame.tile_group, &frame_tiles, reason, reason_size)) {
                         return false;
                     }
                     frame_tiles_authoritative = true;
                 }
-                if (frame_candidate) {
-                    have_fallback_header             = true;
-                    fallback_header                  = frame.frame_header;
-                    fallback_header_offset           = offset;
-                    fallback_updates_reference_state = true;
-                    fallback_tiles                   = frame_tiles;
-                    fallback_tiles_authoritative     = frame_tiles_authoritative;
-                }
-                if (frame_matches_target) {
+                have_fallback_header             = true;
+                fallback_header                  = frame.frame_header;
+                fallback_header_offset           = offset;
+                fallback_updates_reference_state = true;
+                fallback_tiles                   = frame_tiles;
+                fallback_tiles_authoritative     = frame_tiles_authoritative;
+                if (have_target_tile && (frame_matches_target || frame_intersects_submitted)) {
                     selected_header                  = frame.frame_header;
                     selected_header_offset           = offset;
                     selected_updates_reference_state = true;
@@ -533,15 +588,19 @@ namespace {
                     }
                 }
             } else if (obu.obu_type == GST_AV1_OBU_TILE_GROUP) {
-                if (!have_pending_header) {
-                    std::snprintf(reason, reason_size, "AV1 tile group at offset=%u did not have a preceding frame header", offset);
-                    return false;
-                }
                 const bool group_matches_target =
                     have_target_tile && obu_contains_offset(av1->bitstream.data(), av1->bitstream.size(), obu, obu_start, consumed, target_tile_offset);
-                const bool group_candidate = !have_target_tile || group_matches_target || submitted_ranges_intersect(av1, obu_start, consumed) ||
-                    (have_selected_header && selected_header_offset == pending_header_offset);
-                if (group_candidate && !pending_header.show_existing_frame) {
+                const bool group_intersects_submitted = submitted_ranges_intersect(av1, obu_start, consumed);
+                const bool group_candidate =
+                    !have_target_tile || group_matches_target || group_intersects_submitted || (have_selected_header && selected_header_offset == pending_header_offset);
+                if (!group_candidate) {
+                    offset += consumed;
+                    continue;
+                }
+                if (!parse_pending_header_obu()) {
+                    return false;
+                }
+                if (!pending_header.show_existing_frame) {
                     GstAV1TileGroupOBU       tile_group{};
                     const GstAV1ParserResult parse_result = gst_av1_parser_parse_tile_group_obu(av1->parser, &obu, &tile_group);
                     if (parse_result != GST_AV1_PARSER_OK) {
@@ -561,7 +620,7 @@ namespace {
                     fallback_tiles                   = pending_tiles;
                     fallback_tiles_authoritative     = pending_tiles_authoritative;
                 }
-                if (group_matches_target) {
+                if (have_target_tile && (group_matches_target || (!have_selected_header && group_intersects_submitted))) {
                     selected_header                  = pending_header;
                     selected_header_offset           = pending_header_offset;
                     selected_updates_reference_state = true;
@@ -580,7 +639,7 @@ namespace {
             offset += consumed;
         }
 
-        if (!have_selected_header && have_fallback_header) {
+        if (!have_selected_header && !have_target_tile && have_fallback_header) {
             selected_header                  = fallback_header;
             selected_header_offset           = fallback_header_offset;
             selected_updates_reference_state = fallback_updates_reference_state;

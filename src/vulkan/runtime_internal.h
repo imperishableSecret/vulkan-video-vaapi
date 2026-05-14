@@ -406,6 +406,7 @@ namespace vkvv {
     void                      remember_export_seed_resource(VulkanRuntime* runtime, SurfaceResource* resource);
     void                      unregister_export_seed_resource(VulkanRuntime* runtime, SurfaceResource* resource);
     void                      destroy_surface_resource(VulkanRuntime* runtime, VkvvSurface* surface);
+    void                      destroy_surface_resource_raw(VulkanRuntime* runtime, SurfaceResource* resource);
     bool                      decode_image_key_matches(const DecodeImageKey& existing, const DecodeImageKey& requested);
     bool                      ensure_surface_resource(VulkanRuntime* runtime, VkvvSurface* surface, const DecodeImageKey& key, char* reason, size_t reason_size);
     void                      destroy_upload_buffer(VulkanRuntime* runtime, UploadBuffer* upload);
