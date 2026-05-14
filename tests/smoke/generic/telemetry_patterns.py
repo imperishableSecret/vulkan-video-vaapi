@@ -271,6 +271,7 @@ def main() -> int:
         "nondisplay-present-pinned-skip",
         "neutral-placeholder",
         "source-not-client-safe",
+        "no-pixel-proof",
         "stream-local-seed",
         "failed-no-valid-source",
         "delay-if-pending",
