@@ -649,6 +649,11 @@ namespace vkvv {
             .surface_id         = resource->surface_id,
             .content_generation = resource->export_seed_generation,
         });
+        VKVV_TRACE("export-seed-register",
+                   "codec=0x%x stream=%llu source_surface=%u source_content_gen=%llu source_shadow_gen=%llu visible=1 refresh_export=1 published=%u",
+                   resource->codec_operation, static_cast<unsigned long long>(resource->stream_id), resource->surface_id,
+                   static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->export_resource.content_generation),
+                   surface_resource_has_published_visible_output(resource) ? 1U : 0U);
     }
 
     void unregister_export_seed_resource_locked(VulkanRuntime* runtime, SurfaceResource* resource) {
@@ -785,6 +790,7 @@ namespace vkvv {
 
         const VkImage                         source_image              = source->image;
         const uint64_t                        source_content_generation = source->content_generation;
+        const uint64_t                        source_shadow_generation  = source->export_resource.content_generation;
         const ExportCopyTargetSnapshot        owner_snapshot            = snapshot_export_copy_target(owner_export);
         std::vector<ExportCopyTargetSnapshot> predecode_snapshots;
         predecode_snapshots.reserve(predecode_seed_targets.size());
@@ -943,6 +949,14 @@ namespace vkvv {
             owner_export->black_placeholder      = false;
             owner_export->seed_source_surface_id = VA_INVALID_ID;
             owner_export->seed_source_generation = 0;
+            VKVV_TRACE("export-copy-proof",
+                       "codec=0x%x surface=%u source_surface=%u target_surface=%u source_content_gen=%llu target_content_gen_before=%llu target_content_gen_after=%llu "
+                       "source_shadow_gen=%llu target_shadow_gen_before=%llu target_shadow_gen_after=%llu copy_reason=%s refresh_export=1",
+                       source->codec_operation, source->surface_id, source->surface_id, owner_export->owner_surface_id,
+                       static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(owner_snapshot.content_generation),
+                       static_cast<unsigned long long>(owner_export->content_generation), static_cast<unsigned long long>(source_shadow_generation),
+                       static_cast<unsigned long long>(owner_snapshot.content_generation), static_cast<unsigned long long>(owner_export->content_generation),
+                       vkvv_export_copy_reason_name(VkvvExportCopyReason::VisibleRefresh));
         }
         for (size_t i = 0; i < predecode_seed_targets.size(); i++) {
             ExportResource*                 target   = predecode_seed_targets[i];
@@ -971,6 +985,14 @@ namespace vkvv {
                        source->surface_id, static_cast<unsigned long long>(source->stream_id), source->codec_operation, static_cast<unsigned long long>(source->content_generation),
                        target->owner_surface_id, vkvv_trace_handle(target->memory), static_cast<unsigned long long>(target->content_generation),
                        target->predecode_exported ? 1U : 0U);
+            VKVV_TRACE("export-copy-proof",
+                       "codec=0x%x surface=%u source_surface=%u target_surface=%u source_content_gen=%llu target_content_gen_before=%llu target_content_gen_after=%llu "
+                       "source_shadow_gen=%llu target_shadow_gen_before=%llu target_shadow_gen_after=%llu copy_reason=%s refresh_export=1",
+                       source->codec_operation, source->surface_id, source->surface_id, target->owner_surface_id,
+                       static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(snapshot.content_generation),
+                       static_cast<unsigned long long>(target->content_generation), static_cast<unsigned long long>(source_shadow_generation),
+                       static_cast<unsigned long long>(snapshot.content_generation), static_cast<unsigned long long>(target->content_generation),
+                       vkvv_export_copy_reason_name(VkvvExportCopyReason::PredecodePlaceholderSeed));
             if (!target->predecode_exported) {
                 VKVV_TRACE("export-transition-published",
                            "source_surface=%u source_driver=%llu source_stream=%llu source_codec=0x%x source_gen=%llu target_owner=%u target_driver=%llu target_stream=%llu "

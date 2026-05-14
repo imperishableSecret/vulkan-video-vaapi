@@ -99,6 +99,9 @@ def main() -> int:
             fail(f"AV1 telemetry toggle is missing: {toggle}")
 
     export_text = (root / "src" / "vulkan" / "export.cpp").read_text(encoding="utf-8")
+    shadow_text = (root / "src" / "vulkan" / "export" / "shadow_image.cpp").read_text(encoding="utf-8")
+    export_state_text = (root / "src" / "vulkan" / "export" / "state.cpp").read_text(encoding="utf-8")
+    export_combined_text = export_text + "\n" + shadow_text + "\n" + export_state_text
     if '"av1-visible-output-check"' not in export_text:
         fail("AV1 visible output check trace is missing")
     for event in (
@@ -115,6 +118,15 @@ def main() -> int:
     ):
         if event not in export_text:
             fail(f"AV1 visible output publication trace is missing event {event}")
+    for event in (
+        '"nondisplay-export-guard"',
+        '"invalid-nondisplay-export-mutation"',
+        '"export-copy-proof"',
+        '"visible-output-proof"',
+        '"export-seed-register"',
+    ):
+        if event not in export_combined_text:
+            fail(f"export regression telemetry trace is missing event {event}")
     for field in (
         "show_frame=",
         "show_existing_frame=",
@@ -150,8 +162,25 @@ def main() -> int:
     ):
         if field not in export_text:
             fail(f"AV1 visible output check trace is missing field {field}")
+    for field in (
+        "attempted_seed=",
+        "attempted_copy=",
+        "copy_reason=",
+        "predecode-placeholder-seed",
+        "visible-refresh",
+        "import-output",
+        "previous_visible_surface=",
+        "published_matches_previous=",
+        "source_content_gen=",
+        "target_content_gen_before=",
+        "target_content_gen_after=",
+        "source_shadow_gen=",
+        "target_shadow_gen_before=",
+        "target_shadow_gen_after=",
+    ):
+        if field not in export_combined_text:
+            fail(f"export regression telemetry trace is missing field {field}")
 
-    export_state_text = (root / "src" / "vulkan" / "export" / "state.cpp").read_text(encoding="utf-8")
     for toggle in (
         "VKVV_AV1_TRACE_PUBLICATION",
         "VKVV_AV1_DISABLE_IMPORTED_OUTPUT",
