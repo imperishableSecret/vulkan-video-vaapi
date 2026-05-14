@@ -13,6 +13,8 @@ extern "C" {
 
 #define VKVV_AV1_REFERENCE_COUNT        8
 #define VKVV_AV1_ACTIVE_REFERENCE_COUNT 7
+#define VKVV_AV1_MIN_DPB_SLOTS          9
+#define VKVV_AV1_MIN_ACTIVE_REFERENCES  7
 #define VKVV_AV1_MAX_TILE_COLUMNS       64
 #define VKVV_AV1_MAX_TILE_ROWS          64
 #define VKVV_AV1_MAX_TILES              4096

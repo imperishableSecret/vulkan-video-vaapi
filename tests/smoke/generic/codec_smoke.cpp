@@ -657,6 +657,10 @@ int main(void) {
         check(vkvv_encode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointEncPicture) == nullptr, "H.264 EncPicture should not have encode ops before encode is wired") &&
         ok;
 
+    const VkvvVideoProfileLimits decode_limits = {
+        1, 1, 4096, 4096, 17, 16,
+    };
+
     VkvvDriver drv{};
     drv.caps.h264                = true;
     drv.caps.h265                = true;
@@ -670,6 +674,8 @@ int main(void) {
     drv.caps.surface_export      = true;
     drv.caps.surface_export_nv12 = true;
     drv.caps.surface_export_p010 = true;
+    drv.caps.av1_limits          = decode_limits;
+    drv.caps.av1_10_limits       = decode_limits;
     vkvv_init_profile_capabilities(&drv);
 
     const VkvvProfileCapability* h264_decode = vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointVLD);
@@ -747,6 +753,18 @@ int main(void) {
     av1_feature_value.value = av1_features.value;
     ok =
         check(av1_features.value != VA_ATTRIB_NOT_SUPPORTED && av1_feature_value.bits.lst_support == 0, "AV1 feature attribute should be present with large-scale tile disabled") &&
+        ok;
+
+    VkvvDriver limited_av1_drv{};
+    limited_av1_drv.caps                                     = drv.caps;
+    limited_av1_drv.caps.av1_limits                          = decode_limits;
+    limited_av1_drv.caps.av1_limits.max_dpb_slots            = VKVV_AV1_MIN_DPB_SLOTS - 1;
+    limited_av1_drv.caps.av1_10_limits                       = decode_limits;
+    limited_av1_drv.caps.av1_10_limits.max_active_references = VKVV_AV1_MIN_ACTIVE_REFERENCES - 1;
+    vkvv_init_profile_capabilities(&limited_av1_drv);
+    const VkvvProfileCapability* limited_av1 = vkvv_profile_capability_record(&limited_av1_drv, VAProfileAV1Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
+    ok = check(limited_av1 != nullptr && !limited_av1->advertise && vkvv_profile_capability_for_entrypoint(&limited_av1_drv, VAProfileAV1Profile0, VAEntrypointVLD) == nullptr,
+               "AV1 Profile0 should not advertise when Vulkan DPB/reference limits are below the safe minimum") &&
         ok;
 
     const VkvvProfileCapability* h264_encode = vkvv_profile_capability_record(&drv, VAProfileH264High, VAEntrypointEncSlice, VKVV_CODEC_DIRECTION_ENCODE);

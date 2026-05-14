@@ -250,6 +250,128 @@ namespace {
         return check(slot != nullptr && slot->surface_id == 38 && slot->slot == 7, "AV1 reference reconciliation did not persist the recovered VBI entry");
     }
 
+    vkvv::DecodeImageKey make_av1_decode_key(unsigned int fourcc = VA_FOURCC_NV12) {
+        vkvv::DecodeImageKey key{};
+        key.codec_operation          = VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR;
+        key.codec_profile            = STD_VIDEO_AV1_PROFILE_MAIN;
+        key.picture_format           = fourcc == VA_FOURCC_P010 ? VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16 : VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+        key.reference_picture_format = key.picture_format;
+        key.va_rt_format             = fourcc == VA_FOURCC_P010 ? VA_RT_FORMAT_YUV420_10 : VA_RT_FORMAT_YUV420;
+        key.va_fourcc                = fourcc;
+        key.coded_extent             = {64, 64};
+        key.usage                    = vkvv::av1_surface_image_usage();
+        key.tiling                   = VK_IMAGE_TILING_OPTIMAL;
+        key.chroma_subsampling       = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR;
+        key.luma_bit_depth           = fourcc == VA_FOURCC_P010 ? VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR : VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
+        key.chroma_bit_depth         = key.luma_bit_depth;
+        return key;
+    }
+
+    bool check_av1_reference_identity_validation() {
+        const vkvv::DecodeImageKey key = make_av1_decode_key();
+
+        vkvv::AV1VideoSession      session{};
+        session.bit_depth = 8;
+        session.video.key = {
+            .codec_operation          = key.codec_operation,
+            .codec_profile            = key.codec_profile,
+            .picture_format           = key.picture_format,
+            .reference_picture_format = key.reference_picture_format,
+            .max_coded_extent         = key.coded_extent,
+            .image_usage              = key.usage,
+            .image_create_flags       = key.create_flags,
+            .image_tiling             = key.tiling,
+            .chroma_subsampling       = key.chroma_subsampling,
+            .luma_bit_depth           = key.luma_bit_depth,
+            .chroma_bit_depth         = key.chroma_bit_depth,
+        };
+
+        vkvv::SurfaceResource resource{};
+        resource.driver_instance_id = 17;
+        resource.stream_id          = 23;
+        resource.codec_operation    = key.codec_operation;
+        resource.surface_id         = 55;
+        resource.coded_extent       = key.coded_extent;
+        resource.format             = key.picture_format;
+        resource.va_rt_format       = key.va_rt_format;
+        resource.va_fourcc          = key.va_fourcc;
+        resource.decode_key         = key;
+        resource.content_generation = 3;
+
+        VkvvSurface surface{};
+        surface.id                 = 55;
+        surface.driver_instance_id = 17;
+        surface.stream_id          = 23;
+        surface.codec_operation    = key.codec_operation;
+        surface.rt_format          = key.va_rt_format;
+        surface.fourcc             = key.va_fourcc;
+        surface.vulkan             = &resource;
+        surface.decoded            = true;
+
+        VkvvDriver drv{};
+        drv.driver_instance_id = 17;
+
+        VkvvContext vctx{};
+        vctx.stream_id       = 23;
+        vctx.codec_operation = key.codec_operation;
+
+        vkvv::AV1ReferenceMetadata metadata{};
+        metadata.driver_instance_id = drv.driver_instance_id;
+        metadata.stream_id          = vctx.stream_id;
+        metadata.codec_operation    = key.codec_operation;
+        metadata.surface_id         = surface.id;
+        metadata.content_generation = resource.content_generation;
+        metadata.decode_key         = key;
+        metadata.coded_extent       = resource.coded_extent;
+        metadata.va_rt_format       = resource.va_rt_format;
+        metadata.va_fourcc          = resource.va_fourcc;
+        metadata.bit_depth          = session.bit_depth;
+        metadata.showable           = true;
+
+        StdVideoDecodeAV1ReferenceInfo info{};
+        vkvv::av1_set_reference_slot(&session, 0, surface.id, 1, info, &metadata);
+        const vkvv::AV1ReferenceSlot* slot = vkvv::av1_reference_slot_for_index(&session, 0);
+
+        char                          reason[512] = {};
+        bool                          ok =
+            check(vkvv::validate_av1_reference_slot(&session, slot, &surface, &resource, &drv, &vctx, key, reason, sizeof(reason)), "valid AV1 reference identity was rejected");
+
+        surface.stream_id = 24;
+        reason[0]         = '\0';
+        ok                = check(!vkvv::validate_av1_reference_slot(&session, slot, &surface, &resource, &drv, &vctx, key, reason, sizeof(reason)),
+                                  "AV1 reference validation accepted a cross-stream surface") &&
+            ok;
+        surface.stream_id = vctx.stream_id;
+
+        surface.codec_operation = VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR;
+        reason[0]               = '\0';
+        ok                      = check(!vkvv::validate_av1_reference_slot(&session, slot, &surface, &resource, &drv, &vctx, key, reason, sizeof(reason)),
+                                        "AV1 reference validation accepted a wrong-codec surface") &&
+            ok;
+        surface.codec_operation = key.codec_operation;
+
+        resource.content_generation = 4;
+        reason[0]                   = '\0';
+        ok                          = check(!vkvv::validate_av1_reference_slot(&session, slot, &surface, &resource, &drv, &vctx, key, reason, sizeof(reason)),
+                                            "AV1 reference validation accepted stale content generation") &&
+            ok;
+        resource.content_generation = metadata.content_generation;
+
+        resource.va_fourcc = VA_FOURCC_P010;
+        reason[0]          = '\0';
+        ok                 = check(!vkvv::validate_av1_reference_slot(&session, slot, &surface, &resource, &drv, &vctx, key, reason, sizeof(reason)),
+                                   "AV1 reference validation accepted a wrong-format resource") &&
+            ok;
+        resource.va_fourcc = metadata.va_fourcc;
+
+        vkvv::av1_set_reference_slot(&session, 1, surface.id, 2, info);
+        const vkvv::AV1ReferenceSlot* bare_slot = vkvv::av1_reference_slot_for_index(&session, 1);
+        reason[0]                               = '\0';
+        return check(!vkvv::validate_av1_reference_slot(&session, bare_slot, &surface, &resource, &drv, &vctx, key, reason, sizeof(reason)),
+                     "AV1 reference validation accepted a slot without identity metadata") &&
+            ok;
+    }
+
     bool check_av1_target_slot_selection() {
         vkvv::AV1VideoSession session{};
         session.max_dpb_slots                    = vkvv::max_av1_dpb_slots;
@@ -396,6 +518,7 @@ int main(void) {
     bool ok = check_av1_dpb_slots();
     ok      = check_av1_refresh_retention() && ok;
     ok      = check_av1_surface_reconciliation() && ok;
+    ok      = check_av1_reference_identity_validation() && ok;
     ok      = check_av1_target_slot_selection() && ok;
     ok      = check_av1_target_layout_selection() && ok;
     ok      = check_av1_export_refresh_decision() && ok;
