@@ -477,6 +477,17 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
                        resource->export_resource.predecode_seeded ? 1U : 0U, "nondisplay-refresh");
             return VA_STATUS_ERROR_OPERATION_FAILED;
         }
+        if (attempted_copy && resource->export_resource.present_pinned) {
+            VKVV_TRACE("invalid-nondisplay-present-mutation",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_gen=%llu present_gen=%llu exported=%u shadow_exported=%u "
+                       "copy_reason=%s refresh_export=0",
+                       surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                       resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                       static_cast<unsigned long long>(resource->export_resource.content_generation),
+                       static_cast<unsigned long long>(resource->export_resource.present_generation), resource->exported ? 1U : 0U,
+                       resource->export_resource.exported ? 1U : 0U, vkvv_export_copy_reason_name(VkvvExportCopyReason::NondisplayCurrentRefresh));
+            return VA_STATUS_ERROR_OPERATION_FAILED;
+        }
         if (attempted_copy) {
             if (!refresh_nondisplay_export_resource(runtime, resource, reason, reason_size)) {
                 VKVV_TRACE("nondisplay-export-current-refresh",
@@ -560,6 +571,15 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
     trace_av1_visible_output_check(surface, resource, refresh_export);
     const bool visible_shadow_published = surface_resource_has_exported_shadow_output(resource);
     const bool visible_import_published = surface_resource_has_direct_import_output(resource);
+    if (visible_shadow_published && !resource->export_resource.present_pinned) {
+        VKVV_TRACE("invalid-visible-without-present-pin",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_gen=%llu present_gen=%llu published_path=exported-shadow",
+                   surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                   resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                   static_cast<unsigned long long>(resource->export_resource.content_generation),
+                   static_cast<unsigned long long>(resource->export_resource.present_generation));
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
     VKVV_TRACE("visible-output-proof",
                "codec=0x%x surface=%u content_gen=%llu order_hint_or_frame_num=%llu published_path=%s published_gen=%llu previous_visible_surface=%u previous_visible_gen=%llu "
                "published_matches_previous=%u",
