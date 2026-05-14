@@ -32,6 +32,21 @@ namespace vkvv {
                    resource->published_visible ? 1U : 0U, resource->predecode_exported ? 1U : 0U, resource->predecode_seeded ? 1U : 0U,
                    resource->black_placeholder ? 1U : 0U, refresh_export ? 1U : 0U, display_visible ? 1U : 0U,
                    vkvv_export_present_source_name(resource->present_source), resource->client_visible_shadow ? 1U : 0U);
+        if (resource->content_generation == 0 && resource->presentable) {
+            VKVV_TRACE("invalid-presentable-undecoded-surface",
+                       "surface=%u codec=0x%x stream=%llu content_gen=%llu shadow_gen=%llu present_gen=%llu presentable=1 present_pinned=%u action=%s",
+                       owner->surface_id, owner->codec_operation, static_cast<unsigned long long>(owner->stream_id),
+                       static_cast<unsigned long long>(owner->content_generation), static_cast<unsigned long long>(resource->content_generation),
+                       static_cast<unsigned long long>(resource->present_generation), resource->present_pinned ? 1U : 0U, action != nullptr ? action : "unknown");
+        }
+        if (resource->present_generation > owner->content_generation) {
+            VKVV_TRACE("invalid-present-generation",
+                       "surface=%u codec=0x%x stream=%llu content_gen=%llu shadow_gen=%llu present_gen=%llu presentable=%u present_pinned=%u action=%s",
+                       owner->surface_id, owner->codec_operation, static_cast<unsigned long long>(owner->stream_id),
+                       static_cast<unsigned long long>(owner->content_generation), static_cast<unsigned long long>(resource->content_generation),
+                       static_cast<unsigned long long>(resource->present_generation), resource->presentable ? 1U : 0U, resource->present_pinned ? 1U : 0U,
+                       action != nullptr ? action : "unknown");
+        }
     }
 
     namespace {
