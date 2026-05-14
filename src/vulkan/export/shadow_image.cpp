@@ -26,7 +26,8 @@ namespace vkvv {
                    "action=%s surface=%u codec=0x%x stream=%llu fd_dev=%llu fd_ino=%llu content_gen=%llu present_shadow_gen=%llu private_shadow_gen=%llu "
                    "decode_shadow_gen=%llu present_gen=%llu presentable=%u present_pinned=%u published_visible=%u decode_shadow_private_active=%u predecode=%u seeded=%u "
                    "predecode_quarantined=%u predecode_generation=%llu placeholder=%u refresh_export=%u display_visible=%u present_source=%s mutation_action=%s "
-                   "client_visible_shadow_mutated=0 client_visible_shadow=%u private_only=%u",
+                   "client_visible_shadow_mutated=0 client_visible_shadow=%u private_only=%u external_release_required=%u external_release_done=%u external_release_mode=%s "
+                   "external_released_generation=%llu",
                    action != nullptr ? action : "unknown", owner->surface_id, owner->codec_operation, static_cast<unsigned long long>(owner->stream_id),
                    static_cast<unsigned long long>(resource->fd_dev), static_cast<unsigned long long>(resource->fd_ino), static_cast<unsigned long long>(owner->content_generation),
                    static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(owner->private_decode_shadow.content_generation),
@@ -35,7 +36,9 @@ namespace vkvv {
                    resource->predecode_exported ? 1U : 0U, resource->predecode_seeded ? 1U : 0U, resource->predecode_quarantined ? 1U : 0U,
                    static_cast<unsigned long long>(resource->predecode_generation), resource->black_placeholder ? 1U : 0U, refresh_export ? 1U : 0U, display_visible ? 1U : 0U,
                    vkvv_export_present_source_name(resource->present_source), mutation_action, resource->client_visible_shadow ? 1U : 0U,
-                   resource->private_nondisplay_shadow ? 1U : 0U);
+                   resource->private_nondisplay_shadow ? 1U : 0U, resource->external_sync.external_release_required ? 1U : 0U,
+                   resource->external_sync.external_release_done ? 1U : 0U, vkvv_external_release_mode_name(resource->external_sync.release_mode),
+                   static_cast<unsigned long long>(resource->external_sync.released_generation));
         if (resource->content_generation == 0 && resource->presentable) {
             VKVV_TRACE("invalid-presentable-undecoded-surface",
                        "surface=%u codec=0x%x stream=%llu content_gen=%llu shadow_gen=%llu present_gen=%llu presentable=1 present_pinned=%u action=%s", owner->surface_id,
@@ -1116,6 +1119,9 @@ namespace vkvv {
         add_raw_image_barrier(&barriers, source->image, source->layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                               VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
         if (owner_export != nullptr) {
+            if (copy_owner_export && owner_export->exported) {
+                mark_export_visible_acquire(source, owner_export);
+            }
             add_raw_image_barrier(&barriers, owner_export->image, owner_export->layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                                   VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
         }
@@ -1242,6 +1248,9 @@ namespace vkvv {
             owner_export->seed_source_surface_id = VA_INVALID_ID;
             owner_export->seed_source_generation = 0;
             clear_export_present_state(owner_export);
+            if (owner_refresh_export) {
+                mark_export_visible_release(source, owner_export, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+            }
             VKVV_TRACE("export-copy-proof",
                        "codec=0x%x surface=%u source_surface=%u target_surface=%u source_content_gen=%llu target_content_gen_before=%llu target_content_gen_after=%llu "
                        "source_shadow_gen=%llu target_shadow_gen_before=%llu target_shadow_gen_after=%llu copy_reason=%s refresh_export=%u",

@@ -640,7 +640,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
         !surface_resource_export_shadow_stale(resource);
     if (visible_shadow_ready) {
         pin_export_visible_present(resource, &resource->export_resource, present_source);
-        exit_predecode_quarantine(resource, &resource->export_resource, false);
+        exit_predecode_quarantine(resource, &resource->export_resource, export_visible_release_satisfied(&resource->export_resource));
         trace_export_present_state(resource, &resource->export_resource, "visible-present-pin", refresh_export, display_visible);
     }
     trace_av1_visible_output_check(surface, resource, refresh_export);

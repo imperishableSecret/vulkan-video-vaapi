@@ -28,6 +28,17 @@ namespace vkvv {
         }
     }
 
+    const char* vkvv_external_release_mode_name(VkvvExternalReleaseMode mode) {
+        switch (mode) {
+            case VkvvExternalReleaseMode::NoneRequired: return "none-required";
+            case VkvvExternalReleaseMode::ConcurrentSharing: return "concurrent-sharing-no-qfot";
+            case VkvvExternalReleaseMode::QueueFamilyOwnershipTransfer: return "queue-family-ownership-transfer";
+            case VkvvExternalReleaseMode::ImplicitSyncOnly: return "implicit-sync-only";
+            case VkvvExternalReleaseMode::ExplicitSyncFile: return "explicit-sync-file";
+            default: return "unknown";
+        }
+    }
+
     bool av1_export_env_flag_enabled(const char* name) {
         const char* value = std::getenv(name);
         return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 && std::strcmp(value, "off") != 0;
@@ -59,10 +70,23 @@ namespace vkvv {
             !surface_resource_export_shadow_stale(resource);
     }
 
+    bool export_visible_release_satisfied(const ExportResource* resource) {
+        if (resource == nullptr || resource->content_generation == 0) {
+            return false;
+        }
+        const ExternalSyncState& sync = resource->external_sync;
+        if (sync.released_generation != resource->content_generation) {
+            return false;
+        }
+        return sync.external_release_done || !sync.external_release_required || sync.release_mode == VkvvExternalReleaseMode::NoneRequired ||
+            sync.release_mode == VkvvExternalReleaseMode::ConcurrentSharing;
+    }
+
     bool surface_resource_has_exported_shadow_output(const SurfaceResource* resource) {
         return surface_resource_has_current_export_shadow(resource) && resource->exported && resource->export_resource.exported &&
             !resource->export_resource.predecode_quarantined && resource->export_resource.presentable && resource->export_resource.present_pinned &&
-            resource->export_resource.published_visible && resource->export_resource.present_generation == resource->content_generation;
+            resource->export_resource.published_visible && resource->export_resource.present_generation == resource->content_generation &&
+            export_visible_release_satisfied(&resource->export_resource);
     }
 
     bool surface_resource_has_direct_import_output(const SurfaceResource* resource) {
@@ -109,6 +133,7 @@ namespace vkvv {
         resource->present_source            = VkvvExportPresentSource::None;
         resource->client_visible_shadow     = false;
         resource->private_nondisplay_shadow = false;
+        resource->external_sync             = {};
     }
 
     void mark_export_predecode_nonpresentable(ExportResource* resource) {
@@ -241,6 +266,48 @@ namespace vkvv {
                    owner->surface_id, static_cast<unsigned long long>(owner->driver_instance_id), static_cast<unsigned long long>(owner->stream_id), owner->codec_operation,
                    static_cast<unsigned long long>(fd_dev), static_cast<unsigned long long>(fd_ino), static_cast<unsigned long long>(owner->content_generation),
                    static_cast<unsigned long long>(resource->present_generation), release_done ? 1U : 0U);
+    }
+
+    void mark_export_visible_acquire(const SurfaceResource* owner, ExportResource* resource) {
+        if (owner == nullptr || resource == nullptr || resource->image == VK_NULL_HANDLE || resource->memory == VK_NULL_HANDLE) {
+            return;
+        }
+        ExternalSyncState& sync        = resource->external_sync;
+        sync.external_acquire_required = false;
+        sync.external_acquire_done     = true;
+        sync.acquired_generation       = resource->content_generation;
+        sync.release_mode              = VkvvExternalReleaseMode::ImplicitSyncOnly;
+        sync.src_queue_family          = invalid_queue_family;
+        sync.dst_queue_family          = invalid_queue_family;
+        VKVV_TRACE("export-visible-acquire",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu acquired_generation=%llu acquire_required=0 acquire_done=1 acquire_mode=%s "
+                   "src_queue_family=%u dst_queue_family=%u",
+                   owner->surface_id, static_cast<unsigned long long>(owner->driver_instance_id), static_cast<unsigned long long>(owner->stream_id), owner->codec_operation,
+                   static_cast<unsigned long long>(resource->fd_dev), static_cast<unsigned long long>(resource->fd_ino), static_cast<unsigned long long>(sync.acquired_generation),
+                   vkvv_external_release_mode_name(sync.release_mode), sync.src_queue_family, sync.dst_queue_family);
+    }
+
+    void mark_export_visible_release(const SurfaceResource* owner, ExportResource* resource, VkImageLayout old_layout, VkImageLayout new_layout) {
+        if (owner == nullptr || resource == nullptr || resource->image == VK_NULL_HANDLE || resource->memory == VK_NULL_HANDLE) {
+            return;
+        }
+        ExternalSyncState& sync        = resource->external_sync;
+        sync.external_release_required = false;
+        sync.external_release_done     = true;
+        sync.src_queue_family          = invalid_queue_family;
+        sync.dst_queue_family          = invalid_queue_family;
+        sync.last_internal_layout      = new_layout;
+        sync.external_layout           = new_layout;
+        sync.released_generation       = resource->content_generation;
+        sync.release_mode              = VkvvExternalReleaseMode::ImplicitSyncOnly;
+        resource->layout               = new_layout;
+        VKVV_TRACE("export-visible-release",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu present_gen=%llu old_layout=%d new_layout=%d src_queue_family=%u "
+                   "dst_queue_family=%u release_required=0 release_done=1 release_mode=%s",
+                   owner->surface_id, static_cast<unsigned long long>(owner->driver_instance_id), static_cast<unsigned long long>(owner->stream_id), owner->codec_operation,
+                   static_cast<unsigned long long>(resource->fd_dev), static_cast<unsigned long long>(resource->fd_ino), static_cast<unsigned long long>(owner->content_generation),
+                   static_cast<unsigned long long>(resource->present_generation), old_layout, new_layout, sync.src_queue_family, sync.dst_queue_family,
+                   vkvv_external_release_mode_name(sync.release_mode));
     }
 
     void clear_nondisplay_predecode_presentation_state(SurfaceResource* resource) {
