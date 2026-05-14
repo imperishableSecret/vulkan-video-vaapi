@@ -10,6 +10,7 @@ namespace vkvv {
             case VkvvExportCopyReason::VisibleRefresh: return "visible-refresh";
             case VkvvExportCopyReason::PredecodePlaceholderSeed: return "predecode-placeholder-seed";
             case VkvvExportCopyReason::ImportOutput: return "import-output";
+            case VkvvExportCopyReason::NondisplayCurrentRefresh: return "nondisplay-current-refresh";
             default: return "unknown";
         }
     }
