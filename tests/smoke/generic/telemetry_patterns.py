@@ -34,6 +34,30 @@ def main() -> int:
         if "vkvv_trace_deep_enabled()" not in window:
             fail(f"export_seed_records_string() is not deep-trace gated at {shadow.relative_to(root)}:{index + 1}")
 
+    av1_decode = root / "src" / "vulkan" / "codecs" / "av1" / "decode.cpp"
+    av1_text = av1_decode.read_text(encoding="utf-8")
+    if '"av1-display-decision"' not in av1_text:
+        fail("AV1 display decision trace is missing")
+    for field in (
+        "show_frame=",
+        "show_existing_frame=",
+        "showable_frame=",
+        "refresh_frame_flags=",
+        "frame_to_show_map_idx=",
+        "content_gen=",
+        "shadow_gen=",
+        "refresh_export=",
+        "exported=",
+        "shadow_exported=",
+        "predecode=",
+        "seeded=",
+        "last_display_surface=",
+        "last_display_gen=",
+        "display_action=",
+    ):
+        if field not in av1_text:
+            fail(f"AV1 display decision trace is missing field {field}")
+
     return 0
 
 
