@@ -313,7 +313,7 @@ namespace {
         bool ok = check(!vkvv::av1_decode_needs_export_refresh(&input), "pure hidden AV1 reference frame unexpectedly refreshed export shadow");
 
         input.header.showable_frame = true;
-        ok                          = check(vkvv::av1_decode_needs_export_refresh(&input), "showable AV1 hidden frame did not request export shadow refresh") && ok;
+        ok                          = check(!vkvv::av1_decode_needs_export_refresh(&input), "showable AV1 hidden frame unexpectedly refreshed export shadow") && ok;
 
         input.header.showable_frame = false;
         input.header.show_frame     = true;

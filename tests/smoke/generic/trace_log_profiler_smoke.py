@@ -27,6 +27,11 @@ nvidia-vulkan-vaapi: trace seq=16 event=export-nondisplay-shadow-seed surface=7 
 nvidia-vulkan-vaapi: trace seq=17 event=export-copy-publish-skip surface=7 driver=2 stream=1 codec=0x8
 nvidia-vulkan-vaapi: trace seq=18 event=fence-wait slot=0 use=decode operation=VP9 decode timeout_ns=18446744073709551615 status=-4 wait_ns=4000
 nvidia-vulkan-vaapi: trace seq=19 event=va-end-finish driver=2 target=7 status=1 decoded=0 pending=0
+nvidia-vulkan-vaapi: trace seq=20 event=av1-frame-enter driver=2 ctx_stream=2 target=8 current_frame=2 order_hint=2 frame_type=1 show=0 hdr_existing=0 hdr_show=0 hdr_showable=1 refresh_export=0 refresh=0x01 primary_ref=0 depth=8 fourcc=0x3231564e bitstream=64 header=0 tiles=1
+nvidia-vulkan-vaapi: trace seq=21 event=av1-decode-plan driver=2 ctx_stream=2 target=8 surface_stream=2 surface_codec=0x4 frame_type=1 show=0 hdr_existing=0 hdr_show=0 hdr_showable=1 refresh_export=0 current_frame=2 order_hint=2 primary_ref=0 refresh=0x01 depth=8 fourcc=0x3231564e refs=0 current_ref=1 setup=1 target_slot=1 used_mask=0x001 content_gen=0 shadow_gen=0 exported=0 last_display_gen=0 predecode=0
+nvidia-vulkan-vaapi: trace seq=22 event=pending-submit slot=1 use=decode pending=1 operation=AV1 decode surface=8 driver=2 stream=2 codec=0x4 refresh_export=0 decoded=0 content_gen=0 shadow_mem=0x2 shadow_gen=0 predecode=0 upload_mem=2048
+nvidia-vulkan-vaapi: trace seq=23 event=pending-complete-after use=decode operation=AV1 decode surface=8 status=0 refresh_export=0 decoded=1 content_gen=1 shadow_mem=0x2 shadow_gen=0 predecode=0 exported=0
+nvidia-vulkan-vaapi: trace seq=24 event=av1-submit driver=2 ctx_stream=2 target=8 slot=1 refresh=0x01 refresh_export=0 hdr_existing=0 hdr_show=0 hdr_showable=1 depth=8 fourcc=0x3231564e refs=0 bytes=64 upload_mem=2048 session_mem=4096
 [1:2:0512/000000.000000:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:3552] vaEndPicture failed, VA error: operation failed
 nvidia-vulkan-vaapi: device-lost call=vkWaitForFences operation=AV1 decode result=-4 decode_submitted=1 decode_completed=0
 """
@@ -79,11 +84,11 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 18, "trace record count mismatch")
+    check(data["trace_records"] == 23, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
-    check(totals["streams"] == 1, "stream count mismatch")
-    check(totals["decode_submitted"] == 1 and totals["decode_completed"] == 1 and totals["decode_failed"] == 1, "decode aggregate mismatch")
+    check(totals["streams"] == 2, "stream count mismatch")
+    check(totals["decode_submitted"] == 2 and totals["decode_completed"] == 2 and totals["decode_failed"] == 1, "decode aggregate mismatch")
     check(totals["export_copy_targets"] == 2, "copy target aggregate mismatch")
     check(totals["export_copy_bytes"] == 12288 and totals["export_copy_wait_ns"] == 3000, "copy metric aggregate mismatch")
     check(totals["fence_waits"] == 2 and totals["fence_wait_ns"] == 6000, "fence metric aggregate mismatch")
@@ -97,6 +102,7 @@ def main() -> int:
     check(totals["stale_visible_nondisplay"] == 1, "stale visible nondisplay aggregate mismatch")
     check(totals["nondisplay_shadow_seeds"] == 1, "nondisplay shadow seed aggregate mismatch")
     check(totals["export_copy_publish_skips"] == 1, "export copy publish skip aggregate mismatch")
+    check(data["events"].get("av1-submit") == 1, "AV1 submit event count mismatch")
     check(data["browser_dropped_frames_observed"] is False, "browser dropped-frame observation mismatch")
     check(totals["device_lost"] == 1, "device-lost aggregate mismatch")
     check(totals["va_end_failed"] == 1, "VA end failure aggregate mismatch")
@@ -111,6 +117,9 @@ def main() -> int:
     check(stream["decode_failed"] == 1 and stream["va_end_failed"] == 1, "stream failure mismatch")
     check(stream["nondisplay_refresh_skips"] == 1 and stream["stale_visible_nondisplay"] == 1 and stream["nondisplay_shadow_seeds"] == 1, "stream nondisplay mismatch")
     check(stream["export_copy_publish_skips"] == 1, "stream publish skip mismatch")
+    av1_stream = data["streams"][1]
+    check(av1_stream["codec"] == "av1/0x4", "AV1 stream codec mismatch")
+    check(av1_stream["refresh_requested"] == 0 and av1_stream["stale_visible_nondisplay"] == 0, "hidden showable AV1 stream refreshed visible export state")
     check("driver_stale_drops=2" in text_result.stdout, "text stale drop aggregate missing")
     check("nondisplay_shadow_seeds=1" in text_result.stdout, "text nondisplay seed aggregate missing")
     check("browser_dropped_frames_observed=0" in text_result.stdout, "text browser dropped-frame warning missing")

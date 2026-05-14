@@ -180,7 +180,7 @@ namespace vkvv {
         if (input == nullptr || input->pic == nullptr) {
             return true;
         }
-        return input->pic->pic_info_fields.bits.show_frame != 0 || input->header.show_existing_frame || input->header.show_frame || input->header.showable_frame;
+        return input->pic->pic_info_fields.bits.show_frame != 0 || input->header.show_existing_frame || input->header.show_frame;
     }
 
     void av1_update_reference_slots_from_refresh(AV1VideoSession* session, const VkvvAV1DecodeInput* input, VASurfaceID target_surface_id, int target_slot,
