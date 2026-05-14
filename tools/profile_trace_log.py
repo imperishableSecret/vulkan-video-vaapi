@@ -118,7 +118,14 @@ class StreamStats:
     stale_visible_nondisplay: int = 0
     nondisplay_shadow_seeds: int = 0
     nondisplay_current_refreshes: int = 0
+    present_state_traces: int = 0
+    visible_present_pins: int = 0
+    nondisplay_present_pinned_skips: int = 0
     invalid_nondisplay_stale_export_shadows: int = 0
+    invalid_presentable_undecoded_surfaces: int = 0
+    invalid_nondisplay_present_mutations: int = 0
+    invalid_present_generations: int = 0
+    invalid_visible_without_present_pins: int = 0
     av1_tile_submit_maps: int = 0
     av1_tile_suspicious: int = 0
     av1_dpb_maps: int = 0
@@ -181,7 +188,14 @@ class TraceProfile:
         self.stale_visible_nondisplay = 0
         self.nondisplay_shadow_seeds = 0
         self.nondisplay_current_refreshes = 0
+        self.present_state_traces = 0
+        self.visible_present_pins = 0
+        self.nondisplay_present_pinned_skips = 0
         self.invalid_nondisplay_stale_export_shadows = 0
+        self.invalid_presentable_undecoded_surfaces = 0
+        self.invalid_nondisplay_present_mutations = 0
+        self.invalid_present_generations = 0
+        self.invalid_visible_without_present_pins = 0
         self.av1_tile_submit_maps = 0
         self.av1_tile_suspicious = 0
         self.av1_dpb_maps = 0
@@ -306,8 +320,22 @@ class TraceProfile:
             stream.nondisplay_shadow_seeds += 1
         elif event == "nondisplay-export-current-refresh" and stream is not None:
             stream.nondisplay_current_refreshes += 1
+        elif event == "export-present-state" and stream is not None:
+            stream.present_state_traces += 1
+            if fields.get("action") == "visible-present-pin":
+                stream.visible_present_pins += 1
+        elif event == "nondisplay-present-pinned-skip" and stream is not None:
+            stream.nondisplay_present_pinned_skips += 1
         elif event == "invalid-nondisplay-stale-export-shadow" and stream is not None:
             stream.invalid_nondisplay_stale_export_shadows += 1
+        elif event == "invalid-presentable-undecoded-surface" and stream is not None:
+            stream.invalid_presentable_undecoded_surfaces += 1
+        elif event == "invalid-nondisplay-present-mutation" and stream is not None:
+            stream.invalid_nondisplay_present_mutations += 1
+        elif event == "invalid-present-generation" and stream is not None:
+            stream.invalid_present_generations += 1
+        elif event == "invalid-visible-without-present-pin" and stream is not None:
+            stream.invalid_visible_without_present_pins += 1
         elif event == "export-copy-done" and stream is not None:
             stream.export_copy_done += 1
             stream.export_copy_seed_targets += parse_int(fields.get("seeded_targets")) or 0
@@ -392,8 +420,22 @@ class TraceProfile:
             self.nondisplay_shadow_seeds += 1
         elif event == "nondisplay-export-current-refresh":
             self.nondisplay_current_refreshes += 1
+        elif event == "export-present-state":
+            self.present_state_traces += 1
+            if fields.get("action") == "visible-present-pin":
+                self.visible_present_pins += 1
+        elif event == "nondisplay-present-pinned-skip":
+            self.nondisplay_present_pinned_skips += 1
         elif event == "invalid-nondisplay-stale-export-shadow":
             self.invalid_nondisplay_stale_export_shadows += 1
+        elif event == "invalid-presentable-undecoded-surface":
+            self.invalid_presentable_undecoded_surfaces += 1
+        elif event == "invalid-nondisplay-present-mutation":
+            self.invalid_nondisplay_present_mutations += 1
+        elif event == "invalid-present-generation":
+            self.invalid_present_generations += 1
+        elif event == "invalid-visible-without-present-pin":
+            self.invalid_visible_without_present_pins += 1
         elif event == "export-copy-publish-skip":
             self.export_copy_publish_skips += 1
         elif event == "av1-tile-submit-map" and fields.get("scope") == "frame":
@@ -478,7 +520,14 @@ class TraceProfile:
             "stale_visible_nondisplay": self.stale_visible_nondisplay,
             "nondisplay_shadow_seeds": self.nondisplay_shadow_seeds,
             "nondisplay_current_refreshes": self.nondisplay_current_refreshes,
+            "present_state_traces": self.present_state_traces,
+            "visible_present_pins": self.visible_present_pins,
+            "nondisplay_present_pinned_skips": self.nondisplay_present_pinned_skips,
             "invalid_nondisplay_stale_export_shadows": self.invalid_nondisplay_stale_export_shadows,
+            "invalid_presentable_undecoded_surfaces": self.invalid_presentable_undecoded_surfaces,
+            "invalid_nondisplay_present_mutations": self.invalid_nondisplay_present_mutations,
+            "invalid_present_generations": self.invalid_present_generations,
+            "invalid_visible_without_present_pins": self.invalid_visible_without_present_pins,
             "av1_tile_submit_maps": self.av1_tile_submit_maps,
             "av1_tile_suspicious": self.av1_tile_suspicious,
             "av1_dpb_maps": self.av1_dpb_maps,
@@ -510,7 +559,14 @@ class TraceProfile:
             total["stale_visible_nondisplay"] += stream.stale_visible_nondisplay
             total["nondisplay_shadow_seeds"] += stream.nondisplay_shadow_seeds
             total["nondisplay_current_refreshes"] += stream.nondisplay_current_refreshes
+            total["present_state_traces"] += stream.present_state_traces
+            total["visible_present_pins"] += stream.visible_present_pins
+            total["nondisplay_present_pinned_skips"] += stream.nondisplay_present_pinned_skips
             total["invalid_nondisplay_stale_export_shadows"] += stream.invalid_nondisplay_stale_export_shadows
+            total["invalid_presentable_undecoded_surfaces"] += stream.invalid_presentable_undecoded_surfaces
+            total["invalid_nondisplay_present_mutations"] += stream.invalid_nondisplay_present_mutations
+            total["invalid_present_generations"] += stream.invalid_present_generations
+            total["invalid_visible_without_present_pins"] += stream.invalid_visible_without_present_pins
             total["av1_tile_submit_maps"] += stream.av1_tile_submit_maps
             total["av1_tile_suspicious"] += stream.av1_tile_suspicious
             total["av1_dpb_maps"] += stream.av1_dpb_maps
@@ -585,7 +641,14 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "stale_visible_nondisplay": stream.stale_visible_nondisplay,
         "nondisplay_shadow_seeds": stream.nondisplay_shadow_seeds,
         "nondisplay_current_refreshes": stream.nondisplay_current_refreshes,
+        "present_state_traces": stream.present_state_traces,
+        "visible_present_pins": stream.visible_present_pins,
+        "nondisplay_present_pinned_skips": stream.nondisplay_present_pinned_skips,
         "invalid_nondisplay_stale_export_shadows": stream.invalid_nondisplay_stale_export_shadows,
+        "invalid_presentable_undecoded_surfaces": stream.invalid_presentable_undecoded_surfaces,
+        "invalid_nondisplay_present_mutations": stream.invalid_nondisplay_present_mutations,
+        "invalid_present_generations": stream.invalid_present_generations,
+        "invalid_visible_without_present_pins": stream.invalid_visible_without_present_pins,
         "av1_tile_submit_maps": stream.av1_tile_submit_maps,
         "av1_tile_suspicious": stream.av1_tile_suspicious,
         "av1_dpb_maps": stream.av1_dpb_maps,
@@ -662,7 +725,12 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         f"export_seed_stale_drops={totals['export_seed_stale_drops']} nondisplay_refresh_skips={totals['nondisplay_refresh_skips']} "
         f"stale_visible_nondisplay={totals['stale_visible_nondisplay']} nondisplay_shadow_seeds={totals['nondisplay_shadow_seeds']} "
         f"nondisplay_current_refreshes={totals['nondisplay_current_refreshes']} "
+        f"present_state_traces={totals['present_state_traces']} visible_present_pins={totals['visible_present_pins']} "
+        f"nondisplay_present_pinned_skips={totals['nondisplay_present_pinned_skips']} "
         f"invalid_nondisplay_stale_export_shadows={totals['invalid_nondisplay_stale_export_shadows']} "
+        f"invalid_presentable_undecoded_surfaces={totals['invalid_presentable_undecoded_surfaces']} "
+        f"invalid_nondisplay_present_mutations={totals['invalid_nondisplay_present_mutations']} "
+        f"invalid_present_generations={totals['invalid_present_generations']} invalid_visible_without_present_pins={totals['invalid_visible_without_present_pins']} "
         f"av1_tile_submit_maps={totals['av1_tile_submit_maps']} av1_tile_suspicious={totals['av1_tile_suspicious']} "
         f"av1_dpb_maps={totals['av1_dpb_maps']} av1_visible_audits={totals['av1_visible_audits']} av1_publish_failures={totals['av1_publish_failures']} "
         f"export_copy_publish_skips={totals['export_copy_publish_skips']} "
@@ -681,7 +749,12 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"export_seed_stale_drops={values['export_seed_stale_drops']} nondisplay_refresh_skips={values['nondisplay_refresh_skips']} "
             f"stale_visible_nondisplay={values['stale_visible_nondisplay']} nondisplay_shadow_seeds={values['nondisplay_shadow_seeds']} "
             f"nondisplay_current_refreshes={values['nondisplay_current_refreshes']} "
+            f"present_state_traces={values['present_state_traces']} visible_present_pins={values['visible_present_pins']} "
+            f"nondisplay_present_pinned_skips={values['nondisplay_present_pinned_skips']} "
             f"invalid_nondisplay_stale_export_shadows={values['invalid_nondisplay_stale_export_shadows']} "
+            f"invalid_presentable_undecoded_surfaces={values['invalid_presentable_undecoded_surfaces']} "
+            f"invalid_nondisplay_present_mutations={values['invalid_nondisplay_present_mutations']} "
+            f"invalid_present_generations={values['invalid_present_generations']} invalid_visible_without_present_pins={values['invalid_visible_without_present_pins']} "
             f"av1_tile_submit_maps={values['av1_tile_submit_maps']} av1_tile_suspicious={values['av1_tile_suspicious']} "
             f"av1_dpb_maps={values['av1_dpb_maps']} av1_visible_audits={values['av1_visible_audits']} av1_publish_failures={values['av1_publish_failures']} "
             f"export_copy_publish_skips={values['export_copy_publish_skips']}"
@@ -703,7 +776,12 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"export_seed_stale_drops={stream.export_seed_stale_drops} nondisplay_refresh_skips={stream.refresh_skipped} "
             f"stale_visible_nondisplay={stream.stale_visible_nondisplay} nondisplay_shadow_seeds={stream.nondisplay_shadow_seeds} "
             f"nondisplay_current_refreshes={stream.nondisplay_current_refreshes} "
+            f"present_state_traces={stream.present_state_traces} visible_present_pins={stream.visible_present_pins} "
+            f"nondisplay_present_pinned_skips={stream.nondisplay_present_pinned_skips} "
             f"invalid_nondisplay_stale_export_shadows={stream.invalid_nondisplay_stale_export_shadows} "
+            f"invalid_presentable_undecoded_surfaces={stream.invalid_presentable_undecoded_surfaces} "
+            f"invalid_nondisplay_present_mutations={stream.invalid_nondisplay_present_mutations} "
+            f"invalid_present_generations={stream.invalid_present_generations} invalid_visible_without_present_pins={stream.invalid_visible_without_present_pins} "
             f"av1_tile_submit_maps={stream.av1_tile_submit_maps} av1_tile_suspicious={stream.av1_tile_suspicious} "
             f"av1_dpb_maps={stream.av1_dpb_maps} av1_visible_audits={stream.av1_visible_audits} av1_publish_failures={stream.av1_publish_failures} "
             f"export_copy_publish_skips={stream.export_copy_publish_skips}"
