@@ -443,6 +443,7 @@ namespace vkvv {
 
         unregister_predecode_export_resource_locked(runtime, &resource->export_resource);
         resource->exported = false;
+        clear_surface_export_attach_state(resource);
         RetainedExportBacking backing{};
         ExportResource&       detached = backing.resource;
         detached                       = resource->export_resource;
@@ -516,6 +517,7 @@ namespace vkvv {
         resource->last_nondisplay_skip_shadow_generation = 0;
         resource->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
         resource->last_display_refresh_generation        = 0;
+        clear_surface_export_attach_state(resource);
     }
 
     void destroy_surface_resource_raw(VulkanRuntime* runtime, SurfaceResource* resource) {

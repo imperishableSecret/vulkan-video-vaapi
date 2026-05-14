@@ -246,6 +246,46 @@ namespace {
         return ok;
     }
 
+    bool check_av1_visible_export_copy_policy() {
+        bool                  ok = true;
+        vkvv::SurfaceResource av1_resource{};
+        av1_resource.codec_operation                    = codec_av1;
+        av1_resource.content_generation                 = 11;
+        av1_resource.export_resource.content_generation = 11;
+
+        ok &= check(!vkvv::surface_resource_export_shadow_stale(&av1_resource), "current AV1 shadow was marked stale");
+        ok &= check(!vkvv::av1_visible_export_requires_copy(&av1_resource), "current AV1 shadow forced an unnecessary visible copy");
+
+        av1_resource.export_resource.predecode_exported = true;
+        ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "AV1 predecode export did not force visible copy");
+        av1_resource.export_resource.predecode_exported = false;
+
+        av1_resource.export_resource.predecode_seeded = true;
+        ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "AV1 seeded predecode export did not force visible copy");
+        av1_resource.export_resource.predecode_seeded = false;
+
+        av1_resource.export_resource.black_placeholder = true;
+        ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "AV1 placeholder export did not force visible copy");
+        av1_resource.export_resource.black_placeholder = false;
+
+        av1_resource.export_retained_attached = true;
+        ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "AV1 retained export attach did not force visible copy");
+        vkvv::clear_surface_export_attach_state(&av1_resource);
+
+        av1_resource.export_import_attached = true;
+        ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "AV1 imported export attach did not force visible copy");
+        vkvv::clear_surface_export_attach_state(&av1_resource);
+
+        av1_resource.export_resource.content_generation = 10;
+        ok &= check(vkvv::surface_resource_export_shadow_stale(&av1_resource), "stale AV1 shadow generation was not detected");
+        ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "stale AV1 shadow did not force visible copy");
+
+        vkvv::SurfaceResource vp9_resource = av1_resource;
+        vp9_resource.codec_operation       = codec_vp9;
+        ok &= check(!vkvv::av1_visible_export_requires_copy(&vp9_resource), "non-AV1 stale shadow used the AV1 visible copy policy");
+        return ok;
+    }
+
 } // namespace
 
 int main() {
@@ -309,5 +349,6 @@ int main() {
     ok &= check_window_policy();
     ok &= check_stats_and_accounting();
     ok &= check_av1_nondisplay_export_state_policy();
+    ok &= check_av1_visible_export_copy_policy();
     return ok ? 0 : 1;
 }

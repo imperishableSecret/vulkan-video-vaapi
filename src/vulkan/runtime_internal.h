@@ -185,6 +185,8 @@ namespace vkvv {
         uint64_t                      last_nondisplay_skip_shadow_generation = 0;
         VkDeviceMemory                last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
         uint64_t                      last_display_refresh_generation        = 0;
+        bool                          export_retained_attached               = false;
+        bool                          export_import_attached                 = false;
         ExportResource                export_resource{};
         uint64_t                      content_generation     = 0;
         uint64_t                      export_seed_generation = 0;
@@ -388,7 +390,10 @@ namespace vkvv {
     bool                retained_export_seed_can_replace_window(const TransitionRetentionWindow& window, const ExportResource& seed);
     bool                surface_resource_uses_av1_decode(const SurfaceResource* resource);
     bool                av1_non_display_export_refresh(const SurfaceResource* resource, bool refresh_export);
+    bool                surface_resource_export_shadow_stale(const SurfaceResource* resource);
+    bool                av1_visible_export_requires_copy(const SurfaceResource* resource);
     void                clear_predecode_export_state(ExportResource* resource);
+    void                clear_surface_export_attach_state(SurfaceResource* resource);
     VkDeviceSize        retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties& properties);
     RetainedExportBudget  retained_export_budget_from_expected(size_t expected_count, VkDeviceSize expected_bytes, VkDeviceSize global_cap_bytes);
     size_t                runtime_retained_export_count(VulkanRuntime* runtime);
