@@ -135,6 +135,7 @@ def main() -> int:
         '"private-decode-shadow-create"',
         '"private-decode-shadow-copy-enter"',
         '"private-decode-shadow-copy-done"',
+        '"export-late-present-shadow-preserved"',
         '"export-copy-proof"',
         '"visible-output-proof"',
         '"export-seed-register"',

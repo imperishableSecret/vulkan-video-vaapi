@@ -830,6 +830,8 @@ namespace {
         void*                       session     = nullptr;
         VADRMPRIMESurfaceDescriptor descriptor{};
         descriptor.objects[0].fd = -1;
+        VADRMPRIMESurfaceDescriptor reexport_descriptor{};
+        reexport_descriptor.objects[0].fd = -1;
 
         VkvvSurface surface{};
         init_nv12_surface(&surface, 912, h264_stream_id + 4, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
@@ -838,6 +840,10 @@ namespace {
             if (descriptor.objects[0].fd >= 0) {
                 close(descriptor.objects[0].fd);
                 descriptor.objects[0].fd = -1;
+            }
+            if (reexport_descriptor.objects[0].fd >= 0) {
+                close(reexport_descriptor.objects[0].fd);
+                reexport_descriptor.objects[0].fd = -1;
             }
             vkvv_vulkan_surface_destroy(runtime, &surface);
             vkvv_vulkan_h264_session_destroy(runtime, session);
@@ -924,6 +930,18 @@ namespace {
             !resource->export_resource.decode_shadow_private_active || resource->export_resource.decode_shadow_generation != nondisplay_generation ||
             resource->private_decode_shadow.content_generation != nondisplay_generation || vkvv::current_decode_shadow(resource) != &resource->private_decode_shadow) {
             std::fprintf(stderr, "non-display refresh did not preserve pinned presentation while updating private decode shadow\n");
+            cleanup();
+            return false;
+        }
+
+        status = vkvv_vulkan_export_surface(runtime, &surface, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &reexport_descriptor, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            std::printf("%s\n", reason);
+        }
+        if (status != VA_STATUS_SUCCESS || resource->export_resource.content_generation != visible_shadow_generation ||
+            resource->private_decode_shadow.content_generation != nondisplay_generation || resource->export_resource.decode_shadow_generation != nondisplay_generation ||
+            vkvv::current_decode_shadow(resource) != &resource->private_decode_shadow) {
+            std::fprintf(stderr, "re-export after private COW mutated the pinned presentation shadow\n");
             cleanup();
             return false;
         }

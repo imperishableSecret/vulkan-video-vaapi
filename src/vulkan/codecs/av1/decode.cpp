@@ -277,7 +277,7 @@ namespace {
         const bool     showable_frame      = input != nullptr && input->header.showable_frame;
         const uint32_t refresh_flags       = input != nullptr ? input->header.refresh_frame_flags : 0;
         const int      frame_to_show       = input != nullptr ? input->header.frame_to_show_map_idx : -1;
-        const bool     shadow_stale        = surface_resource_export_shadow_stale(resource);
+        const bool     shadow_stale        = surface_resource_decode_shadow_stale(resource);
         VKVV_TRACE("av1-display-decision",
                    "driver=%llu ctx_stream=%llu surface=%u show_frame=%u show_existing_frame=%u showable_frame=%u refresh_frame_flags=0x%02x frame_to_show_map_idx=%d "
                    "content_gen=%llu shadow_gen=%llu shadow_stale=%u refresh_export=%u exported=%u shadow_exported=%u predecode=%u seeded=%u last_display_surface=%u "
