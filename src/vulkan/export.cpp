@@ -64,6 +64,23 @@ namespace {
         return "none";
     }
 
+    bool refresh_has_visible_display(const SurfaceResource* resource, bool refresh_export) {
+        if (!refresh_export) {
+            return false;
+        }
+        if (surface_resource_uses_av1_decode(resource) && resource->av1_visible_output_trace_valid) {
+            return resource->av1_visible_show_frame || resource->av1_visible_show_existing_frame;
+        }
+        return true;
+    }
+
+    VkvvExportPresentSource visible_present_source(const SurfaceResource* resource) {
+        if (surface_resource_uses_av1_decode(resource) && resource->av1_visible_output_trace_valid && resource->av1_visible_show_existing_frame) {
+            return VkvvExportPresentSource::ShowExisting;
+        }
+        return VkvvExportPresentSource::VisibleRefresh;
+    }
+
     void trace_av1_publication_fingerprint(VkvvSurface* surface, SurfaceResource* resource, bool refresh_export, bool shadow_published, bool import_published,
                                            bool published) {
         if (surface == nullptr || resource == nullptr || !surface_resource_uses_av1_decode(resource) || !refresh_export || !av1_trace_publication_enabled()) {
@@ -507,6 +524,13 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
     uint32_t seeded_predecode_exports = 0;
     if (!copy_surface_to_export_resource(runtime, resource, &seeded_predecode_exports, reason, reason_size)) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    const bool                    display_visible      = refresh_has_visible_display(resource, refresh_export);
+    const VkvvExportPresentSource present_source       = visible_present_source(resource);
+    const bool                    visible_shadow_ready = display_visible && surface_resource_has_exported_shadow_output(resource);
+    if (visible_shadow_ready) {
+        pin_export_visible_present(resource, &resource->export_resource, present_source);
+        trace_export_present_state(resource, &resource->export_resource, "visible-present-pin", refresh_export, display_visible);
     }
     trace_av1_visible_output_check(surface, resource, refresh_export);
     const bool visible_shadow_published = surface_resource_has_exported_shadow_output(resource);
