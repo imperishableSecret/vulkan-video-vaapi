@@ -8,6 +8,31 @@
 
 using namespace vkvv;
 
+namespace {
+
+    void trace_av1_visible_output_check(VkvvSurface* surface, SurfaceResource* resource, bool refresh_export) {
+        if (surface == nullptr || resource == nullptr || !surface_resource_uses_av1_decode(resource) || !refresh_export || resource->content_generation == 0) {
+            return;
+        }
+
+        const bool trace_valid      = resource->av1_visible_output_trace_valid;
+        const bool shadow_ok        = surface_resource_has_current_export_shadow(resource);
+        const bool direct_import_ok = surface_resource_has_direct_import_output(resource);
+        const bool published        = shadow_ok || direct_import_ok;
+        VKVV_TRACE("av1-visible-output-check",
+                   "surface=%u show_frame=%u show_existing_frame=%u refresh_frame_flags=0x%02x frame_to_show_map_idx=%d refresh_export=%u content_gen=%llu shadow_mem=0x%llx "
+                   "shadow_gen=%llu shadow_ok=%u import_external=%u import_present_generation=%llu direct_import_ok=%u exported=%u shadow_exported=%u result=%s",
+                   surface->id, trace_valid && resource->av1_visible_show_frame ? 1U : 0U, trace_valid && resource->av1_visible_show_existing_frame ? 1U : 0U,
+                   trace_valid ? resource->av1_visible_refresh_frame_flags : 0U, trace_valid ? resource->av1_visible_frame_to_show_map_idx : -1, refresh_export ? 1U : 0U,
+                   static_cast<unsigned long long>(resource->content_generation), vkvv_trace_handle(resource->export_resource.memory),
+                   static_cast<unsigned long long>(resource->export_resource.content_generation), shadow_ok ? 1U : 0U, resource->import.external ? 1U : 0U,
+                   static_cast<unsigned long long>(resource->import_present_generation), direct_import_ok ? 1U : 0U, resource->exported ? 1U : 0U,
+                   resource->export_resource.exported ? 1U : 0U, published ? "published" : "unpublished");
+        clear_surface_av1_visible_output_trace(resource);
+    }
+
+} // namespace
+
 bool vkvv_vulkan_surface_has_exported_backing(const VkvvSurface* surface) {
     if (surface == nullptr || surface->vulkan == nullptr) {
         return false;
@@ -132,6 +157,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
                        refresh_export ? 1U : 0U, static_cast<unsigned long long>(resource->content_generation), resource->import.external ? 1U : 0U, resource->exported ? 1U : 0U,
                        resource->export_resource.exported ? 1U : 0U, surface_resource_has_direct_import_output(resource) ? 1U : 0U, runtime_retained_export_count(runtime),
                        static_cast<unsigned long long>(runtime_retained_export_memory_bytes(runtime)), reason != nullptr ? reason : "");
+            trace_av1_visible_output_check(surface, resource, refresh_export);
             return VA_STATUS_ERROR_OPERATION_FAILED;
         }
     }
@@ -156,6 +182,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
                    refresh_export ? 1U : 0U, static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->export_seed_generation),
                    static_cast<unsigned long long>(resource->last_nondisplay_skip_generation), static_cast<unsigned long long>(resource->last_display_refresh_generation),
                    runtime_retained_export_count(runtime), static_cast<unsigned long long>(runtime_retained_export_memory_bytes(runtime)));
+        trace_av1_visible_output_check(surface, resource, refresh_export);
         return VA_STATUS_SUCCESS;
     }
 
@@ -287,6 +314,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
     if (!copy_surface_to_export_resource(runtime, resource, &seeded_predecode_exports, reason, reason_size)) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
+    trace_av1_visible_output_check(surface, resource, refresh_export);
     if (requires_published_visible_output && !surface_resource_has_published_visible_output(resource)) {
         VKVV_TRACE("visible-refresh-unpublished",
                    "surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu shadow_ok=%u import_external=%u "

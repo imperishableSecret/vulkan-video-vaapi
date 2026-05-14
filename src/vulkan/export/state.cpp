@@ -80,4 +80,15 @@ namespace vkvv {
         resource->import_codec_operation         = 0;
     }
 
+    void clear_surface_av1_visible_output_trace(SurfaceResource* resource) {
+        if (resource == nullptr) {
+            return;
+        }
+        resource->av1_visible_output_trace_valid    = false;
+        resource->av1_visible_show_frame            = false;
+        resource->av1_visible_show_existing_frame   = false;
+        resource->av1_visible_refresh_frame_flags   = 0;
+        resource->av1_visible_frame_to_show_map_idx = -1;
+    }
+
 } // namespace vkvv
