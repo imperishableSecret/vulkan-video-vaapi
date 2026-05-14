@@ -721,6 +721,10 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         exported_shadow->fd_stat_valid = fd_stat.valid;
         exported_shadow->fd_dev        = fd_stat.dev;
         exported_shadow->fd_ino        = fd_stat.ino;
+        if (!surface->decoded) {
+            mark_export_predecode_nonpresentable(exported_shadow);
+            trace_export_present_state(resource, exported_shadow, "predecode-export", false, false);
+        }
     }
     VKVV_TRACE("export-fd",
                "surface=%u driver=%llu stream=%llu codec=0x%x fd=%d fd_stat=%u fd_dev=%llu fd_ino=%llu export_mem=0x%llx content_gen=%llu shadow_gen=%llu predecode=%u seeded=%u "

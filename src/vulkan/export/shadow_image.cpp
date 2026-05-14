@@ -17,6 +17,22 @@ namespace vkvv {
     void add_raw_image_barrier(std::vector<VkImageMemoryBarrier2>* barriers, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout, VkPipelineStageFlags2 src_stage,
                                VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access);
 
+    void trace_export_present_state(const SurfaceResource* owner, const ExportResource* resource, const char* action, bool refresh_export, bool display_visible) {
+        if (owner == nullptr || resource == nullptr) {
+            return;
+        }
+        VKVV_TRACE("export-present-state",
+                   "action=%s surface=%u codec=0x%x stream=%llu fd_dev=%llu fd_ino=%llu content_gen=%llu shadow_gen=%llu present_gen=%llu presentable=%u "
+                   "present_pinned=%u published_visible=%u predecode=%u seeded=%u placeholder=%u refresh_export=%u display_visible=%u present_source=%s client_visible_shadow=%u",
+                   action != nullptr ? action : "unknown", owner->surface_id, owner->codec_operation, static_cast<unsigned long long>(owner->stream_id),
+                   static_cast<unsigned long long>(resource->fd_dev), static_cast<unsigned long long>(resource->fd_ino),
+                   static_cast<unsigned long long>(owner->content_generation), static_cast<unsigned long long>(resource->content_generation),
+                   static_cast<unsigned long long>(resource->present_generation), resource->presentable ? 1U : 0U, resource->present_pinned ? 1U : 0U,
+                   resource->published_visible ? 1U : 0U, resource->predecode_exported ? 1U : 0U, resource->predecode_seeded ? 1U : 0U,
+                   resource->black_placeholder ? 1U : 0U, refresh_export ? 1U : 0U, display_visible ? 1U : 0U,
+                   vkvv_export_present_source_name(resource->present_source), resource->client_visible_shadow ? 1U : 0U);
+    }
+
     namespace {
 
         struct ScopedUploadBuffer {
@@ -236,6 +252,7 @@ namespace vkvv {
             resource->black_placeholder      = true;
             resource->seed_source_surface_id = VA_INVALID_ID;
             resource->seed_source_generation = 0;
+            mark_export_predecode_nonpresentable(resource);
             return true;
         }
 
@@ -949,6 +966,7 @@ namespace vkvv {
             owner_export->black_placeholder      = false;
             owner_export->seed_source_surface_id = VA_INVALID_ID;
             owner_export->seed_source_generation = 0;
+            clear_export_present_state(owner_export);
             VKVV_TRACE("export-copy-proof",
                        "codec=0x%x surface=%u source_surface=%u target_surface=%u source_content_gen=%llu target_content_gen_before=%llu target_content_gen_after=%llu "
                        "source_shadow_gen=%llu target_shadow_gen_before=%llu target_shadow_gen_after=%llu copy_reason=%s refresh_export=%u",
@@ -977,8 +995,10 @@ namespace vkvv {
                 target->predecode_seeded       = true;
                 target->seed_source_surface_id = source->surface_id;
                 target->seed_source_generation = source->content_generation;
+                mark_export_predecode_nonpresentable(target);
             } else {
                 target->content_generation = source->content_generation;
+                clear_export_present_state(target);
             }
             VKVV_TRACE("export-predecode-seeded",
                        "source_surface=%u source_stream=%llu source_codec=0x%x source_gen=%llu target_owner=%u target_mem=0x%llx target_gen=%llu target_predecode=%u",
@@ -993,6 +1013,7 @@ namespace vkvv {
                        static_cast<unsigned long long>(target->content_generation), static_cast<unsigned long long>(source_shadow_generation),
                        static_cast<unsigned long long>(snapshot.content_generation), static_cast<unsigned long long>(target->content_generation),
                        vkvv_export_copy_reason_name(VkvvExportCopyReason::PredecodePlaceholderSeed));
+            trace_export_present_state(source, target, "predecode-seed-nonpresentable", true, false);
             if (!target->predecode_exported) {
                 VKVV_TRACE("export-transition-published",
                            "source_surface=%u source_driver=%llu source_stream=%llu source_codec=0x%x source_gen=%llu target_owner=%u target_driver=%llu target_stream=%llu "

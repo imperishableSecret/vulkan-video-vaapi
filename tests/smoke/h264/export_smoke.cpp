@@ -234,6 +234,13 @@ namespace {
             cleanup();
             return false;
         }
+        if (backup_resource->export_resource.presentable || backup_resource->export_resource.present_pinned ||
+            backup_resource->export_resource.present_generation != 0 ||
+            backup_resource->export_resource.present_source != vkvv::VkvvExportPresentSource::PredecodePlaceholder) {
+            std::fprintf(stderr, "predecode export should not be presentable before decode\n");
+            cleanup();
+            return false;
+        }
 
         status = vkvv_vulkan_prepare_surface_export(runtime, &decoded, reason, sizeof(reason));
         std::printf("%s\n", reason);
@@ -276,6 +283,13 @@ namespace {
             backup_resource->export_resource.seed_source_generation != decoded_resource->content_generation || backup_resource->export_resource.content_generation != 0 ||
             backup_resource->export_resource.layout != VK_IMAGE_LAYOUT_GENERAL) {
             std::fprintf(stderr, "decoded refresh did not seed compatible predecode backup export\n");
+            cleanup();
+            return false;
+        }
+        if (backup_resource->export_resource.presentable || backup_resource->export_resource.present_pinned ||
+            backup_resource->export_resource.present_generation != 0 ||
+            backup_resource->export_resource.present_source != vkvv::VkvvExportPresentSource::PredecodePlaceholder) {
+            std::fprintf(stderr, "predecode seed should remain non-presentable\n");
             cleanup();
             return false;
         }
@@ -354,6 +368,11 @@ namespace {
             late_resource->export_resource.black_placeholder || late_resource->export_resource.seed_source_surface_id != decoded.id ||
             late_resource->export_resource.seed_source_generation != decoded_resource->content_generation) {
             std::fprintf(stderr, "predecode export did not seed from the last same-stream decoded surface before fd return\n");
+            cleanup();
+            return false;
+        }
+        if (late_resource->export_resource.presentable || late_resource->export_resource.present_pinned || late_resource->export_resource.present_generation != 0) {
+            std::fprintf(stderr, "export-time predecode seed should remain non-presentable\n");
             cleanup();
             return false;
         }

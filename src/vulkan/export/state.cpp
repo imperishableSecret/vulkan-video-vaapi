@@ -15,6 +15,17 @@ namespace vkvv {
         }
     }
 
+    const char* vkvv_export_present_source_name(VkvvExportPresentSource source) {
+        switch (source) {
+            case VkvvExportPresentSource::None: return "none";
+            case VkvvExportPresentSource::VisibleRefresh: return "visible-refresh";
+            case VkvvExportPresentSource::ShowExisting: return "show-existing";
+            case VkvvExportPresentSource::PredecodePlaceholder: return "predecode-placeholder";
+            case VkvvExportPresentSource::PrivateNondisplay: return "private-nondisplay";
+            default: return "unknown";
+        }
+    }
+
     bool av1_export_env_flag_enabled(const char* name) {
         const char* value = std::getenv(name);
         return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 && std::strcmp(value, "off") != 0;
@@ -68,6 +79,32 @@ namespace vkvv {
         return surface_resource_uses_av1_decode(resource) &&
             (resource->export_resource.predecode_exported || resource->export_resource.predecode_seeded || resource->export_resource.black_placeholder ||
              resource->export_retained_attached || resource->export_import_attached || surface_resource_export_shadow_stale(resource));
+    }
+
+    void clear_export_present_state(ExportResource* resource) {
+        if (resource == nullptr) {
+            return;
+        }
+        resource->present_pinned           = false;
+        resource->presentable              = false;
+        resource->published_visible        = false;
+        resource->present_generation       = 0;
+        resource->present_fd_dev           = 0;
+        resource->present_fd_ino           = 0;
+        resource->present_surface_id       = VA_INVALID_ID;
+        resource->present_stream_id        = 0;
+        resource->present_codec_operation  = 0;
+        resource->present_source           = VkvvExportPresentSource::None;
+        resource->client_visible_shadow    = false;
+        resource->private_nondisplay_shadow = false;
+    }
+
+    void mark_export_predecode_nonpresentable(ExportResource* resource) {
+        if (resource == nullptr) {
+            return;
+        }
+        clear_export_present_state(resource);
+        resource->present_source = VkvvExportPresentSource::PredecodePlaceholder;
     }
 
     void clear_predecode_export_state(ExportResource* resource) {
