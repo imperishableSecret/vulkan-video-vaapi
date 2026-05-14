@@ -117,6 +117,8 @@ class StreamStats:
     export_seed_stale_drops: int = 0
     stale_visible_nondisplay: int = 0
     nondisplay_shadow_seeds: int = 0
+    nondisplay_current_refreshes: int = 0
+    invalid_nondisplay_stale_export_shadows: int = 0
     av1_tile_submit_maps: int = 0
     av1_tile_suspicious: int = 0
     av1_dpb_maps: int = 0
@@ -178,6 +180,8 @@ class TraceProfile:
         self.nondisplay_refresh_skips = 0
         self.stale_visible_nondisplay = 0
         self.nondisplay_shadow_seeds = 0
+        self.nondisplay_current_refreshes = 0
+        self.invalid_nondisplay_stale_export_shadows = 0
         self.av1_tile_submit_maps = 0
         self.av1_tile_suspicious = 0
         self.av1_dpb_maps = 0
@@ -300,6 +304,10 @@ class TraceProfile:
             stream.stale_visible_nondisplay += 1
         elif event == "export-nondisplay-shadow-seed" and stream is not None:
             stream.nondisplay_shadow_seeds += 1
+        elif event == "nondisplay-export-current-refresh" and stream is not None:
+            stream.nondisplay_current_refreshes += 1
+        elif event == "invalid-nondisplay-stale-export-shadow" and stream is not None:
+            stream.invalid_nondisplay_stale_export_shadows += 1
         elif event == "export-copy-done" and stream is not None:
             stream.export_copy_done += 1
             stream.export_copy_seed_targets += parse_int(fields.get("seeded_targets")) or 0
@@ -382,6 +390,10 @@ class TraceProfile:
             self.stale_visible_nondisplay += 1
         elif event == "export-nondisplay-shadow-seed":
             self.nondisplay_shadow_seeds += 1
+        elif event == "nondisplay-export-current-refresh":
+            self.nondisplay_current_refreshes += 1
+        elif event == "invalid-nondisplay-stale-export-shadow":
+            self.invalid_nondisplay_stale_export_shadows += 1
         elif event == "export-copy-publish-skip":
             self.export_copy_publish_skips += 1
         elif event == "av1-tile-submit-map" and fields.get("scope") == "frame":
@@ -465,6 +477,8 @@ class TraceProfile:
             "nondisplay_refresh_skips": self.nondisplay_refresh_skips,
             "stale_visible_nondisplay": self.stale_visible_nondisplay,
             "nondisplay_shadow_seeds": self.nondisplay_shadow_seeds,
+            "nondisplay_current_refreshes": self.nondisplay_current_refreshes,
+            "invalid_nondisplay_stale_export_shadows": self.invalid_nondisplay_stale_export_shadows,
             "av1_tile_submit_maps": self.av1_tile_submit_maps,
             "av1_tile_suspicious": self.av1_tile_suspicious,
             "av1_dpb_maps": self.av1_dpb_maps,
@@ -495,6 +509,8 @@ class TraceProfile:
             total["nondisplay_refresh_skips"] += stream.refresh_skipped
             total["stale_visible_nondisplay"] += stream.stale_visible_nondisplay
             total["nondisplay_shadow_seeds"] += stream.nondisplay_shadow_seeds
+            total["nondisplay_current_refreshes"] += stream.nondisplay_current_refreshes
+            total["invalid_nondisplay_stale_export_shadows"] += stream.invalid_nondisplay_stale_export_shadows
             total["av1_tile_submit_maps"] += stream.av1_tile_submit_maps
             total["av1_tile_suspicious"] += stream.av1_tile_suspicious
             total["av1_dpb_maps"] += stream.av1_dpb_maps
@@ -568,6 +584,8 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "nondisplay_refresh_skips": stream.refresh_skipped,
         "stale_visible_nondisplay": stream.stale_visible_nondisplay,
         "nondisplay_shadow_seeds": stream.nondisplay_shadow_seeds,
+        "nondisplay_current_refreshes": stream.nondisplay_current_refreshes,
+        "invalid_nondisplay_stale_export_shadows": stream.invalid_nondisplay_stale_export_shadows,
         "av1_tile_submit_maps": stream.av1_tile_submit_maps,
         "av1_tile_suspicious": stream.av1_tile_suspicious,
         "av1_dpb_maps": stream.av1_dpb_maps,
@@ -643,6 +661,8 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         f"driver_stale_drops={totals['driver_stale_drops']} predecode_stale_drops={totals['predecode_stale_drops']} "
         f"export_seed_stale_drops={totals['export_seed_stale_drops']} nondisplay_refresh_skips={totals['nondisplay_refresh_skips']} "
         f"stale_visible_nondisplay={totals['stale_visible_nondisplay']} nondisplay_shadow_seeds={totals['nondisplay_shadow_seeds']} "
+        f"nondisplay_current_refreshes={totals['nondisplay_current_refreshes']} "
+        f"invalid_nondisplay_stale_export_shadows={totals['invalid_nondisplay_stale_export_shadows']} "
         f"av1_tile_submit_maps={totals['av1_tile_submit_maps']} av1_tile_suspicious={totals['av1_tile_suspicious']} "
         f"av1_dpb_maps={totals['av1_dpb_maps']} av1_visible_audits={totals['av1_visible_audits']} av1_publish_failures={totals['av1_publish_failures']} "
         f"export_copy_publish_skips={totals['export_copy_publish_skips']} "
@@ -660,6 +680,8 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"driver_stale_drops={values['driver_stale_drops']} predecode_stale_drops={values['predecode_stale_drops']} "
             f"export_seed_stale_drops={values['export_seed_stale_drops']} nondisplay_refresh_skips={values['nondisplay_refresh_skips']} "
             f"stale_visible_nondisplay={values['stale_visible_nondisplay']} nondisplay_shadow_seeds={values['nondisplay_shadow_seeds']} "
+            f"nondisplay_current_refreshes={values['nondisplay_current_refreshes']} "
+            f"invalid_nondisplay_stale_export_shadows={values['invalid_nondisplay_stale_export_shadows']} "
             f"av1_tile_submit_maps={values['av1_tile_submit_maps']} av1_tile_suspicious={values['av1_tile_suspicious']} "
             f"av1_dpb_maps={values['av1_dpb_maps']} av1_visible_audits={values['av1_visible_audits']} av1_publish_failures={values['av1_publish_failures']} "
             f"export_copy_publish_skips={values['export_copy_publish_skips']}"
@@ -680,6 +702,8 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"driver_stale_drops={stream.stale_drops} predecode_stale_drops={stream.predecode_stale_drops} "
             f"export_seed_stale_drops={stream.export_seed_stale_drops} nondisplay_refresh_skips={stream.refresh_skipped} "
             f"stale_visible_nondisplay={stream.stale_visible_nondisplay} nondisplay_shadow_seeds={stream.nondisplay_shadow_seeds} "
+            f"nondisplay_current_refreshes={stream.nondisplay_current_refreshes} "
+            f"invalid_nondisplay_stale_export_shadows={stream.invalid_nondisplay_stale_export_shadows} "
             f"av1_tile_submit_maps={stream.av1_tile_submit_maps} av1_tile_suspicious={stream.av1_tile_suspicious} "
             f"av1_dpb_maps={stream.av1_dpb_maps} av1_visible_audits={stream.av1_visible_audits} av1_publish_failures={stream.av1_publish_failures} "
             f"export_copy_publish_skips={stream.export_copy_publish_skips}"
