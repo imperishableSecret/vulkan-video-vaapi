@@ -121,16 +121,6 @@ namespace vkvv {
 
     const char* vkvv_export_copy_reason_name(VkvvExportCopyReason reason);
 
-    enum class ThumbnailPredecodeAction {
-        NormalPredecodePolicy,
-        DrainAndExport,
-        StreamLocalSeed,
-        FailExport,
-        DebugPlaceholder,
-    };
-
-    const char* thumbnail_predecode_action_name(ThumbnailPredecodeAction action);
-
     struct PredecodeExportRecord {
         ExportResource*               resource           = nullptr;
         VkImage                       image              = VK_NULL_HANDLE;
@@ -525,9 +515,6 @@ namespace vkvv {
     bool                export_resource_fd_may_be_sampled_by_client(const ExportResource* resource);
     uint64_t            export_resource_fd_content_generation(const ExportResource* resource);
     bool                export_resource_fd_fresh(const SurfaceResource* resource);
-    bool                surface_resource_thumbnail_like(const SurfaceResource* resource);
-    bool                debug_allow_thumbnail_placeholder();
-    ThumbnailPredecodeAction decide_thumbnail_predecode_export(VulkanRuntime* runtime, SurfaceResource* resource, char* reason, size_t reason_size);
     bool                surface_resource_has_current_export_shadow(const SurfaceResource* resource);
     bool                surface_resource_visible_publish_ready(const SurfaceResource* resource, bool display_visible, bool copy_done, bool pixel_proof_required);
     bool                surface_resource_has_exported_shadow_output(const SurfaceResource* resource);
