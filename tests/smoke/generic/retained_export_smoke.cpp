@@ -338,7 +338,15 @@ namespace {
 
         resource.export_resource.content_generation = resource.content_generation;
         ok &= check(vkvv::surface_resource_has_current_export_shadow(&resource), "current shadow was not treated as current");
-        ok &= check(vkvv::surface_resource_has_published_visible_output(&resource), "current shadow was not treated as published");
+        ok &= check(!vkvv::surface_resource_has_exported_shadow_output(&resource), "private shadow was treated as exported output");
+        ok &= check(!vkvv::surface_resource_has_published_visible_output(&resource), "private shadow was treated as published output");
+
+        resource.exported                 = true;
+        resource.export_resource.exported = true;
+        ok &= check(vkvv::surface_resource_has_exported_shadow_output(&resource), "exported current shadow was not treated as published output");
+        ok &= check(vkvv::surface_resource_has_published_visible_output(&resource), "exported current shadow did not satisfy visible publication");
+        resource.exported                 = false;
+        resource.export_resource.exported = false;
 
         resource.export_resource = {};
         mark_direct_import_current(&resource);

@@ -61,6 +61,13 @@ def main() -> int:
     export_text = (root / "src" / "vulkan" / "export.cpp").read_text(encoding="utf-8")
     if '"av1-visible-output-check"' not in export_text:
         fail("AV1 visible output check trace is missing")
+    for event in (
+        '"av1-visible-output-published"',
+        '"av1-visible-output-not-published"',
+        '"import-output-copy-failed"',
+    ):
+        if event not in export_text:
+            fail(f"AV1 visible output publication trace is missing event {event}")
     for field in (
         "show_frame=",
         "show_existing_frame=",
@@ -71,9 +78,18 @@ def main() -> int:
         "shadow_mem=",
         "shadow_gen=",
         "shadow_ok=",
+        "shadow_published=",
         "import_external=",
         "import_present_generation=",
         "direct_import_ok=",
+        "import_published=",
+        "import_fd_dev=",
+        "import_fd_ino=",
+        "decode_image=",
+        "import_image=",
+        "copy_done=",
+        "layout_released=",
+        "queue_family_released=",
         "exported=",
         "shadow_exported=",
         "result=",

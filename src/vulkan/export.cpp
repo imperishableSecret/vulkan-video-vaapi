@@ -16,18 +16,52 @@ namespace {
         }
 
         const bool trace_valid      = resource->av1_visible_output_trace_valid;
-        const bool shadow_ok        = surface_resource_has_current_export_shadow(resource);
-        const bool direct_import_ok = surface_resource_has_direct_import_output(resource);
-        const bool published        = shadow_ok || direct_import_ok;
+        const bool shadow_current   = surface_resource_has_current_export_shadow(resource);
+        const bool shadow_published = surface_resource_has_exported_shadow_output(resource);
+        const bool import_published = surface_resource_has_direct_import_output(resource);
+        const bool published        = shadow_published || import_published;
         VKVV_TRACE("av1-visible-output-check",
                    "surface=%u show_frame=%u show_existing_frame=%u refresh_frame_flags=0x%02x frame_to_show_map_idx=%d refresh_export=%u content_gen=%llu shadow_mem=0x%llx "
-                   "shadow_gen=%llu shadow_ok=%u import_external=%u import_present_generation=%llu direct_import_ok=%u exported=%u shadow_exported=%u result=%s",
+                   "shadow_gen=%llu shadow_ok=%u shadow_published=%u import_external=%u import_present_generation=%llu direct_import_ok=%u import_published=%u exported=%u "
+                   "shadow_exported=%u result=%s",
                    surface->id, trace_valid && resource->av1_visible_show_frame ? 1U : 0U, trace_valid && resource->av1_visible_show_existing_frame ? 1U : 0U,
                    trace_valid ? resource->av1_visible_refresh_frame_flags : 0U, trace_valid ? resource->av1_visible_frame_to_show_map_idx : -1, refresh_export ? 1U : 0U,
                    static_cast<unsigned long long>(resource->content_generation), vkvv_trace_handle(resource->export_resource.memory),
-                   static_cast<unsigned long long>(resource->export_resource.content_generation), shadow_ok ? 1U : 0U, resource->import.external ? 1U : 0U,
-                   static_cast<unsigned long long>(resource->import_present_generation), direct_import_ok ? 1U : 0U, resource->exported ? 1U : 0U,
-                   resource->export_resource.exported ? 1U : 0U, published ? "published" : "unpublished");
+                   static_cast<unsigned long long>(resource->export_resource.content_generation), shadow_current ? 1U : 0U, shadow_published ? 1U : 0U,
+                   resource->import.external ? 1U : 0U, static_cast<unsigned long long>(resource->import_present_generation), import_published ? 1U : 0U,
+                   import_published ? 1U : 0U, resource->exported ? 1U : 0U, resource->export_resource.exported ? 1U : 0U, published ? "published" : "unpublished");
+        if (published) {
+            VKVV_TRACE("av1-visible-output-published",
+                       "surface=%u stream=%llu codec=0x%x content_gen=%llu shadow_gen=%llu shadow_published=%u import_published=%u exported=%u shadow_exported=%u "
+                       "import_external=%u direct_import_ok=%u import_present_generation=%llu import_fd_dev=%llu import_fd_ino=%llu decode_image=0x%llx import_image=0x0 "
+                       "copy_done=%u layout_released=%u queue_family_released=%u",
+                       surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                       static_cast<unsigned long long>(resource->export_resource.content_generation), shadow_published ? 1U : 0U, import_published ? 1U : 0U,
+                       resource->exported ? 1U : 0U, resource->export_resource.exported ? 1U : 0U, resource->import.external ? 1U : 0U, import_published ? 1U : 0U,
+                       static_cast<unsigned long long>(resource->import_present_generation), static_cast<unsigned long long>(resource->import.fd.dev),
+                       static_cast<unsigned long long>(resource->import.fd.ino), vkvv_trace_handle(resource->image), import_published ? 1U : 0U, import_published ? 1U : 0U,
+                       import_published ? 1U : 0U);
+        } else {
+            if (resource->import.external) {
+                VKVV_TRACE("import-output-copy-failed",
+                           "surface=%u stream=%llu codec=0x%x content_gen=%llu shadow_gen=%llu import_external=%u direct_import_ok=%u import_present_generation=%llu "
+                           "import_fd_dev=%llu import_fd_ino=%llu decode_image=0x%llx import_image=0x0 copy_done=0 layout_released=0 queue_family_released=0 "
+                           "reason=unsupported-import-image",
+                           surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                           static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->export_resource.content_generation),
+                           resource->import.external ? 1U : 0U, import_published ? 1U : 0U, static_cast<unsigned long long>(resource->import_present_generation),
+                           static_cast<unsigned long long>(resource->import.fd.dev), static_cast<unsigned long long>(resource->import.fd.ino), vkvv_trace_handle(resource->image));
+            }
+            VKVV_TRACE("av1-visible-output-not-published",
+                       "surface=%u stream=%llu codec=0x%x content_gen=%llu shadow_gen=%llu shadow_published=%u import_published=%u exported=%u shadow_exported=%u "
+                       "import_external=%u direct_import_ok=%u import_present_generation=%llu import_fd_dev=%llu import_fd_ino=%llu decode_image=0x%llx import_image=0x0 "
+                       "copy_done=0 layout_released=0 queue_family_released=0",
+                       surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                       static_cast<unsigned long long>(resource->export_resource.content_generation), shadow_published ? 1U : 0U, import_published ? 1U : 0U,
+                       resource->exported ? 1U : 0U, resource->export_resource.exported ? 1U : 0U, resource->import.external ? 1U : 0U, import_published ? 1U : 0U,
+                       static_cast<unsigned long long>(resource->import_present_generation), static_cast<unsigned long long>(resource->import.fd.dev),
+                       static_cast<unsigned long long>(resource->import.fd.ino), vkvv_trace_handle(resource->image));
+        }
         clear_surface_av1_visible_output_trace(resource);
     }
 
@@ -317,12 +351,13 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
     trace_av1_visible_output_check(surface, resource, refresh_export);
     if (requires_published_visible_output && !surface_resource_has_published_visible_output(resource)) {
         VKVV_TRACE("visible-refresh-unpublished",
-                   "surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu shadow_ok=%u import_external=%u "
-                   "import_present_generation=%llu direct_import_ok=%u exported=%u shadow_exported=%u retained=%zu retained_mem=%llu",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu shadow_ok=%u shadow_published=%u "
+                   "import_external=%u import_present_generation=%llu direct_import_ok=%u import_published=%u exported=%u shadow_exported=%u retained=%zu retained_mem=%llu",
                    surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                    refresh_export ? 1U : 0U, static_cast<unsigned long long>(resource->content_generation), vkvv_trace_handle(resource->export_resource.memory),
                    static_cast<unsigned long long>(resource->export_resource.content_generation), surface_resource_has_current_export_shadow(resource) ? 1U : 0U,
-                   resource->import.external ? 1U : 0U, static_cast<unsigned long long>(resource->import_present_generation),
+                   surface_resource_has_exported_shadow_output(resource) ? 1U : 0U, resource->import.external ? 1U : 0U,
+                   static_cast<unsigned long long>(resource->import_present_generation), surface_resource_has_direct_import_output(resource) ? 1U : 0U,
                    surface_resource_has_direct_import_output(resource) ? 1U : 0U, resource->exported ? 1U : 0U, resource->export_resource.exported ? 1U : 0U,
                    runtime_retained_export_count(runtime), static_cast<unsigned long long>(runtime_retained_export_memory_bytes(runtime)));
         VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_OPERATION_FAILED,

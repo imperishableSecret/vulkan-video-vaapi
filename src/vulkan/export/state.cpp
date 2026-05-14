@@ -20,6 +20,10 @@ namespace vkvv {
             !surface_resource_export_shadow_stale(resource);
     }
 
+    bool surface_resource_has_exported_shadow_output(const SurfaceResource* resource) {
+        return surface_resource_has_current_export_shadow(resource) && resource->exported && resource->export_resource.exported;
+    }
+
     bool surface_resource_has_direct_import_output(const SurfaceResource* resource) {
         if (resource == nullptr || resource->content_generation == 0 || !resource->import.external || !resource->import.fd.valid || !resource->direct_import_presentable ||
             !resource->decode_image_is_imported_image || !resource->import_present_barrier_done || !resource->import_fd_stat_valid) {
@@ -31,7 +35,7 @@ namespace vkvv {
     }
 
     bool surface_resource_has_published_visible_output(const SurfaceResource* resource) {
-        return surface_resource_has_current_export_shadow(resource) || surface_resource_has_direct_import_output(resource);
+        return surface_resource_has_exported_shadow_output(resource) || surface_resource_has_direct_import_output(resource);
     }
 
     bool surface_resource_requires_visible_publication(const SurfaceResource* resource, bool refresh_export) {
