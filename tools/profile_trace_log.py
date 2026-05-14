@@ -138,6 +138,10 @@ class StreamStats:
     private_shadow_pixel_proofs: int = 0
     private_shadow_pixel_mismatches: int = 0
     pixel_proof_unavailable: int = 0
+    visible_publish_gates: int = 0
+    visible_publish_successes: int = 0
+    visible_publish_blocks: int = 0
+    visible_publish_pixel_blocks: int = 0
     nondisplay_present_pinned_skips: int = 0
     invalid_nondisplay_stale_export_shadows: int = 0
     invalid_presentable_undecoded_surfaces: int = 0
@@ -229,6 +233,10 @@ class TraceProfile:
         self.private_shadow_pixel_proofs = 0
         self.private_shadow_pixel_mismatches = 0
         self.pixel_proof_unavailable = 0
+        self.visible_publish_gates = 0
+        self.visible_publish_successes = 0
+        self.visible_publish_blocks = 0
+        self.visible_publish_pixel_blocks = 0
         self.nondisplay_present_pinned_skips = 0
         self.invalid_nondisplay_stale_export_shadows = 0
         self.invalid_presentable_undecoded_surfaces = 0
@@ -402,6 +410,14 @@ class TraceProfile:
                 stream.private_shadow_pixel_mismatches += 1
         elif event == "pixel-proof-unavailable" and stream is not None:
             stream.pixel_proof_unavailable += 1
+        elif event == "visible-publish-gate" and stream is not None:
+            stream.visible_publish_gates += 1
+            if (parse_int(fields.get("publish_ok")) or 0) != 0:
+                stream.visible_publish_successes += 1
+        elif event == "visible-publish-blocked" and stream is not None:
+            stream.visible_publish_blocks += 1
+            if (parse_int(fields.get("pixel_match_ok")) or 0) == 0:
+                stream.visible_publish_pixel_blocks += 1
         elif event == "nondisplay-present-pinned-skip" and stream is not None:
             stream.nondisplay_present_pinned_skips += 1
         elif event == "invalid-nondisplay-stale-export-shadow" and stream is not None:
@@ -544,6 +560,14 @@ class TraceProfile:
                 self.private_shadow_pixel_mismatches += 1
         elif event == "pixel-proof-unavailable":
             self.pixel_proof_unavailable += 1
+        elif event == "visible-publish-gate":
+            self.visible_publish_gates += 1
+            if (parse_int(fields.get("publish_ok")) or 0) != 0:
+                self.visible_publish_successes += 1
+        elif event == "visible-publish-blocked":
+            self.visible_publish_blocks += 1
+            if (parse_int(fields.get("pixel_match_ok")) or 0) == 0:
+                self.visible_publish_pixel_blocks += 1
         elif event == "nondisplay-present-pinned-skip":
             self.nondisplay_present_pinned_skips += 1
         elif event == "invalid-nondisplay-stale-export-shadow":
@@ -666,6 +690,10 @@ class TraceProfile:
             "private_shadow_pixel_proofs": self.private_shadow_pixel_proofs,
             "private_shadow_pixel_mismatches": self.private_shadow_pixel_mismatches,
             "pixel_proof_unavailable": self.pixel_proof_unavailable,
+            "visible_publish_gates": self.visible_publish_gates,
+            "visible_publish_successes": self.visible_publish_successes,
+            "visible_publish_blocks": self.visible_publish_blocks,
+            "visible_publish_pixel_blocks": self.visible_publish_pixel_blocks,
             "nondisplay_present_pinned_skips": self.nondisplay_present_pinned_skips,
             "invalid_nondisplay_stale_export_shadows": self.invalid_nondisplay_stale_export_shadows,
             "invalid_presentable_undecoded_surfaces": self.invalid_presentable_undecoded_surfaces,
@@ -726,6 +754,10 @@ class TraceProfile:
             total["private_shadow_pixel_proofs"] += stream.private_shadow_pixel_proofs
             total["private_shadow_pixel_mismatches"] += stream.private_shadow_pixel_mismatches
             total["pixel_proof_unavailable"] += stream.pixel_proof_unavailable
+            total["visible_publish_gates"] += stream.visible_publish_gates
+            total["visible_publish_successes"] += stream.visible_publish_successes
+            total["visible_publish_blocks"] += stream.visible_publish_blocks
+            total["visible_publish_pixel_blocks"] += stream.visible_publish_pixel_blocks
             total["nondisplay_present_pinned_skips"] += stream.nondisplay_present_pinned_skips
             total["invalid_nondisplay_stale_export_shadows"] += stream.invalid_nondisplay_stale_export_shadows
             total["invalid_presentable_undecoded_surfaces"] += stream.invalid_presentable_undecoded_surfaces
@@ -829,6 +861,10 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "private_shadow_pixel_proofs": stream.private_shadow_pixel_proofs,
         "private_shadow_pixel_mismatches": stream.private_shadow_pixel_mismatches,
         "pixel_proof_unavailable": stream.pixel_proof_unavailable,
+        "visible_publish_gates": stream.visible_publish_gates,
+        "visible_publish_successes": stream.visible_publish_successes,
+        "visible_publish_blocks": stream.visible_publish_blocks,
+        "visible_publish_pixel_blocks": stream.visible_publish_pixel_blocks,
         "nondisplay_present_pinned_skips": stream.nondisplay_present_pinned_skips,
         "invalid_nondisplay_stale_export_shadows": stream.invalid_nondisplay_stale_export_shadows,
         "invalid_presentable_undecoded_surfaces": stream.invalid_presentable_undecoded_surfaces,
@@ -930,6 +966,8 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         f"decode_pixel_proofs={totals['decode_pixel_proofs']} present_pixel_proofs={totals['present_pixel_proofs']} "
         f"present_pixel_mismatches={totals['present_pixel_mismatches']} private_shadow_pixel_proofs={totals['private_shadow_pixel_proofs']} "
         f"private_shadow_pixel_mismatches={totals['private_shadow_pixel_mismatches']} pixel_proof_unavailable={totals['pixel_proof_unavailable']} "
+        f"visible_publish_gates={totals['visible_publish_gates']} visible_publish_successes={totals['visible_publish_successes']} "
+        f"visible_publish_blocks={totals['visible_publish_blocks']} visible_publish_pixel_blocks={totals['visible_publish_pixel_blocks']} "
         f"nondisplay_present_pinned_skips={totals['nondisplay_present_pinned_skips']} "
         f"invalid_nondisplay_stale_export_shadows={totals['invalid_nondisplay_stale_export_shadows']} "
         f"invalid_presentable_undecoded_surfaces={totals['invalid_presentable_undecoded_surfaces']} "
@@ -972,6 +1010,8 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"decode_pixel_proofs={values['decode_pixel_proofs']} present_pixel_proofs={values['present_pixel_proofs']} "
             f"present_pixel_mismatches={values['present_pixel_mismatches']} private_shadow_pixel_proofs={values['private_shadow_pixel_proofs']} "
             f"private_shadow_pixel_mismatches={values['private_shadow_pixel_mismatches']} pixel_proof_unavailable={values['pixel_proof_unavailable']} "
+            f"visible_publish_gates={values['visible_publish_gates']} visible_publish_successes={values['visible_publish_successes']} "
+            f"visible_publish_blocks={values['visible_publish_blocks']} visible_publish_pixel_blocks={values['visible_publish_pixel_blocks']} "
             f"nondisplay_present_pinned_skips={values['nondisplay_present_pinned_skips']} "
             f"invalid_nondisplay_stale_export_shadows={values['invalid_nondisplay_stale_export_shadows']} "
             f"invalid_presentable_undecoded_surfaces={values['invalid_presentable_undecoded_surfaces']} "
@@ -1017,6 +1057,8 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"decode_pixel_proofs={stream.decode_pixel_proofs} present_pixel_proofs={stream.present_pixel_proofs} "
             f"present_pixel_mismatches={stream.present_pixel_mismatches} private_shadow_pixel_proofs={stream.private_shadow_pixel_proofs} "
             f"private_shadow_pixel_mismatches={stream.private_shadow_pixel_mismatches} pixel_proof_unavailable={stream.pixel_proof_unavailable} "
+            f"visible_publish_gates={stream.visible_publish_gates} visible_publish_successes={stream.visible_publish_successes} "
+            f"visible_publish_blocks={stream.visible_publish_blocks} visible_publish_pixel_blocks={stream.visible_publish_pixel_blocks} "
             f"nondisplay_present_pinned_skips={stream.nondisplay_present_pinned_skips} "
             f"invalid_nondisplay_stale_export_shadows={stream.invalid_nondisplay_stale_export_shadows} "
             f"invalid_presentable_undecoded_surfaces={stream.invalid_presentable_undecoded_surfaces} "
