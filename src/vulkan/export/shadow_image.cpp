@@ -1138,7 +1138,10 @@ namespace vkvv {
     }
 
     bool export_pixel_proof_enabled() {
-        const char* value = std::getenv("VKVV_EXPORT_PIXEL_PROOF");
+        const char* value = std::getenv("VKVV_PIXEL_PROOF");
+        if (value == nullptr || value[0] == '\0') {
+            value = std::getenv("VKVV_EXPORT_PIXEL_PROOF");
+        }
         if (value == nullptr || value[0] == '\0') {
             value = std::getenv("VKVV_TRACE_PIXEL_PROOF");
         }
@@ -1167,7 +1170,41 @@ namespace vkvv {
         hash          = fnv1a64_u64_update(hash, extent.width);
         hash          = fnv1a64_u64_update(hash, extent.height);
         hash          = fnv1a64_u64_update(hash, format != nullptr ? format->va_fourcc : 0);
+        if (format != nullptr) {
+            for (uint32_t i = 0; i < format->layer_count; i++) {
+                const ExportLayerInfo& layer           = format->layers[i];
+                const uint32_t         bytes_per_pixel = export_plane_bytes_per_pixel(layer.drm_format);
+                const VkExtent3D       plane_extent    = export_layer_extent(extent, layer);
+                hash                                   = fnv1a64_u64_update(hash, layer.drm_format);
+                hash                                   = fnv1a64_u64_update(hash, plane_extent.width);
+                hash                                   = fnv1a64_u64_update(hash, plane_extent.height);
+                hash                                   = fnv1a64_u64_update(hash, static_cast<uint64_t>(plane_extent.width) * bytes_per_pixel);
+            }
+        }
         return hash;
+    }
+
+    uint32_t pixel_proof_sample_count(uint32_t layer_index) {
+        return layer_index == 0 ? 16u : 8u;
+    }
+
+    uint32_t pixel_proof_grid_cols(uint32_t sample_count) {
+        return sample_count <= 4 ? sample_count : 4u;
+    }
+
+    uint32_t pixel_proof_grid_rows(uint32_t sample_count) {
+        const uint32_t cols = pixel_proof_grid_cols(sample_count);
+        return cols == 0 ? 0 : static_cast<uint32_t>((sample_count + cols - 1) / cols);
+    }
+
+    VkOffset3D pixel_proof_sample_offset(VkExtent3D plane_extent, uint32_t sample, uint32_t sample_count) {
+        const uint32_t cols = pixel_proof_grid_cols(sample_count);
+        const uint32_t rows = pixel_proof_grid_rows(sample_count);
+        const uint32_t col  = cols != 0 ? sample % cols : 0;
+        const uint32_t row  = cols != 0 ? sample / cols : 0;
+        const uint32_t x    = cols > 1 ? static_cast<uint32_t>((static_cast<uint64_t>(plane_extent.width - 1) * (2 * col + 1)) / (2 * cols)) : 0;
+        const uint32_t y    = rows > 1 ? static_cast<uint32_t>((static_cast<uint64_t>(plane_extent.height - 1) * (2 * row + 1)) / (2 * rows)) : 0;
+        return {static_cast<int32_t>(x), static_cast<int32_t>(y), 0};
     }
 
     void hash_reference_sample_byte(uint64_t* hash, uint8_t value) {
@@ -1186,14 +1223,8 @@ namespace vkvv {
             if (bytes_per_pixel == 0) {
                 return 0;
             }
-            const VkExtent3D plane_extent = export_layer_extent(extent, layer);
-            const VkExtent3D sample_extent{
-                std::max(1u, std::min<uint32_t>(plane_extent.width, 64u)),
-                std::max(1u, std::min<uint32_t>(plane_extent.height, 64u)),
-                1,
-            };
-            const size_t samples = static_cast<size_t>(sample_extent.width) * sample_extent.height;
-            for (size_t sample = 0; sample < samples; sample++) {
+            const uint32_t samples = pixel_proof_sample_count(i);
+            for (uint32_t sample = 0; sample < samples; sample++) {
                 switch (layer.drm_format) {
                     case DRM_FORMAT_R8: hash_reference_sample_byte(&hash, black ? 16 : 0); break;
                     case DRM_FORMAT_GR88:
@@ -1265,8 +1296,8 @@ namespace vkvv {
             return false;
         }
 
-        VkBufferImageCopy regions[2]{};
-        VkDeviceSize      region_sizes[2]{};
+        std::vector<VkBufferImageCopy> regions;
+        std::vector<VkDeviceSize>      region_sizes;
         *sample_bytes = 0;
         for (uint32_t i = 0; i < format->layer_count; i++) {
             const ExportLayerInfo& layer           = format->layers[i];
@@ -1276,23 +1307,25 @@ namespace vkvv {
                 return false;
             }
             const VkExtent3D plane_extent = export_layer_extent(extent, layer);
-            const VkExtent3D sample_extent{
-                std::max(1u, std::min<uint32_t>(plane_extent.width, 64u)),
-                std::max(1u, std::min<uint32_t>(plane_extent.height, 64u)),
-                1,
-            };
-            *sample_bytes                              = align_up(*sample_bytes, 16);
-            regions[i].bufferOffset                    = *sample_bytes;
-            regions[i].bufferRowLength                 = 0;
-            regions[i].bufferImageHeight               = 0;
-            regions[i].imageSubresource.aspectMask     = layer.aspect;
-            regions[i].imageSubresource.mipLevel       = 0;
-            regions[i].imageSubresource.baseArrayLayer = 0;
-            regions[i].imageSubresource.layerCount     = 1;
-            regions[i].imageOffset                     = {0, 0, 0};
-            regions[i].imageExtent                     = sample_extent;
-            region_sizes[i]                            = static_cast<VkDeviceSize>(sample_extent.width) * sample_extent.height * bytes_per_pixel;
-            *sample_bytes += region_sizes[i];
+            const uint32_t   samples      = pixel_proof_sample_count(i);
+            const VkExtent3D sample_extent{1, 1, 1};
+            for (uint32_t sample = 0; sample < samples; sample++) {
+                *sample_bytes = align_up(*sample_bytes, bytes_per_pixel);
+                VkBufferImageCopy region{};
+                region.bufferOffset                    = *sample_bytes;
+                region.bufferRowLength                 = 0;
+                region.bufferImageHeight               = 0;
+                region.imageSubresource.aspectMask     = layer.aspect;
+                region.imageSubresource.mipLevel       = 0;
+                region.imageSubresource.baseArrayLayer = 0;
+                region.imageSubresource.layerCount     = 1;
+                region.imageOffset                     = pixel_proof_sample_offset(plane_extent, sample, samples);
+                region.imageExtent                     = sample_extent;
+                const VkDeviceSize region_size         = bytes_per_pixel;
+                regions.push_back(region);
+                region_sizes.push_back(region_size);
+                *sample_bytes += region_size;
+            }
         }
         ScopedUploadBuffer readback(runtime);
         if (!create_staging_transfer_buffer(runtime, *sample_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, &readback.buffer, label, reason, reason_size)) {
@@ -1334,7 +1367,8 @@ namespace vkvv {
         }
         *layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 
-        vkCmdCopyImageToBuffer(runtime->command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer.buffer, format->layer_count, regions);
+        vkCmdCopyImageToBuffer(runtime->command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer.buffer, static_cast<uint32_t>(regions.size()),
+                               regions.data());
 
         barriers.clear();
         add_raw_image_barrier(&barriers, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, old_layout, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
@@ -1370,7 +1404,7 @@ namespace vkvv {
         }
         const auto* mapped = static_cast<const uint8_t*>(readback.buffer.mapped);
         uint64_t    hash   = pixel_proof_hash_seed(format, extent);
-        for (uint32_t i = 0; i < format->layer_count; i++) {
+        for (size_t i = 0; i < regions.size(); i++) {
             hash = fnv1a64_bytes_update(hash, mapped + regions[i].bufferOffset, static_cast<size_t>(region_sizes[i]));
         }
         *crc = hash;
