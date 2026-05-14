@@ -909,6 +909,13 @@ namespace {
             cleanup();
             return false;
         }
+        if (!resource->export_resource.presentable || !resource->export_resource.present_pinned ||
+            resource->export_resource.present_generation != resource->content_generation ||
+            resource->export_resource.present_source != vkvv::VkvvExportPresentSource::VisibleRefresh) {
+            std::fprintf(stderr, "pending completion did not pin visible presentation state\n");
+            cleanup();
+            return false;
+        }
 
         cleanup();
         return true;
@@ -981,6 +988,13 @@ namespace {
             resource->export_resource.stream_id != surface.stream_id || resource->export_resource.codec_operation != surface.codec_operation ||
             resource->export_resource.content_generation != resource->content_generation) {
             std::fprintf(stderr, "first decode did not retag and fill the existing unknown predecode export\n");
+            cleanup();
+            return false;
+        }
+        if (!resource->export_resource.presentable || !resource->export_resource.present_pinned ||
+            resource->export_resource.present_generation != resource->content_generation ||
+            resource->export_resource.present_source != vkvv::VkvvExportPresentSource::VisibleRefresh) {
+            std::fprintf(stderr, "first decode did not pin visible presentation for pre-exported surface\n");
             cleanup();
             return false;
         }

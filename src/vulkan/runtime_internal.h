@@ -459,6 +459,7 @@ namespace vkvv {
     bool                surface_resource_requires_visible_publication(const SurfaceResource* resource, bool refresh_export);
     void                clear_export_present_state(ExportResource* resource);
     void                mark_export_predecode_nonpresentable(ExportResource* resource);
+    void                pin_export_visible_present(SurfaceResource* owner, ExportResource* resource, VkvvExportPresentSource source);
     void trace_export_present_state(const SurfaceResource* owner, const ExportResource* resource, const char* action, bool refresh_export, bool display_visible);
     void                clear_predecode_export_state(ExportResource* resource);
     void                clear_nondisplay_predecode_presentation_state(SurfaceResource* resource);

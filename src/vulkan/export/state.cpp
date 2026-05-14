@@ -107,6 +107,24 @@ namespace vkvv {
         resource->present_source = VkvvExportPresentSource::PredecodePlaceholder;
     }
 
+    void pin_export_visible_present(SurfaceResource* owner, ExportResource* resource, VkvvExportPresentSource source) {
+        if (owner == nullptr || resource == nullptr) {
+            return;
+        }
+        resource->present_pinned            = true;
+        resource->presentable               = true;
+        resource->published_visible         = true;
+        resource->present_generation        = owner->content_generation;
+        resource->present_fd_dev            = resource->fd_dev;
+        resource->present_fd_ino            = resource->fd_ino;
+        resource->present_surface_id        = owner->surface_id;
+        resource->present_stream_id         = owner->stream_id;
+        resource->present_codec_operation   = owner->codec_operation;
+        resource->present_source            = source;
+        resource->client_visible_shadow     = true;
+        resource->private_nondisplay_shadow = false;
+    }
+
     void clear_predecode_export_state(ExportResource* resource) {
         if (resource == nullptr) {
             return;
