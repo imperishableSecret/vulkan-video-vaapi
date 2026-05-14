@@ -555,6 +555,146 @@ namespace vkvv {
         return true;
     }
 
+    bool copy_decode_to_private_shadow(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size) {
+        if (runtime == nullptr || source == nullptr || source->image == VK_NULL_HANDLE || source->content_generation == 0) {
+            std::snprintf(reason, reason_size, "missing private decode shadow copy source");
+            return false;
+        }
+        if (!ensure_private_decode_shadow(runtime, source, reason, reason_size)) {
+            return false;
+        }
+
+        ExportResource*         target = &source->private_decode_shadow;
+        const ExportFormatInfo* format = export_format_for_surface(nullptr, source, reason, reason_size);
+        if (format == nullptr) {
+            return false;
+        }
+
+        const VkImage        source_image              = source->image;
+        const uint64_t       source_content_generation = source->content_generation;
+        const VkImage        target_image              = target->image;
+        const VkDeviceMemory target_memory             = target->memory;
+        const uint64_t       private_shadow_before     = target->content_generation;
+        const bool           trace_enabled             = vkvv_trace_enabled();
+        VKVV_TRACE("private-decode-shadow-copy-enter",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu present_gen=%llu present_shadow_gen=%llu private_shadow_gen_before=%llu "
+                   "decode_shadow_gen=%llu source_image=0x%llx private_image=0x%llx private_memory=0x%llx",
+                   source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
+                   static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(source->export_resource.present_generation),
+                   static_cast<unsigned long long>(source->export_resource.content_generation), static_cast<unsigned long long>(private_shadow_before),
+                   static_cast<unsigned long long>(source->export_resource.decode_shadow_generation), vkvv_trace_handle(source->image), vkvv_trace_handle(target->image),
+                   vkvv_trace_handle(target->memory));
+
+        std::lock_guard<std::mutex> command_lock(runtime->command_mutex);
+        if (!ensure_command_resources(runtime, reason, reason_size)) {
+            return false;
+        }
+
+        VkResult result = vkResetFences(runtime->device, 1, &runtime->fence);
+        if (!record_vk_result(runtime, result, "vkResetFences", "private decode shadow copy", reason, reason_size)) {
+            return false;
+        }
+        result = vkResetCommandBuffer(runtime->command_buffer, 0);
+        if (!record_vk_result(runtime, result, "vkResetCommandBuffer", "private decode shadow copy", reason, reason_size)) {
+            return false;
+        }
+
+        VkCommandBufferBeginInfo begin_info{};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        result           = vkBeginCommandBuffer(runtime->command_buffer, &begin_info);
+        if (!record_vk_result(runtime, result, "vkBeginCommandBuffer", "private decode shadow copy", reason, reason_size)) {
+            return false;
+        }
+
+        std::vector<VkImageMemoryBarrier2> barriers;
+        add_raw_image_barrier(&barriers, source->image, source->layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                              VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+        add_raw_image_barrier(&barriers, target->image, target->layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                              VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        if (!barriers.empty()) {
+            VkDependencyInfo dependency{};
+            dependency.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+            dependency.pImageMemoryBarriers    = barriers.data();
+            vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
+        }
+        source->layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        target->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+
+        VkImageCopy regions[2]{};
+        for (uint32_t i = 0; i < format->layer_count; i++) {
+            regions[i].srcSubresource.aspectMask = format->layers[i].aspect;
+            regions[i].srcSubresource.layerCount = 1;
+            regions[i].dstSubresource.aspectMask = format->layers[i].aspect;
+            regions[i].dstSubresource.layerCount = 1;
+            regions[i].extent                    = export_layer_extent(source->coded_extent, format->layers[i]);
+        }
+        vkCmdCopyImage(runtime->command_buffer, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, format->layer_count,
+                       regions);
+
+        barriers.clear();
+        add_raw_image_barrier(&barriers, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                              VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
+                              VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR | VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR);
+        add_raw_image_barrier(&barriers, target->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                              VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT);
+        if (!barriers.empty()) {
+            VkDependencyInfo dependency{};
+            dependency.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+            dependency.pImageMemoryBarriers    = barriers.data();
+            vkCmdPipelineBarrier2(runtime->command_buffer, &dependency);
+        }
+        source->layout = VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR;
+        target->layout = VK_IMAGE_LAYOUT_GENERAL;
+
+        result = vkEndCommandBuffer(runtime->command_buffer);
+        if (!record_vk_result(runtime, result, "vkEndCommandBuffer", "private decode shadow copy", reason, reason_size)) {
+            return false;
+        }
+
+        const auto wait_start = trace_enabled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        if (!submit_command_buffer_and_wait(runtime, reason, reason_size, "private decode shadow copy", CommandUse::Export)) {
+            return false;
+        }
+        if (source->image != source_image || source->content_generation != source_content_generation || target->image != target_image || target->memory != target_memory) {
+            std::snprintf(reason, reason_size, "private decode shadow copy target changed before publish");
+            return false;
+        }
+
+        target->content_generation                           = source->content_generation;
+        target->driver_instance_id                           = source->driver_instance_id;
+        target->stream_id                                    = source->stream_id;
+        target->codec_operation                              = source->codec_operation;
+        target->owner_surface_id                             = source->surface_id;
+        target->predecode_exported                           = false;
+        target->predecode_seeded                             = false;
+        target->black_placeholder                            = false;
+        target->seed_source_surface_id                       = VA_INVALID_ID;
+        target->seed_source_generation                       = 0;
+        target->client_visible_shadow                        = false;
+        target->private_nondisplay_shadow                    = true;
+        target->present_source                               = VkvvExportPresentSource::PrivateNondisplay;
+        source->export_resource.decode_shadow_generation     = source->content_generation;
+        source->export_resource.decode_shadow_private_active = true;
+
+        uint64_t wait_ns = 0;
+        if (trace_enabled) {
+            wait_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - wait_start).count());
+        }
+        VKVV_TRACE("private-decode-shadow-copy-done",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu present_gen=%llu present_shadow_gen=%llu private_shadow_gen_before=%llu "
+                   "private_shadow_gen_after=%llu decode_shadow_gen=%llu copy_reason=%s copy_bytes=%llu wait_ns=%llu",
+                   source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation,
+                   static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(source->export_resource.present_generation),
+                   static_cast<unsigned long long>(source->export_resource.content_generation), static_cast<unsigned long long>(private_shadow_before),
+                   static_cast<unsigned long long>(target->content_generation), static_cast<unsigned long long>(source->export_resource.decode_shadow_generation),
+                   vkvv_export_copy_reason_name(VkvvExportCopyReason::NondisplayPrivateRefresh), static_cast<unsigned long long>(target->allocation_size),
+                   static_cast<unsigned long long>(wait_ns));
+        return true;
+    }
+
     bool attach_imported_export_resource_by_fd(VulkanRuntime* runtime, SurfaceResource* source) {
         if (runtime == nullptr || source == nullptr || source->export_resource.image != VK_NULL_HANDLE || !source->import.external || !source->import.fd.valid) {
             return false;
