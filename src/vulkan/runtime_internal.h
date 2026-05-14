@@ -383,6 +383,9 @@ namespace vkvv {
     const char*               retained_export_match_reason(RetainedExportMatch match);
     bool                      retained_export_matches_window(const ExportResource& resource, const TransitionRetentionWindow& window);
     bool                      retained_export_seed_can_replace_window(const TransitionRetentionWindow& window, const ExportResource& seed);
+    bool                      surface_resource_uses_av1_decode(const SurfaceResource* resource);
+    bool                      av1_non_display_export_refresh(const SurfaceResource* resource, bool refresh_export);
+    void                      clear_predecode_export_state(ExportResource* resource);
     VkDeviceSize              retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties& properties);
     RetainedExportBudget      retained_export_budget_from_expected(size_t expected_count, VkDeviceSize expected_bytes, VkDeviceSize global_cap_bytes);
     size_t                    runtime_retained_export_count(VulkanRuntime* runtime);
