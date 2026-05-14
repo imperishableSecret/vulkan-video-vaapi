@@ -35,8 +35,27 @@ namespace vkvv {
             case VkvvExternalReleaseMode::QueueFamilyOwnershipTransfer: return "queue-family-ownership-transfer";
             case VkvvExternalReleaseMode::ImplicitSyncOnly: return "implicit-sync-only";
             case VkvvExternalReleaseMode::ExplicitSyncFile: return "explicit-sync-file";
+            case VkvvExternalReleaseMode::ForceBarrierDebug: return "force-barrier";
+            case VkvvExternalReleaseMode::NoSyncDebug: return "none";
             default: return "unknown";
         }
+    }
+
+    VkvvExternalReleaseMode configured_export_release_mode() {
+        const char* value = std::getenv("VKVV_EXPORT_SYNC_MODE");
+        if (value == nullptr || value[0] == '\0' || std::strcmp(value, "implicit") == 0) {
+            return VkvvExternalReleaseMode::ImplicitSyncOnly;
+        }
+        if (std::strcmp(value, "force-barrier") == 0) {
+            return VkvvExternalReleaseMode::ForceBarrierDebug;
+        }
+        if (std::strcmp(value, "explicit") == 0) {
+            return VkvvExternalReleaseMode::ExplicitSyncFile;
+        }
+        if (std::strcmp(value, "none") == 0) {
+            return VkvvExternalReleaseMode::NoSyncDebug;
+        }
+        return VkvvExternalReleaseMode::ImplicitSyncOnly;
     }
 
     bool av1_export_env_flag_enabled(const char* name) {
@@ -65,6 +84,10 @@ namespace vkvv {
     }
 
     bool surface_resource_has_current_export_shadow(const SurfaceResource* resource) {
+        if (resource != nullptr && export_resource_fd_may_be_sampled_by_client(&resource->export_resource) &&
+            resource->export_resource.exported_fd.fd_content_generation != resource->export_resource.content_generation) {
+            return false;
+        }
         return resource != nullptr && resource->content_generation != 0 && resource->export_resource.image != VK_NULL_HANDLE &&
             resource->export_resource.memory != VK_NULL_HANDLE && resource->export_resource.content_generation == resource->content_generation &&
             !surface_resource_export_shadow_stale(resource);
@@ -79,7 +102,24 @@ namespace vkvv {
             return false;
         }
         return sync.external_release_done || !sync.external_release_required || sync.release_mode == VkvvExternalReleaseMode::NoneRequired ||
-            sync.release_mode == VkvvExternalReleaseMode::ConcurrentSharing;
+            sync.release_mode == VkvvExternalReleaseMode::ConcurrentSharing || sync.release_mode == VkvvExternalReleaseMode::ForceBarrierDebug ||
+            sync.release_mode == VkvvExternalReleaseMode::NoSyncDebug;
+    }
+
+    bool export_resource_fd_may_be_sampled_by_client(const ExportResource* resource) {
+        return resource != nullptr && resource->exported_fd.fd_exported && resource->exported_fd.may_be_sampled_by_client && !resource->exported_fd.detached_from_surface;
+    }
+
+    uint64_t export_resource_fd_content_generation(const ExportResource* resource) {
+        return resource != nullptr && resource->exported_fd.fd_exported ? resource->exported_fd.fd_content_generation : 0;
+    }
+
+    bool export_resource_fd_fresh(const SurfaceResource* resource) {
+        if (resource == nullptr || resource->content_generation == 0 || !export_resource_fd_may_be_sampled_by_client(&resource->export_resource)) {
+            return true;
+        }
+        return resource->export_resource.exported_fd.fd_content_generation >= resource->content_generation &&
+            resource->export_resource.content_generation == resource->content_generation;
     }
 
     bool surface_resource_visible_publish_ready(const SurfaceResource* resource, bool display_visible, bool copy_done, bool pixel_proof_required) {
@@ -88,14 +128,14 @@ namespace vkvv {
         }
         const bool pixel_match_ok = !pixel_proof_required || (resource->decode_pixel_proof_valid && resource->present_pixel_proof_valid && resource->present_pixel_matches_decode);
         return display_visible && copy_done && surface_resource_has_current_export_shadow(resource) && export_visible_release_satisfied(&resource->export_resource) &&
-            pixel_match_ok;
+            export_resource_fd_fresh(resource) && pixel_match_ok;
     }
 
     bool surface_resource_has_exported_shadow_output(const SurfaceResource* resource) {
         return surface_resource_has_current_export_shadow(resource) && resource->exported && resource->export_resource.exported &&
             !resource->export_resource.predecode_quarantined && resource->export_resource.presentable && resource->export_resource.present_pinned &&
             resource->export_resource.published_visible && resource->export_resource.present_generation == resource->content_generation &&
-            export_visible_release_satisfied(&resource->export_resource);
+            export_visible_release_satisfied(&resource->export_resource) && export_resource_fd_fresh(resource);
     }
 
     bool surface_resource_has_direct_import_output(const SurfaceResource* resource) {
@@ -143,6 +183,39 @@ namespace vkvv {
         resource->client_visible_shadow     = false;
         resource->private_nondisplay_shadow = false;
         resource->external_sync             = {};
+    }
+
+    void mark_export_fd_returned(ExportResource* resource, const VkvvFdIdentity& fd, uint64_t content_generation) {
+        if (resource == nullptr) {
+            return;
+        }
+        resource->fd_stat_valid                               = fd.valid;
+        resource->fd_dev                                      = fd.dev;
+        resource->fd_ino                                      = fd.ino;
+        resource->exported_fd.fd_exported                     = fd.valid;
+        resource->exported_fd.fd_dev                          = fd.dev;
+        resource->exported_fd.fd_ino                          = fd.ino;
+        resource->exported_fd.may_be_sampled_by_client        = fd.valid;
+        resource->exported_fd.fd_content_generation           = content_generation;
+        resource->exported_fd.last_written_content_generation = content_generation;
+        resource->exported_fd.detached_from_surface           = false;
+    }
+
+    void mark_export_fd_written(ExportResource* resource, uint64_t content_generation) {
+        if (resource == nullptr || !resource->exported_fd.fd_exported) {
+            return;
+        }
+        resource->exported_fd.fd_content_generation           = content_generation;
+        resource->exported_fd.last_written_content_generation = content_generation;
+        resource->exported_fd.detached_from_surface           = false;
+    }
+
+    void mark_export_fd_detached(ExportResource* resource) {
+        if (resource == nullptr) {
+            return;
+        }
+        resource->exported_fd.detached_from_surface    = true;
+        resource->exported_fd.may_be_sampled_by_client = false;
     }
 
     void mark_export_predecode_nonpresentable(ExportResource* resource) {
@@ -285,7 +358,7 @@ namespace vkvv {
         sync.external_acquire_required = false;
         sync.external_acquire_done     = true;
         sync.acquired_generation       = resource->content_generation;
-        sync.release_mode              = VkvvExternalReleaseMode::ImplicitSyncOnly;
+        sync.release_mode              = configured_export_release_mode();
         sync.src_queue_family          = invalid_queue_family;
         sync.dst_queue_family          = invalid_queue_family;
         VKVV_TRACE("export-visible-acquire",
@@ -300,23 +373,33 @@ namespace vkvv {
         if (owner == nullptr || resource == nullptr || resource->image == VK_NULL_HANDLE || resource->memory == VK_NULL_HANDLE) {
             return;
         }
-        ExternalSyncState& sync        = resource->external_sync;
-        sync.external_release_required = false;
-        sync.external_release_done     = true;
-        sync.src_queue_family          = invalid_queue_family;
-        sync.dst_queue_family          = invalid_queue_family;
-        sync.last_internal_layout      = new_layout;
-        sync.external_layout           = new_layout;
-        sync.released_generation       = resource->content_generation;
-        sync.release_mode              = VkvvExternalReleaseMode::ImplicitSyncOnly;
-        resource->layout               = new_layout;
+        const VkvvExternalReleaseMode mode = configured_export_release_mode();
+        ExternalSyncState&            sync = resource->external_sync;
+        sync.external_release_required     = mode == VkvvExternalReleaseMode::ExplicitSyncFile;
+        sync.external_release_done         = mode != VkvvExternalReleaseMode::ExplicitSyncFile;
+        sync.src_queue_family              = invalid_queue_family;
+        sync.dst_queue_family              = invalid_queue_family;
+        sync.last_internal_layout          = new_layout;
+        sync.external_layout               = new_layout;
+        sync.released_generation           = resource->content_generation;
+        sync.release_mode                  = mode;
+        resource->layout                   = new_layout;
         VKVV_TRACE("export-visible-release",
                    "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu present_gen=%llu old_layout=%d new_layout=%d src_queue_family=%u "
-                   "dst_queue_family=%u release_required=0 release_done=1 release_mode=%s",
+                   "dst_queue_family=%u release_required=%u release_done=%u release_mode=%s sync_fd=-1 semaphore_exported=0 fence_waited=1",
                    owner->surface_id, static_cast<unsigned long long>(owner->driver_instance_id), static_cast<unsigned long long>(owner->stream_id), owner->codec_operation,
                    static_cast<unsigned long long>(resource->fd_dev), static_cast<unsigned long long>(resource->fd_ino), static_cast<unsigned long long>(owner->content_generation),
                    static_cast<unsigned long long>(resource->present_generation), old_layout, new_layout, sync.src_queue_family, sync.dst_queue_family,
-                   vkvv_external_release_mode_name(sync.release_mode));
+                   sync.external_release_required ? 1U : 0U, sync.external_release_done ? 1U : 0U, vkvv_external_release_mode_name(sync.release_mode));
+    }
+
+    bool predecode_seed_source_safe_for_client(const SurfaceResource* source) {
+        if (source == nullptr || source->content_generation == 0 || !surface_resource_has_exported_shadow_output(source)) {
+            return false;
+        }
+        const ExportResource& export_resource = source->export_resource;
+        return export_resource.present_generation != 0 && export_resource_fd_may_be_sampled_by_client(&export_resource) &&
+            export_resource.exported_fd.fd_content_generation == export_resource.present_generation && export_visible_release_satisfied(&export_resource);
     }
 
     void clear_nondisplay_predecode_presentation_state(SurfaceResource* resource) {

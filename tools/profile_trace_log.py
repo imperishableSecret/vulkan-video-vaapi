@@ -132,6 +132,15 @@ class StreamStats:
     export_visible_releases: int = 0
     export_visible_acquires: int = 0
     export_visible_release_missing: int = 0
+    exported_fd_freshness_checks: int = 0
+    exported_fd_refreshes: int = 0
+    invalid_stale_exported_fds: int = 0
+    nondisplay_exported_fd_refreshes: int = 0
+    predecode_export_policy_events: int = 0
+    predecode_stream_local_seeds: int = 0
+    predecode_neutral_placeholders: int = 0
+    predecode_failed_no_valid_source: int = 0
+    predecode_drained_exports: int = 0
     decode_pixel_proofs: int = 0
     present_pixel_proofs: int = 0
     present_pixel_mismatches: int = 0
@@ -227,6 +236,15 @@ class TraceProfile:
         self.export_visible_releases = 0
         self.export_visible_acquires = 0
         self.export_visible_release_missing = 0
+        self.exported_fd_freshness_checks = 0
+        self.exported_fd_refreshes = 0
+        self.invalid_stale_exported_fds = 0
+        self.nondisplay_exported_fd_refreshes = 0
+        self.predecode_export_policy_events = 0
+        self.predecode_stream_local_seeds = 0
+        self.predecode_neutral_placeholders = 0
+        self.predecode_failed_no_valid_source = 0
+        self.predecode_drained_exports = 0
         self.decode_pixel_proofs = 0
         self.present_pixel_proofs = 0
         self.present_pixel_mismatches = 0
@@ -398,6 +416,25 @@ class TraceProfile:
                 stream.export_visible_release_missing += 1
         elif event == "export-visible-acquire" and stream is not None:
             stream.export_visible_acquires += 1
+        elif event == "exported-fd-freshness-check" and stream is not None:
+            stream.exported_fd_freshness_checks += 1
+            if fields.get("action") in ("copied-to-export-fd", "stream-local-seed"):
+                stream.exported_fd_refreshes += 1
+        elif event == "invalid-stale-exported-fd" and stream is not None:
+            stream.invalid_stale_exported_fds += 1
+        elif event == "nondisplay-exported-fd-refresh" and stream is not None:
+            stream.nondisplay_exported_fd_refreshes += 1
+        elif event == "predecode-export-policy" and stream is not None:
+            stream.predecode_export_policy_events += 1
+            action = fields.get("action")
+            if action == "stream-local-seed":
+                stream.predecode_stream_local_seeds += 1
+            elif action == "neutral-placeholder":
+                stream.predecode_neutral_placeholders += 1
+            elif action == "failed-no-valid-source":
+                stream.predecode_failed_no_valid_source += 1
+            elif action == "drained-and-exported":
+                stream.predecode_drained_exports += 1
         elif event == "decode-pixel-proof" and stream is not None:
             stream.decode_pixel_proofs += 1
         elif event == "present-pixel-proof" and stream is not None:
@@ -548,6 +585,25 @@ class TraceProfile:
                 self.export_visible_release_missing += 1
         elif event == "export-visible-acquire":
             self.export_visible_acquires += 1
+        elif event == "exported-fd-freshness-check":
+            self.exported_fd_freshness_checks += 1
+            if fields.get("action") in ("copied-to-export-fd", "stream-local-seed"):
+                self.exported_fd_refreshes += 1
+        elif event == "invalid-stale-exported-fd":
+            self.invalid_stale_exported_fds += 1
+        elif event == "nondisplay-exported-fd-refresh":
+            self.nondisplay_exported_fd_refreshes += 1
+        elif event == "predecode-export-policy":
+            self.predecode_export_policy_events += 1
+            action = fields.get("action")
+            if action == "stream-local-seed":
+                self.predecode_stream_local_seeds += 1
+            elif action == "neutral-placeholder":
+                self.predecode_neutral_placeholders += 1
+            elif action == "failed-no-valid-source":
+                self.predecode_failed_no_valid_source += 1
+            elif action == "drained-and-exported":
+                self.predecode_drained_exports += 1
         elif event == "decode-pixel-proof":
             self.decode_pixel_proofs += 1
         elif event == "present-pixel-proof":
@@ -684,6 +740,15 @@ class TraceProfile:
             "export_visible_releases": self.export_visible_releases,
             "export_visible_acquires": self.export_visible_acquires,
             "export_visible_release_missing": self.export_visible_release_missing,
+            "exported_fd_freshness_checks": self.exported_fd_freshness_checks,
+            "exported_fd_refreshes": self.exported_fd_refreshes,
+            "invalid_stale_exported_fds": self.invalid_stale_exported_fds,
+            "nondisplay_exported_fd_refreshes": self.nondisplay_exported_fd_refreshes,
+            "predecode_export_policy_events": self.predecode_export_policy_events,
+            "predecode_stream_local_seeds": self.predecode_stream_local_seeds,
+            "predecode_neutral_placeholders": self.predecode_neutral_placeholders,
+            "predecode_failed_no_valid_source": self.predecode_failed_no_valid_source,
+            "predecode_drained_exports": self.predecode_drained_exports,
             "decode_pixel_proofs": self.decode_pixel_proofs,
             "present_pixel_proofs": self.present_pixel_proofs,
             "present_pixel_mismatches": self.present_pixel_mismatches,
@@ -748,6 +813,15 @@ class TraceProfile:
             total["export_visible_releases"] += stream.export_visible_releases
             total["export_visible_acquires"] += stream.export_visible_acquires
             total["export_visible_release_missing"] += stream.export_visible_release_missing
+            total["exported_fd_freshness_checks"] += stream.exported_fd_freshness_checks
+            total["exported_fd_refreshes"] += stream.exported_fd_refreshes
+            total["invalid_stale_exported_fds"] += stream.invalid_stale_exported_fds
+            total["nondisplay_exported_fd_refreshes"] += stream.nondisplay_exported_fd_refreshes
+            total["predecode_export_policy_events"] += stream.predecode_export_policy_events
+            total["predecode_stream_local_seeds"] += stream.predecode_stream_local_seeds
+            total["predecode_neutral_placeholders"] += stream.predecode_neutral_placeholders
+            total["predecode_failed_no_valid_source"] += stream.predecode_failed_no_valid_source
+            total["predecode_drained_exports"] += stream.predecode_drained_exports
             total["decode_pixel_proofs"] += stream.decode_pixel_proofs
             total["present_pixel_proofs"] += stream.present_pixel_proofs
             total["present_pixel_mismatches"] += stream.present_pixel_mismatches
@@ -855,6 +929,15 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "export_visible_releases": stream.export_visible_releases,
         "export_visible_acquires": stream.export_visible_acquires,
         "export_visible_release_missing": stream.export_visible_release_missing,
+        "exported_fd_freshness_checks": stream.exported_fd_freshness_checks,
+        "exported_fd_refreshes": stream.exported_fd_refreshes,
+        "invalid_stale_exported_fds": stream.invalid_stale_exported_fds,
+        "nondisplay_exported_fd_refreshes": stream.nondisplay_exported_fd_refreshes,
+        "predecode_export_policy_events": stream.predecode_export_policy_events,
+        "predecode_stream_local_seeds": stream.predecode_stream_local_seeds,
+        "predecode_neutral_placeholders": stream.predecode_neutral_placeholders,
+        "predecode_failed_no_valid_source": stream.predecode_failed_no_valid_source,
+        "predecode_drained_exports": stream.predecode_drained_exports,
         "decode_pixel_proofs": stream.decode_pixel_proofs,
         "present_pixel_proofs": stream.present_pixel_proofs,
         "present_pixel_mismatches": stream.present_pixel_mismatches,
@@ -963,6 +1046,12 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         f"export_visible_releases={totals['export_visible_releases']} "
         f"export_visible_acquires={totals['export_visible_acquires']} "
         f"export_visible_release_missing={totals['export_visible_release_missing']} "
+        f"exported_fd_freshness_checks={totals['exported_fd_freshness_checks']} exported_fd_refreshes={totals['exported_fd_refreshes']} "
+        f"invalid_stale_exported_fds={totals['invalid_stale_exported_fds']} "
+        f"nondisplay_exported_fd_refreshes={totals['nondisplay_exported_fd_refreshes']} "
+        f"predecode_export_policy_events={totals['predecode_export_policy_events']} predecode_stream_local_seeds={totals['predecode_stream_local_seeds']} "
+        f"predecode_neutral_placeholders={totals['predecode_neutral_placeholders']} predecode_failed_no_valid_source={totals['predecode_failed_no_valid_source']} "
+        f"predecode_drained_exports={totals['predecode_drained_exports']} "
         f"decode_pixel_proofs={totals['decode_pixel_proofs']} present_pixel_proofs={totals['present_pixel_proofs']} "
         f"present_pixel_mismatches={totals['present_pixel_mismatches']} private_shadow_pixel_proofs={totals['private_shadow_pixel_proofs']} "
         f"private_shadow_pixel_mismatches={totals['private_shadow_pixel_mismatches']} pixel_proof_unavailable={totals['pixel_proof_unavailable']} "
@@ -1007,6 +1096,12 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"export_visible_releases={values['export_visible_releases']} "
             f"export_visible_acquires={values['export_visible_acquires']} "
             f"export_visible_release_missing={values['export_visible_release_missing']} "
+            f"exported_fd_freshness_checks={values['exported_fd_freshness_checks']} exported_fd_refreshes={values['exported_fd_refreshes']} "
+            f"invalid_stale_exported_fds={values['invalid_stale_exported_fds']} "
+            f"nondisplay_exported_fd_refreshes={values['nondisplay_exported_fd_refreshes']} "
+            f"predecode_export_policy_events={values['predecode_export_policy_events']} predecode_stream_local_seeds={values['predecode_stream_local_seeds']} "
+            f"predecode_neutral_placeholders={values['predecode_neutral_placeholders']} predecode_failed_no_valid_source={values['predecode_failed_no_valid_source']} "
+            f"predecode_drained_exports={values['predecode_drained_exports']} "
             f"decode_pixel_proofs={values['decode_pixel_proofs']} present_pixel_proofs={values['present_pixel_proofs']} "
             f"present_pixel_mismatches={values['present_pixel_mismatches']} private_shadow_pixel_proofs={values['private_shadow_pixel_proofs']} "
             f"private_shadow_pixel_mismatches={values['private_shadow_pixel_mismatches']} pixel_proof_unavailable={values['pixel_proof_unavailable']} "
@@ -1054,6 +1149,12 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"export_visible_releases={stream.export_visible_releases} "
             f"export_visible_acquires={stream.export_visible_acquires} "
             f"export_visible_release_missing={stream.export_visible_release_missing} "
+            f"exported_fd_freshness_checks={stream.exported_fd_freshness_checks} exported_fd_refreshes={stream.exported_fd_refreshes} "
+            f"invalid_stale_exported_fds={stream.invalid_stale_exported_fds} "
+            f"nondisplay_exported_fd_refreshes={stream.nondisplay_exported_fd_refreshes} "
+            f"predecode_export_policy_events={stream.predecode_export_policy_events} predecode_stream_local_seeds={stream.predecode_stream_local_seeds} "
+            f"predecode_neutral_placeholders={stream.predecode_neutral_placeholders} predecode_failed_no_valid_source={stream.predecode_failed_no_valid_source} "
+            f"predecode_drained_exports={stream.predecode_drained_exports} "
             f"decode_pixel_proofs={stream.decode_pixel_proofs} present_pixel_proofs={stream.present_pixel_proofs} "
             f"present_pixel_mismatches={stream.present_pixel_mismatches} private_shadow_pixel_proofs={stream.private_shadow_pixel_proofs} "
             f"private_shadow_pixel_mismatches={stream.private_shadow_pixel_mismatches} pixel_proof_unavailable={stream.pixel_proof_unavailable} "

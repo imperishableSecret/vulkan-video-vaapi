@@ -59,6 +59,10 @@ nvidia-vulkan-vaapi: trace seq=48 event=present-pixel-proof surface=7 codec=0x8 
 nvidia-vulkan-vaapi: trace seq=49 event=private-shadow-pixel-proof surface=7 codec=0x8 stream=1 content_gen=3 decode_crc_valid=1 decode_crc=0xdef private_shadow_crc_valid=1 private_shadow_crc=0xdef matches_decode=1 decode_sample_bytes=4096 private_sample_bytes=4096
 nvidia-vulkan-vaapi: trace seq=50 event=visible-publish-gate surface=7 codec=0x8 stream=1 content_gen=1 display_visible=1 copy_done=1 present_shadow_gen=1 external_release_ok=1 pixel_match_ok=1 pixel_proof_required=1 publish_ok=1
 nvidia-vulkan-vaapi: trace seq=51 event=visible-publish-blocked surface=7 codec=0x8 stream=1 content_gen=2 display_visible=1 copy_done=1 present_shadow_gen=2 external_release_ok=1 pixel_match_ok=0 pixel_proof_required=1 reason=pixel-mismatch
+nvidia-vulkan-vaapi: trace seq=52 event=exported-fd-freshness-check surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 content_gen=2 fd_content_gen=2 last_written_content_gen=2 may_be_sampled_by_client=1 detached_from_surface=0 refresh_export=0 display_visible=0 action=copied-to-export-fd
+nvidia-vulkan-vaapi: trace seq=53 event=nondisplay-exported-fd-refresh surface=7 driver=2 stream=1 codec=0x8 content_gen=2 fd_content_gen_before=1 fd_content_gen_after=2 refresh_export=0 display_published=0 may_be_sampled_by_client=1 present_gen=1
+nvidia-vulkan-vaapi: trace seq=54 event=predecode-export-policy surface=7 codec=0x8 stream=1 content_gen=0 pending_decode=0 policy=stream-local-last-visible action=stream-local-seed source_surface=6 source_present_gen=1 source_external_release_ok=1
+nvidia-vulkan-vaapi: trace seq=55 event=predecode-export-policy surface=7 codec=0x8 stream=1 content_gen=0 pending_decode=0 policy=stream-local-last-visible action=neutral-placeholder source_surface=4294967295 source_present_gen=0 source_external_release_ok=0
 [1:2:0512/000000.000000:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:3552] vaEndPicture failed, VA error: operation failed
 nvidia-vulkan-vaapi: device-lost call=vkWaitForFences operation=AV1 decode result=-4 decode_submitted=1 decode_completed=0
 """
@@ -111,7 +115,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 50, "trace record count mismatch")
+    check(data["trace_records"] == 54, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -143,6 +147,11 @@ def main() -> int:
     check(totals["export_visible_releases"] == 1, "export visible release aggregate mismatch")
     check(totals["export_visible_acquires"] == 1, "export visible acquire aggregate mismatch")
     check(totals["export_visible_release_missing"] == 0, "export visible release missing aggregate mismatch")
+    check(totals["exported_fd_freshness_checks"] == 1 and totals["exported_fd_refreshes"] == 1, "exported fd freshness aggregate mismatch")
+    check(totals["invalid_stale_exported_fds"] == 0, "invalid stale exported fd aggregate mismatch")
+    check(totals["nondisplay_exported_fd_refreshes"] == 1, "nondisplay exported fd refresh aggregate mismatch")
+    check(totals["predecode_export_policy_events"] == 2, "predecode export policy aggregate mismatch")
+    check(totals["predecode_stream_local_seeds"] == 1 and totals["predecode_neutral_placeholders"] == 1, "predecode policy action aggregate mismatch")
     check(totals["decode_pixel_proofs"] == 1 and totals["present_pixel_proofs"] == 1, "visible pixel proof aggregate mismatch")
     check(totals["present_pixel_mismatches"] == 0, "present pixel mismatch aggregate mismatch")
     check(totals["private_shadow_pixel_proofs"] == 1 and totals["private_shadow_pixel_mismatches"] == 0, "private pixel proof aggregate mismatch")
@@ -187,6 +196,8 @@ def main() -> int:
     check(codec["visible_present_pins"] == 1 and codec["nondisplay_present_pinned_skips"] == 0, "codec present aggregate mismatch")
     check(codec["predecode_quarantine_enters"] == 1 and codec["predecode_quarantine_exits"] == 1, "codec predecode quarantine aggregate mismatch")
     check(codec["export_visible_releases"] == 1 and codec["export_visible_acquires"] == 1, "codec visible handoff aggregate mismatch")
+    check(codec["exported_fd_freshness_checks"] == 1 and codec["nondisplay_exported_fd_refreshes"] == 1, "codec exported fd freshness mismatch")
+    check(codec["predecode_stream_local_seeds"] == 1 and codec["predecode_neutral_placeholders"] == 1, "codec predecode policy mismatch")
     check(codec["decode_pixel_proofs"] == 1 and codec["present_pixel_proofs"] == 1 and codec["private_shadow_pixel_proofs"] == 1, "codec pixel proof aggregate mismatch")
     check(codec["visible_publish_gates"] == 1 and codec["visible_publish_blocks"] == 1, "codec visible publish gate aggregate mismatch")
     stream = data["streams"][0]
@@ -213,6 +224,9 @@ def main() -> int:
     check(stream["present_state_traces"] == 3 and stream["visible_present_pins"] == 1, "stream present state mismatch")
     check(stream["predecode_quarantine_enters"] == 1 and stream["predecode_quarantine_exits"] == 1, "stream predecode quarantine mismatch")
     check(stream["export_visible_releases"] == 1 and stream["export_visible_acquires"] == 1, "stream visible handoff mismatch")
+    check(stream["exported_fd_freshness_checks"] == 1 and stream["exported_fd_refreshes"] == 1, "stream exported fd freshness mismatch")
+    check(stream["nondisplay_exported_fd_refreshes"] == 1, "stream nondisplay exported fd refresh mismatch")
+    check(stream["predecode_stream_local_seeds"] == 1 and stream["predecode_neutral_placeholders"] == 1, "stream predecode policy mismatch")
     check(stream["decode_pixel_proofs"] == 1 and stream["present_pixel_proofs"] == 1 and stream["private_shadow_pixel_proofs"] == 1, "stream pixel proof mismatch")
     check(stream["visible_publish_gates"] == 1 and stream["visible_publish_successes"] == 1 and stream["visible_publish_blocks"] == 1, "stream publish gate mismatch")
     check(stream["nondisplay_present_pinned_skips"] == 0, "stream nondisplay present-pinned skip mismatch")
@@ -233,6 +247,9 @@ def main() -> int:
     check("predecode_quarantine_exits=1" in text_result.stdout, "text predecode quarantine exit aggregate missing")
     check("export_visible_releases=1" in text_result.stdout, "text export visible release aggregate missing")
     check("export_visible_acquires=1" in text_result.stdout, "text export visible acquire aggregate missing")
+    check("exported_fd_freshness_checks=1" in text_result.stdout, "text exported fd freshness aggregate missing")
+    check("nondisplay_exported_fd_refreshes=1" in text_result.stdout, "text nondisplay exported fd refresh aggregate missing")
+    check("predecode_stream_local_seeds=1" in text_result.stdout, "text predecode stream-local seed aggregate missing")
     check("decode_pixel_proofs=1" in text_result.stdout, "text decode pixel proof aggregate missing")
     check("present_pixel_proofs=1" in text_result.stdout, "text present pixel proof aggregate missing")
     check("private_shadow_pixel_proofs=1" in text_result.stdout, "text private pixel proof aggregate missing")
