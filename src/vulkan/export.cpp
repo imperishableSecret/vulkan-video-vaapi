@@ -138,7 +138,8 @@ namespace {
         if (resource == nullptr || pixel_source != VkvvExportPixelSource::StreamLocalSeed) {
             return false;
         }
-        return resource->content_generation != 0 && resource->seed_source_generation != 0 && resource->content_generation == resource->seed_source_generation;
+        return resource->content_generation != 0 && resource->seed_source_generation != 0 && resource->content_generation == resource->seed_source_generation &&
+            resource->seed_pixel_proof_valid;
     }
 
     bool export_source_is_placeholder(const ExportResource* resource, VkvvExportPixelSource pixel_source) {
@@ -892,7 +893,8 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
             pixel_source == VkvvExportPixelSource::Placeholder || (returned_resource != nullptr && returned_resource->black_placeholder) || proof_black || proof_zero;
         const bool valid_decoded_pixels_available = surface->decoded && resource->content_generation != 0 &&
             (returned_resource == nullptr || returned_resource->content_generation == resource->content_generation || pixel_source == VkvvExportPixelSource::DecodedContent);
-        const bool valid_seed_available = pixel_source == VkvvExportPixelSource::StreamLocalSeed && fd_content_gen != 0;
+        const bool valid_seed_available = pixel_source == VkvvExportPixelSource::StreamLocalSeed && fd_content_gen != 0 &&
+            returned_resource != nullptr && returned_resource->seed_pixel_proof_valid && (proof == nullptr || proof->seed_pixels_valid);
         VKVV_TRACE("export-validity-gate",
                    "surface=%u driver=%llu stream=%llu codec=0x%x profile=0 width=%u height=%u fourcc=0x%x content_gen=%llu decoded=%u pending_decode=%u refresh_export=%u "
                    "display_visible=%u fd_already_exported=%u fd_dev=%llu fd_ino=%llu fd_content_gen=%llu may_be_sampled_by_client=%u valid_decoded_pixels_available=%u "

@@ -123,6 +123,7 @@ namespace vkvv {
         bool                          black_placeholder            = false;
         VASurfaceID                   seed_source_surface_id       = VA_INVALID_ID;
         uint64_t                      seed_source_generation       = 0;
+        bool                          seed_pixel_proof_valid       = false;
         uint64_t                      content_generation           = 0;
         uint64_t                      decode_shadow_generation     = 0;
         bool                          decode_shadow_private_active = false;

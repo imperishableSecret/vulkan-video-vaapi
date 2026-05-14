@@ -394,6 +394,7 @@ namespace vkvv {
         resource->black_placeholder      = false;
         resource->seed_source_surface_id = VA_INVALID_ID;
         resource->seed_source_generation = 0;
+        resource->seed_pixel_proof_valid = false;
     }
 
     void clear_predecode_quarantine_state(ExportResource* resource) {
