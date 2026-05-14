@@ -519,6 +519,7 @@ namespace vkvv {
         resource->last_display_refresh_generation        = 0;
         clear_surface_export_attach_state(resource);
         clear_surface_direct_import_present_state(resource);
+        clear_surface_av1_visible_output_trace(resource);
     }
 
     void destroy_surface_resource_raw(VulkanRuntime* runtime, SurfaceResource* resource) {
@@ -572,6 +573,7 @@ namespace vkvv {
                 existing->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
                 existing->last_display_refresh_generation        = 0;
                 clear_surface_direct_import_present_state(existing);
+                clear_surface_av1_visible_output_trace(existing);
             }
             existing->driver_instance_id = surface->driver_instance_id;
             existing->stream_id          = stream_id;
@@ -580,6 +582,7 @@ namespace vkvv {
             existing->visible_extent     = {surface->width, surface->height};
             existing->import             = surface->import;
             clear_surface_direct_import_present_state(existing);
+            clear_surface_av1_visible_output_trace(existing);
             VKVV_TRACE("surface-resource-reuse",
                        "surface=%u driver=%llu stream=%llu surface_codec=0x%x key_codec=0x%x resource_codec=0x%x content_gen=%llu shadow_gen=%llu predecode=%u imported=%u "
                        "import_fd_stat=%u import_fd_dev=%llu import_fd_ino=%llu",
@@ -767,6 +770,7 @@ namespace vkvv {
         resource->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
         resource->last_display_refresh_generation        = 0;
         clear_surface_direct_import_present_state(resource);
+        clear_surface_av1_visible_output_trace(resource);
         if (request_exportable) {
             VkImageSubresource plane0{};
             plane0.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT;

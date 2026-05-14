@@ -291,6 +291,18 @@ namespace {
                    display_action != nullptr ? display_action : "unknown");
     }
 
+    void set_av1_visible_output_trace(SurfaceResource* resource, const VkvvAV1DecodeInput* input, bool refresh_export) {
+        clear_surface_av1_visible_output_trace(resource);
+        if (resource == nullptr || input == nullptr || !refresh_export) {
+            return;
+        }
+        resource->av1_visible_output_trace_valid    = true;
+        resource->av1_visible_show_frame            = input->header.show_frame;
+        resource->av1_visible_show_existing_frame   = input->header.show_existing_frame;
+        resource->av1_visible_refresh_frame_flags   = input->header.refresh_frame_flags;
+        resource->av1_visible_frame_to_show_map_idx = input->header.frame_to_show_map_idx;
+    }
+
     void build_av1_tile_info(const VkvvAV1DecodeInput* input, AV1PictureStdData* std_data) {
         const VADecPictureParameterBufferAV1* pic         = input->pic;
         const uint32_t                        tile_cols   = std::min<uint32_t>(pic->tile_cols, STD_VIDEO_AV1_MAX_TILE_COLS);
@@ -819,6 +831,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
             target_resource->content_generation++;
         }
 
+        set_av1_visible_output_trace(target_resource, input, true);
         VAStatus export_status = vkvv_vulkan_refresh_surface_export(runtime, target, true, reason, reason_size);
         if (export_status != VA_STATUS_SUCCESS) {
             return export_status;
@@ -1145,6 +1158,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         }
     }
 
+    set_av1_visible_output_trace(target_resource, input, refresh_export);
     track_pending_decode(runtime, target, parameters, upload_allocation_size, refresh_export, "AV1 decode");
     trace_av1_display_decision(drv, vctx, target_surface_id, refresh_export ? target_surface_id : VA_INVALID_ID, input, target_resource, refresh_export,
                                refresh_export ? "decode-display-queued" : "decode-reference-only");

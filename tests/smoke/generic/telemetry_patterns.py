@@ -58,6 +58,29 @@ def main() -> int:
         if field not in av1_text:
             fail(f"AV1 display decision trace is missing field {field}")
 
+    export_text = (root / "src" / "vulkan" / "export.cpp").read_text(encoding="utf-8")
+    if '"av1-visible-output-check"' not in export_text:
+        fail("AV1 visible output check trace is missing")
+    for field in (
+        "show_frame=",
+        "show_existing_frame=",
+        "refresh_frame_flags=",
+        "frame_to_show_map_idx=",
+        "refresh_export=",
+        "content_gen=",
+        "shadow_mem=",
+        "shadow_gen=",
+        "shadow_ok=",
+        "import_external=",
+        "import_present_generation=",
+        "direct_import_ok=",
+        "exported=",
+        "shadow_exported=",
+        "result=",
+    ):
+        if field not in export_text:
+            fail(f"AV1 visible output check trace is missing field {field}")
+
     return 0
 
 
