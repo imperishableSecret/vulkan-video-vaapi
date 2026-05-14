@@ -915,6 +915,9 @@ namespace vkvv {
     }
 
     void trace_seed_pixel_proof(VulkanRuntime* runtime, SurfaceResource* source, ExportResource* target, const char* copy_status) {
+        if (target != nullptr) {
+            target->seed_pixel_proof_valid = false;
+        }
         if (source == nullptr || target == nullptr) {
             return;
         }
@@ -938,9 +941,10 @@ namespace vkvv {
         const bool source_zero     = source_ok && zero_crc != 0 && source_crc == zero_crc;
         const bool target_black    = target_ok && black_crc != 0 && target_crc == black_crc;
         const bool target_zero     = target_ok && zero_crc != 0 && target_crc == zero_crc;
-        const bool source_valid    = predecode_seed_source_safe_for_client(source) && (!export_pixel_proof_enabled() || (source_ok && !source_black && !source_zero));
+        const bool source_valid    = predecode_seed_source_safe_for_client(source) && source_ok && source_bytes > 0 && !source_black && !source_zero;
         const bool target_matches  = source_ok && target_ok && source_crc == target_crc;
-        const bool target_valid    = source_valid && (!export_pixel_proof_enabled() || (target_matches && !target_black && !target_zero));
+        const bool target_valid    = source_valid && target_ok && target_bytes > 0 && target_matches && !target_black && !target_zero;
+        target->seed_pixel_proof_valid = target_valid;
         VKVV_TRACE("seed-source-pixel-proof",
                    "source_surface=%u source_stream=%llu source_codec=0x%x source_present_gen=%llu source_fd_content_gen=%llu source_crc=0x%llx black_crc=0x%llx "
                    "zero_crc=0x%llx is_black=%u is_zero=%u pixel_proof_valid=%u valid_for_seed=%u sample_bytes=%llu proof_enabled=%u",
@@ -951,10 +955,16 @@ namespace vkvv {
                    source_ok ? 1U : 0U, source_valid ? 1U : 0U, static_cast<unsigned long long>(source_bytes), export_pixel_proof_enabled() ? 1U : 0U);
         VKVV_TRACE("seed-target-pixel-proof",
                    "target_surface=%u source_surface=%u target_fd_dev=%llu target_fd_ino=%llu target_crc_after_copy=0x%llx source_crc=0x%llx matches_source=%u "
-                   "target_is_black=%u target_is_zero=%u pixel_proof_valid=%u copy_status=%s target_sample_bytes=%llu",
+                   "target_is_black=%u target_is_zero=%u pixel_proof_valid=%u reject_reason=%s copy_status=%s target_sample_bytes=%llu",
                    target->owner_surface_id, source->surface_id, static_cast<unsigned long long>(target->fd_dev), static_cast<unsigned long long>(target->fd_ino),
                    static_cast<unsigned long long>(target_ok ? target_crc : 0), static_cast<unsigned long long>(source_ok ? source_crc : 0), target_matches ? 1U : 0U,
-                   target_black ? 1U : 0U, target_zero ? 1U : 0U, target_valid ? 1U : 0U, copy_status != nullptr ? copy_status : "unknown",
+                   target_black ? 1U : 0U, target_zero ? 1U : 0U, target_valid ? 1U : 0U,
+                   target_valid ? "none" : (!source_valid ? "source-proof-invalid" : !target_ok || target_bytes == 0 ? "target-proof-unavailable" :
+                                                                                 !target_matches             ? "target-does-not-match-source" :
+                                                                                 target_black                ? "target-black" :
+                                                                                 target_zero                 ? "target-zero" :
+                                                                                                               "target-invalid"),
+                   copy_status != nullptr ? copy_status : "unknown",
                    static_cast<unsigned long long>(target_bytes));
     }
 
@@ -1866,11 +1876,9 @@ namespace vkvv {
                 target->predecode_seeded       = true;
                 target->seed_source_surface_id = source->surface_id;
                 target->seed_source_generation = source->content_generation;
-                target->seed_pixel_proof_valid = true;
                 mark_export_predecode_nonpresentable(target);
             } else {
                 target->content_generation = source->content_generation;
-                target->seed_pixel_proof_valid = true;
                 clear_export_present_state(target);
             }
             mark_export_fd_written(target, source->content_generation);
