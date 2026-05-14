@@ -445,7 +445,8 @@ namespace vkvv {
         bool                        saw_backing = false;
         for (auto it = runtime->retained_exports.begin(); it != runtime->retained_exports.end(); ++it) {
             saw_backing                     = true;
-            const RetainedExportMatch match = retained_export_match_import(*it, source->import, source->va_fourcc, source->format, source->coded_extent);
+            const RetainedExportMatch match = retained_export_match_import(*it, source->import, source->driver_instance_id, source->stream_id, source->codec_operation,
+                                                                           source->va_fourcc, source->format, source->coded_extent);
             if (match != RetainedExportMatch::Match) {
                 if (match != RetainedExportMatch::FdMismatch) {
                     best_miss = match;

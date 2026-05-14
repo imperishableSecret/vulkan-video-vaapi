@@ -16,6 +16,8 @@ namespace {
     constexpr unsigned int                  fourcc_p010       = 0x30313050;
     constexpr uint64_t                      modifier_linear   = 0;
     constexpr uint64_t                      modifier_mismatch = 1;
+    constexpr uint64_t                      retained_driver   = 2;
+    constexpr uint64_t                      retained_stream   = 1;
     constexpr VkVideoCodecOperationFlagsKHR codec_vp9         = VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR;
     constexpr VkVideoCodecOperationFlagsKHR codec_av1         = VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR;
 
@@ -31,6 +33,9 @@ namespace {
         backing.resource.fd_stat_valid           = true;
         backing.resource.fd_dev                  = 100;
         backing.resource.fd_ino                  = 200;
+        backing.resource.driver_instance_id      = retained_driver;
+        backing.resource.stream_id               = retained_stream;
+        backing.resource.codec_operation         = codec_vp9;
         backing.resource.va_fourcc               = fourcc_nv12;
         backing.resource.format                  = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
         backing.resource.extent                  = {1920, 1088};
@@ -58,8 +63,8 @@ namespace {
     vkvv::TransitionRetentionWindow make_decode_window() {
         vkvv::TransitionRetentionWindow window{};
         window.active             = true;
-        window.driver_instance_id = 2;
-        window.stream_id          = 1;
+        window.driver_instance_id = retained_driver;
+        window.stream_id          = retained_stream;
         window.codec_operation    = codec_vp9;
         window.format             = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
         window.va_fourcc          = fourcc_nv12;
@@ -69,7 +74,7 @@ namespace {
 
     vkvv::ExportResource make_window_seed(VkVideoCodecOperationFlagsKHR codec, uint64_t stream_id) {
         vkvv::ExportResource seed{};
-        seed.driver_instance_id = 2;
+        seed.driver_instance_id = retained_driver;
         seed.stream_id          = stream_id;
         seed.codec_operation    = codec;
         seed.owner_surface_id   = 3;
@@ -80,9 +85,10 @@ namespace {
         return seed;
     }
 
-    bool expect_match(const vkvv::RetainedExportBacking& backing, const VkvvExternalSurfaceImport& import, unsigned int fourcc, VkFormat format, VkExtent2D extent,
-                      vkvv::RetainedExportMatch expected, const char* message) {
-        const vkvv::RetainedExportMatch actual = vkvv::retained_export_match_import(backing, import, fourcc, format, extent);
+    bool expect_match(const vkvv::RetainedExportBacking& backing, const VkvvExternalSurfaceImport& import, uint64_t driver_instance_id, uint64_t stream_id,
+                      VkVideoCodecOperationFlagsKHR codec_operation, unsigned int fourcc, VkFormat format, VkExtent2D extent, vkvv::RetainedExportMatch expected,
+                      const char* message) {
+        const vkvv::RetainedExportMatch actual = vkvv::retained_export_match_import(backing, import, driver_instance_id, stream_id, codec_operation, fourcc, format, extent);
         if (actual != expected) {
             std::fprintf(stderr, "%s: expected %s got %s\n", message, vkvv::retained_export_match_reason(expected), vkvv::retained_export_match_reason(actual));
             return false;
@@ -252,38 +258,50 @@ int main() {
     ok &= check(vkvv_fd_identity_equal(retained_key.fd, backing.fd) && retained_key.fourcc == fourcc_nv12 && retained_key.width == 1920 && retained_key.height == 1088 &&
                     retained_key.has_drm_format_modifier && retained_key.drm_format_modifier == modifier_linear,
                 "retained export image identity did not preserve key fields");
-    ok &= expect_match(backing, import, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088}, vkvv::RetainedExportMatch::Match, "matching import");
+    ok &= expect_match(backing, import, retained_driver, retained_stream, codec_vp9, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088},
+                       vkvv::RetainedExportMatch::Match, "matching import");
+
+    ok &= expect_match(backing, import, retained_driver + 1, retained_stream, codec_vp9, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088},
+                       vkvv::RetainedExportMatch::DriverMismatch, "same fd with wrong driver");
+    ok &= expect_match(backing, import, retained_driver, retained_stream + 1, codec_vp9, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088},
+                       vkvv::RetainedExportMatch::StreamMismatch, "same fd with wrong stream");
+    ok &= expect_match(backing, import, retained_driver, retained_stream, codec_av1, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088},
+                       vkvv::RetainedExportMatch::CodecMismatch, "same fd with wrong codec");
 
     import.external = false;
-    ok &= expect_match(backing, import, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088}, vkvv::RetainedExportMatch::MissingImport, "missing external import");
+    ok &= expect_match(backing, import, retained_driver, retained_stream, codec_vp9, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088},
+                       vkvv::RetainedExportMatch::MissingImport, "missing external import");
 
     import        = make_import();
     import.fd.ino = 201;
-    ok &= expect_match(backing, import, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088}, vkvv::RetainedExportMatch::FdMismatch, "wrong fd identity");
+    ok &= expect_match(backing, import, retained_driver, retained_stream, codec_vp9, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088},
+                       vkvv::RetainedExportMatch::FdMismatch, "wrong fd identity");
 
     import = make_import();
-    ok &= expect_match(backing, import, fourcc_p010, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088}, vkvv::RetainedExportMatch::FourccMismatch, "wrong fourcc");
+    ok &= expect_match(backing, import, retained_driver, retained_stream, codec_vp9, fourcc_p010, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088},
+                       vkvv::RetainedExportMatch::FourccMismatch, "wrong fourcc");
 
     import        = make_import();
     import.fourcc = fourcc_p010;
-    ok &= expect_match(backing, import, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088}, vkvv::RetainedExportMatch::FourccMismatch,
-                       "same fd with mismatched import fourcc");
+    ok &= expect_match(backing, import, retained_driver, retained_stream, codec_vp9, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088},
+                       vkvv::RetainedExportMatch::FourccMismatch, "same fd with mismatched import fourcc");
 
     import                     = make_import();
     import.drm_format_modifier = modifier_mismatch;
-    ok &= expect_match(backing, import, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088}, vkvv::RetainedExportMatch::ModifierMismatch,
-                       "same fd with mismatched modifier");
+    ok &= expect_match(backing, import, retained_driver, retained_stream, codec_vp9, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088},
+                       vkvv::RetainedExportMatch::ModifierMismatch, "same fd with mismatched modifier");
 
     import                         = make_import();
     import.has_drm_format_modifier = false;
-    ok &=
-        expect_match(backing, import, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088}, vkvv::RetainedExportMatch::ModifierMismatch, "same fd with missing modifier");
+    ok &= expect_match(backing, import, retained_driver, retained_stream, codec_vp9, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {1920, 1088},
+                       vkvv::RetainedExportMatch::ModifierMismatch, "same fd with missing modifier");
 
     import = make_import();
-    ok &= expect_match(backing, import, fourcc_nv12, VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16, {1920, 1088}, vkvv::RetainedExportMatch::FormatMismatch,
-                       "wrong Vulkan format");
+    ok &= expect_match(backing, import, retained_driver, retained_stream, codec_vp9, fourcc_nv12, VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16, {1920, 1088},
+                       vkvv::RetainedExportMatch::FormatMismatch, "wrong Vulkan format");
 
-    ok &= expect_match(backing, import, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {3840, 2160}, vkvv::RetainedExportMatch::ExtentMismatch, "undersized retained backing");
+    ok &= expect_match(backing, import, retained_driver, retained_stream, codec_vp9, fourcc_nv12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, {3840, 2160},
+                       vkvv::RetainedExportMatch::ExtentMismatch, "undersized retained backing");
 
     ok &= check(std::string_view(vkvv::retained_export_match_reason(vkvv::RetainedExportMatch::Match)) == "match", "match reason text should be stable");
     ok &= check_dynamic_budget();

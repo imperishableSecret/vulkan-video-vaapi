@@ -97,6 +97,9 @@ namespace vkvv {
         MissingImport,
         MissingFd,
         FdMismatch,
+        DriverMismatch,
+        StreamMismatch,
+        CodecMismatch,
         FourccMismatch,
         ModifierMismatch,
         FormatMismatch,
@@ -378,41 +381,41 @@ namespace vkvv {
     VkDeviceSize              export_memory_bytes(const SurfaceResource* resource);
     VkvvFdIdentity            retained_export_fd_identity(const ExportResource& resource);
     VkvvExternalImageIdentity retained_export_image_identity(const ExportResource& resource);
-    RetainedExportMatch       retained_export_match_import(const RetainedExportBacking& backing, const VkvvExternalSurfaceImport& import, unsigned int va_fourcc, VkFormat format,
-                                                           VkExtent2D coded_extent);
-    const char*               retained_export_match_reason(RetainedExportMatch match);
-    bool                      retained_export_matches_window(const ExportResource& resource, const TransitionRetentionWindow& window);
-    bool                      retained_export_seed_can_replace_window(const TransitionRetentionWindow& window, const ExportResource& seed);
-    bool                      surface_resource_uses_av1_decode(const SurfaceResource* resource);
-    bool                      av1_non_display_export_refresh(const SurfaceResource* resource, bool refresh_export);
-    void                      clear_predecode_export_state(ExportResource* resource);
-    VkDeviceSize              retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties& properties);
-    RetainedExportBudget      retained_export_budget_from_expected(size_t expected_count, VkDeviceSize expected_bytes, VkDeviceSize global_cap_bytes);
-    size_t                    runtime_retained_export_count(VulkanRuntime* runtime);
-    VkDeviceSize              runtime_retained_export_memory_bytes(VulkanRuntime* runtime);
-    RetainedExportStats       runtime_retained_export_stats(VulkanRuntime* runtime);
-    VkDeviceSize              runtime_retained_export_accounted_bytes(VulkanRuntime* runtime);
-    bool                      runtime_retained_export_memory_accounting_valid(VulkanRuntime* runtime);
-    size_t                    runtime_detached_export_count(VulkanRuntime* runtime);
-    VkDeviceSize              runtime_detached_export_memory_bytes(VulkanRuntime* runtime);
-    void                      prune_detached_exports_for_surface(VulkanRuntime* runtime, uint64_t driver_instance_id, VASurfaceID surface_id, uint64_t stream_id,
-                                                                 VkVideoCodecOperationFlagsKHR codec_operation, unsigned int va_fourcc, VkFormat format, VkExtent2D coded_extent);
-    void                      prune_detached_exports_for_driver(VulkanRuntime* runtime, uint64_t driver_instance_id);
-    void                      detach_export_resource(VulkanRuntime* runtime, SurfaceResource* resource);
-    void                      note_retained_export_attached_locked(VulkanRuntime* runtime);
-    void                      register_predecode_export_resource(VulkanRuntime* runtime, ExportResource* resource);
-    void                      unregister_predecode_export_resource(VulkanRuntime* runtime, ExportResource* resource);
-    void                      unregister_predecode_export_resource_locked(VulkanRuntime* runtime, ExportResource* resource);
-    PredecodeExportRecord     make_predecode_export_record(ExportResource* resource);
-    bool                      predecode_export_record_matches_resource(const PredecodeExportRecord& record, const ExportResource* resource);
-    bool                      predecode_export_record_still_valid(const PredecodeExportRecord& record);
-    void                      remember_export_seed_resource(VulkanRuntime* runtime, SurfaceResource* resource);
-    void                      unregister_export_seed_resource(VulkanRuntime* runtime, SurfaceResource* resource);
-    void                      destroy_surface_resource(VulkanRuntime* runtime, VkvvSurface* surface);
-    void                      destroy_surface_resource_raw(VulkanRuntime* runtime, SurfaceResource* resource);
-    bool                      decode_image_key_matches(const DecodeImageKey& existing, const DecodeImageKey& requested);
-    bool                      ensure_surface_resource(VulkanRuntime* runtime, VkvvSurface* surface, const DecodeImageKey& key, char* reason, size_t reason_size);
-    void                      destroy_upload_buffer(VulkanRuntime* runtime, UploadBuffer* upload);
+    RetainedExportMatch retained_export_match_import(const RetainedExportBacking& backing, const VkvvExternalSurfaceImport& import, uint64_t driver_instance_id, uint64_t stream_id,
+                                                     VkVideoCodecOperationFlagsKHR codec_operation, unsigned int va_fourcc, VkFormat format, VkExtent2D coded_extent);
+    const char*         retained_export_match_reason(RetainedExportMatch match);
+    bool                retained_export_matches_window(const ExportResource& resource, const TransitionRetentionWindow& window);
+    bool                retained_export_seed_can_replace_window(const TransitionRetentionWindow& window, const ExportResource& seed);
+    bool                surface_resource_uses_av1_decode(const SurfaceResource* resource);
+    bool                av1_non_display_export_refresh(const SurfaceResource* resource, bool refresh_export);
+    void                clear_predecode_export_state(ExportResource* resource);
+    VkDeviceSize        retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties& properties);
+    RetainedExportBudget  retained_export_budget_from_expected(size_t expected_count, VkDeviceSize expected_bytes, VkDeviceSize global_cap_bytes);
+    size_t                runtime_retained_export_count(VulkanRuntime* runtime);
+    VkDeviceSize          runtime_retained_export_memory_bytes(VulkanRuntime* runtime);
+    RetainedExportStats   runtime_retained_export_stats(VulkanRuntime* runtime);
+    VkDeviceSize          runtime_retained_export_accounted_bytes(VulkanRuntime* runtime);
+    bool                  runtime_retained_export_memory_accounting_valid(VulkanRuntime* runtime);
+    size_t                runtime_detached_export_count(VulkanRuntime* runtime);
+    VkDeviceSize          runtime_detached_export_memory_bytes(VulkanRuntime* runtime);
+    void                  prune_detached_exports_for_surface(VulkanRuntime* runtime, uint64_t driver_instance_id, VASurfaceID surface_id, uint64_t stream_id,
+                                                             VkVideoCodecOperationFlagsKHR codec_operation, unsigned int va_fourcc, VkFormat format, VkExtent2D coded_extent);
+    void                  prune_detached_exports_for_driver(VulkanRuntime* runtime, uint64_t driver_instance_id);
+    void                  detach_export_resource(VulkanRuntime* runtime, SurfaceResource* resource);
+    void                  note_retained_export_attached_locked(VulkanRuntime* runtime);
+    void                  register_predecode_export_resource(VulkanRuntime* runtime, ExportResource* resource);
+    void                  unregister_predecode_export_resource(VulkanRuntime* runtime, ExportResource* resource);
+    void                  unregister_predecode_export_resource_locked(VulkanRuntime* runtime, ExportResource* resource);
+    PredecodeExportRecord make_predecode_export_record(ExportResource* resource);
+    bool                  predecode_export_record_matches_resource(const PredecodeExportRecord& record, const ExportResource* resource);
+    bool                  predecode_export_record_still_valid(const PredecodeExportRecord& record);
+    void                  remember_export_seed_resource(VulkanRuntime* runtime, SurfaceResource* resource);
+    void                  unregister_export_seed_resource(VulkanRuntime* runtime, SurfaceResource* resource);
+    void                  destroy_surface_resource(VulkanRuntime* runtime, VkvvSurface* surface);
+    void                  destroy_surface_resource_raw(VulkanRuntime* runtime, SurfaceResource* resource);
+    bool                  decode_image_key_matches(const DecodeImageKey& existing, const DecodeImageKey& requested);
+    bool                  ensure_surface_resource(VulkanRuntime* runtime, VkvvSurface* surface, const DecodeImageKey& key, char* reason, size_t reason_size);
+    void                  destroy_upload_buffer(VulkanRuntime* runtime, UploadBuffer* upload);
     bool     ensure_bitstream_upload_buffer(VulkanRuntime* runtime, const VideoProfileSpec& profile_spec, const void* data, size_t data_size, VkDeviceSize size_alignment,
                                             VkBufferUsageFlags usage, UploadBuffer* upload, const char* label, char* reason, size_t reason_size);
     bool     ensure_command_resources(VulkanRuntime* runtime, char* reason, size_t reason_size);

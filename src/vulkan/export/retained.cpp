@@ -41,8 +41,8 @@ namespace vkvv {
         return identity;
     }
 
-    RetainedExportMatch retained_export_match_import(const RetainedExportBacking& backing, const VkvvExternalSurfaceImport& import, unsigned int va_fourcc, VkFormat format,
-                                                     VkExtent2D coded_extent) {
+    RetainedExportMatch retained_export_match_import(const RetainedExportBacking& backing, const VkvvExternalSurfaceImport& import, uint64_t driver_instance_id, uint64_t stream_id,
+                                                     VkVideoCodecOperationFlagsKHR codec_operation, unsigned int va_fourcc, VkFormat format, VkExtent2D coded_extent) {
         if (!import.external) {
             return RetainedExportMatch::MissingImport;
         }
@@ -57,6 +57,15 @@ namespace vkvv {
             return RetainedExportMatch::FdMismatch;
         }
 
+        if (resource.driver_instance_id != driver_instance_id) {
+            return RetainedExportMatch::DriverMismatch;
+        }
+        if (resource.stream_id != stream_id) {
+            return RetainedExportMatch::StreamMismatch;
+        }
+        if (resource.codec_operation != codec_operation) {
+            return RetainedExportMatch::CodecMismatch;
+        }
         if ((import_key.fourcc != 0 && import_key.fourcc != va_fourcc) || retained_key.fourcc != va_fourcc) {
             return RetainedExportMatch::FourccMismatch;
         }
@@ -79,6 +88,9 @@ namespace vkvv {
             case RetainedExportMatch::MissingImport: return "missing-import";
             case RetainedExportMatch::MissingFd: return "missing-fd";
             case RetainedExportMatch::FdMismatch: return "fd-mismatch";
+            case RetainedExportMatch::DriverMismatch: return "driver-mismatch";
+            case RetainedExportMatch::StreamMismatch: return "stream-mismatch";
+            case RetainedExportMatch::CodecMismatch: return "codec-mismatch";
             case RetainedExportMatch::FourccMismatch: return "fourcc-mismatch";
             case RetainedExportMatch::ModifierMismatch: return "modifier-mismatch";
             case RetainedExportMatch::FormatMismatch: return "format-mismatch";
