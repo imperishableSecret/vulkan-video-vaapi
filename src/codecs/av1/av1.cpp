@@ -11,9 +11,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <new>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -35,17 +37,66 @@ namespace {
         VADecPictureParameterBufferAV1         pic{};
         std::vector<VASliceParameterBufferAV1> pending_slices;
         std::vector<VkvvAV1Tile>               tiles;
+        std::vector<VkvvAV1Tile>               va_tiles;
+        std::vector<VkvvAV1Tile>               parsed_tiles;
         std::vector<uint8_t>                   bitstream;
         std::vector<VkvvAV1Tile>               decode_tiles;
         uint32_t                               decode_window_offset = 0;
         size_t                                 decode_window_size   = 0;
         VkvvAV1FrameHeader                     header{};
         VkvvAV1SequenceHeader                  sequence{};
+        const char*                            tile_source            = "unknown";
+        const char*                            tile_selection_reason  = "none";
+        bool                                   parser_used            = false;
+        int                                    parser_status          = 0;
+        uint32_t                               selected_obu_type      = 0;
+        uint32_t                               tile_group_count       = 0;
+        bool                                   tile_ranges_equivalent = false;
         uint32_t                               pending_slices_underused_frames = 0;
         uint32_t                               tiles_underused_frames          = 0;
+        uint32_t                               va_tiles_underused_frames       = 0;
+        uint32_t                               parsed_tiles_underused_frames   = 0;
         uint32_t                               bitstream_underused_frames      = 0;
         uint32_t                               decode_tiles_underused_frames   = 0;
     };
+
+    enum class AV1TileSourceMode {
+        Va,
+        Parsed,
+        Compare,
+    };
+
+    bool env_flag_enabled(const char* name) {
+        const char* value = std::getenv(name);
+        return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 && std::strcmp(value, "off") != 0;
+    }
+
+    AV1TileSourceMode av1_tile_source_mode() {
+        if (env_flag_enabled("VKVV_AV1_DISABLE_TILE_GROUP_SPLIT")) {
+            return AV1TileSourceMode::Va;
+        }
+
+        const char* value = std::getenv("VKVV_AV1_TILE_SOURCE");
+        if (value == nullptr || value[0] == '\0' || std::strcmp(value, "compare") == 0) {
+            return AV1TileSourceMode::Compare;
+        }
+        if (std::strcmp(value, "parsed") == 0) {
+            return AV1TileSourceMode::Parsed;
+        }
+        if (std::strcmp(value, "va") == 0) {
+            return AV1TileSourceMode::Va;
+        }
+        return AV1TileSourceMode::Compare;
+    }
+
+    const char* av1_tile_source_mode_name(AV1TileSourceMode mode) {
+        switch (mode) {
+            case AV1TileSourceMode::Va: return "va-slice";
+            case AV1TileSourceMode::Parsed: return "parsed-tile-group";
+            case AV1TileSourceMode::Compare: return "compare";
+            default: return "unknown";
+        }
+    }
 
     uint8_t av1_bit_depth(const VADecPictureParameterBufferAV1& pic) {
         switch (pic.bit_depth_idx) {
@@ -85,6 +136,25 @@ namespace {
         return static_cast<uint32_t>(pic.tile_cols) * static_cast<uint32_t>(pic.tile_rows);
     }
 
+    std::vector<VkvvAV1Tile> sorted_tiles_by_index(std::vector<VkvvAV1Tile> tiles) {
+        std::sort(tiles.begin(), tiles.end(), [](const VkvvAV1Tile& a, const VkvvAV1Tile& b) { return a.tile_index < b.tile_index; });
+        return tiles;
+    }
+
+    bool tile_ranges_equivalent(std::vector<VkvvAV1Tile> va_tiles, std::vector<VkvvAV1Tile> parsed_tiles) {
+        if (va_tiles.size() != parsed_tiles.size()) {
+            return false;
+        }
+        va_tiles     = sorted_tiles_by_index(std::move(va_tiles));
+        parsed_tiles = sorted_tiles_by_index(std::move(parsed_tiles));
+        for (size_t i = 0; i < va_tiles.size(); i++) {
+            if (va_tiles[i].tile_index != parsed_tiles[i].tile_index || va_tiles[i].offset != parsed_tiles[i].offset || va_tiles[i].size != parsed_tiles[i].size) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool record_tile_offsets(AV1State* av1, int64_t offset_adjustment) {
         if (av1 == nullptr || !av1->has_pic) {
             return false;
@@ -114,7 +184,14 @@ namespace {
             tile.tile_index = tile_index_from_param(av1->pic, param, static_cast<uint32_t>(av1->tiles.size()));
             tile.offset     = static_cast<uint32_t>(offset);
             tile.size       = param.slice_data_size;
+            tile.has_va_range  = true;
+            tile.va_slice_index = static_cast<uint32_t>(av1->va_tiles.size());
+            tile.va_offset      = tile.offset;
+            tile.va_size        = tile.size;
+            tile.va_data_offset = param.slice_data_offset;
+            tile.va_data_size   = param.slice_data_size;
             av1->tiles.push_back(tile);
+            av1->va_tiles.push_back(tile);
         }
         av1->pending_slices.clear();
         return true;
@@ -139,7 +216,8 @@ namespace {
         }
 
         const uint64_t end = static_cast<uint64_t>(offset) + size;
-        for (const VkvvAV1Tile& submitted : av1->tiles) {
+        const std::vector<VkvvAV1Tile>& submitted_tiles = av1->va_tiles.empty() ? av1->tiles : av1->va_tiles;
+        for (const VkvvAV1Tile& submitted : submitted_tiles) {
             const uint64_t submitted_end = static_cast<uint64_t>(submitted.offset) + submitted.size;
             if (submitted.offset <= offset && end <= submitted_end) {
                 *param = submitted.param;
@@ -155,7 +233,8 @@ namespace {
         }
 
         const uint64_t end = static_cast<uint64_t>(offset) + size;
-        for (const VkvvAV1Tile& submitted : av1->tiles) {
+        const std::vector<VkvvAV1Tile>& submitted_tiles = av1->va_tiles.empty() ? av1->tiles : av1->va_tiles;
+        for (const VkvvAV1Tile& submitted : submitted_tiles) {
             const uint64_t submitted_end = static_cast<uint64_t>(submitted.offset) + submitted.size;
             if (offset < submitted_end && submitted.offset < end) {
                 return true;
@@ -164,7 +243,8 @@ namespace {
         return false;
     }
 
-    bool append_tile_group_tiles(const AV1State* av1, const GstAV1OBU& obu, const GstAV1TileGroupOBU& group, std::vector<VkvvAV1Tile>* tiles, char* reason, size_t reason_size) {
+    bool append_tile_group_tiles(const AV1State* av1, const GstAV1OBU& obu, const GstAV1TileGroupOBU& group, uint32_t obu_start, uint32_t consumed, uint32_t parsed_obu_index,
+                                 std::vector<VkvvAV1Tile>* tiles, char* reason, size_t reason_size) {
         if (av1 == nullptr || tiles == nullptr || !av1->has_pic) {
             std::snprintf(reason, reason_size, "missing AV1 tile-group state");
             return false;
@@ -228,10 +308,33 @@ namespace {
             param.tile_column       = static_cast<uint16_t>(entry.tile_col);
 
             VkvvAV1Tile tile{};
-            tile.param      = param;
-            tile.tile_index = tile_index;
-            tile.offset     = param.slice_data_offset;
-            tile.size       = param.slice_data_size;
+            tile.param                 = param;
+            tile.tile_index            = tile_index;
+            tile.offset                = param.slice_data_offset;
+            tile.size                  = param.slice_data_size;
+            tile.has_parsed_range      = true;
+            tile.parsed_obu_index      = parsed_obu_index;
+            tile.parsed_obu_offset     = obu_start;
+            tile.parsed_obu_size       = consumed;
+            tile.parsed_payload_offset = payload_offset;
+            tile.parsed_entry_offset   = entry.tile_offset;
+            tile.parsed_entry_size     = entry.tile_size;
+            tile.has_va_range          = true;
+            tile.va_offset             = param.slice_data_offset;
+            tile.va_size               = param.slice_data_size;
+            tile.va_data_offset        = param.slice_data_offset;
+            tile.va_data_size          = param.slice_data_size;
+            for (const VkvvAV1Tile& submitted : av1->va_tiles.empty() ? av1->tiles : av1->va_tiles) {
+                const uint64_t submitted_end = static_cast<uint64_t>(submitted.offset) + submitted.size;
+                if (submitted.offset <= tile.offset && static_cast<uint64_t>(tile.offset) + tile.size <= submitted_end) {
+                    tile.va_slice_index = submitted.va_slice_index;
+                    tile.va_offset      = submitted.offset;
+                    tile.va_size        = submitted.size;
+                    tile.va_data_offset = submitted.va_data_offset;
+                    tile.va_data_size   = submitted.va_data_size;
+                    break;
+                }
+            }
             tiles->push_back(tile);
         }
         return true;
@@ -408,7 +511,17 @@ namespace {
             return false;
         }
 
+        av1->parser_used            = true;
+        av1->parser_status          = 0;
+        av1->selected_obu_type      = 0;
+        av1->tile_group_count       = 0;
+        av1->tile_ranges_equivalent = false;
+        av1->parsed_tiles.clear();
+        av1->tile_source           = "unknown";
+        av1->tile_selection_reason = "parser-scan";
+
         uint32_t                 offset             = 0;
+        uint32_t                 parsed_obu_index   = 0;
         uint32_t                 target_tile_offset = 0;
         const bool               have_target_tile   = min_tile_offset(av1, &target_tile_offset);
         const uint32_t           expected_tiles     = av1->has_pic ? expected_tile_count(av1->pic) : 0;
@@ -451,6 +564,7 @@ namespace {
             GstAV1OBU                obu_copy     = pending_header_obu;
             const GstAV1ParserResult parse_result = gst_av1_parser_parse_frame_header_obu(av1->parser, &obu_copy, &frame_header);
             if (parse_result != GST_AV1_PARSER_OK) {
+                av1->parser_status = parse_result;
                 std::snprintf(reason, reason_size, "failed to parse selected AV1 frame header: parser_result=%d offset=%u", parse_result, pending_header_obu_offset);
                 return false;
             }
@@ -476,6 +590,7 @@ namespace {
             const GstAV1ParserResult identify_result =
                 gst_av1_parser_identify_one_obu(av1->parser, av1->bitstream.data() + offset, static_cast<uint32_t>(av1->bitstream.size() - offset), &obu, &consumed);
             if (identify_result != GST_AV1_PARSER_OK || consumed == 0) {
+                av1->parser_status = identify_result;
                 std::snprintf(reason, reason_size, "failed to identify AV1 OBU: parser_result=%d offset=%u bytes=%zu first=%02x%02x%02x%02x", identify_result, offset,
                               av1->bitstream.size(), av1->bitstream.size() > 0 ? av1->bitstream[0] : 0, av1->bitstream.size() > 1 ? av1->bitstream[1] : 0,
                               av1->bitstream.size() > 2 ? av1->bitstream[2] : 0, av1->bitstream.size() > 3 ? av1->bitstream[3] : 0);
@@ -490,6 +605,7 @@ namespace {
                 GstAV1SequenceHeaderOBU  sequence{};
                 const GstAV1ParserResult parse_result = gst_av1_parser_parse_sequence_header_obu(av1->parser, &obu, &sequence);
                 if (parse_result != GST_AV1_PARSER_OK) {
+                    av1->parser_status = parse_result;
                     std::snprintf(reason, reason_size, "failed to parse AV1 sequence header: parser_result=%d offset=%u", parse_result, offset);
                     return false;
                 }
@@ -498,6 +614,7 @@ namespace {
             } else if (obu.obu_type == GST_AV1_OBU_TEMPORAL_DELIMITER) {
                 const GstAV1ParserResult parse_result = gst_av1_parser_parse_temporal_delimiter_obu(av1->parser, &obu);
                 if (parse_result != GST_AV1_PARSER_OK) {
+                    av1->parser_status = parse_result;
                     std::snprintf(reason, reason_size, "failed to parse AV1 temporal delimiter: parser_result=%d offset=%u", parse_result, offset);
                     return false;
                 }
@@ -521,6 +638,7 @@ namespace {
                 GstAV1FrameHeaderOBU     frame_header{};
                 const GstAV1ParserResult parse_result = gst_av1_parser_parse_frame_header_obu(av1->parser, &obu, &frame_header);
                 if (parse_result != GST_AV1_PARSER_OK) {
+                    av1->parser_status = parse_result;
                     std::snprintf(reason, reason_size, "failed to parse AV1 frame header: parser_result=%d offset=%u", parse_result, offset);
                     return false;
                 }
@@ -545,6 +663,7 @@ namespace {
                     selected_tiles.clear();
                     selected_tiles_authoritative = false;
                     have_selected_header         = true;
+                    av1->selected_obu_type       = obu.obu_type;
                 }
             } else if (obu.obu_type == GST_AV1_OBU_FRAME) {
                 const bool frame_matches_target =
@@ -559,16 +678,18 @@ namespace {
                 GstAV1FrameOBU           frame{};
                 const GstAV1ParserResult parse_result = gst_av1_parser_parse_frame_obu(av1->parser, &obu, &frame);
                 if (parse_result != GST_AV1_PARSER_OK) {
+                    av1->parser_status = parse_result;
                     std::snprintf(reason, reason_size, "failed to parse AV1 frame OBU: parser_result=%d offset=%u", parse_result, offset);
                     return false;
                 }
                 std::vector<VkvvAV1Tile> frame_tiles;
                 bool                     frame_tiles_authoritative = false;
                 if (!frame.frame_header.show_existing_frame) {
-                    if (!append_tile_group_tiles(av1, obu, frame.tile_group, &frame_tiles, reason, reason_size)) {
+                    if (!append_tile_group_tiles(av1, obu, frame.tile_group, obu_start, consumed, parsed_obu_index, &frame_tiles, reason, reason_size)) {
                         return false;
                     }
                     frame_tiles_authoritative = true;
+                    av1->tile_group_count++;
                 }
                 have_fallback_header             = true;
                 fallback_header                  = frame.frame_header;
@@ -583,6 +704,7 @@ namespace {
                     selected_tiles                   = frame_tiles;
                     selected_tiles_authoritative     = frame_tiles_authoritative;
                     have_selected_header             = true;
+                    av1->selected_obu_type           = obu.obu_type;
                     if (selected_has_required_tiles()) {
                         break;
                     }
@@ -604,13 +726,15 @@ namespace {
                     GstAV1TileGroupOBU       tile_group{};
                     const GstAV1ParserResult parse_result = gst_av1_parser_parse_tile_group_obu(av1->parser, &obu, &tile_group);
                     if (parse_result != GST_AV1_PARSER_OK) {
+                        av1->parser_status = parse_result;
                         std::snprintf(reason, reason_size, "failed to parse AV1 tile group: parser_result=%d offset=%u", parse_result, offset);
                         return false;
                     }
-                    if (!append_tile_group_tiles(av1, obu, tile_group, &pending_tiles, reason, reason_size)) {
+                    if (!append_tile_group_tiles(av1, obu, tile_group, obu_start, consumed, parsed_obu_index, &pending_tiles, reason, reason_size)) {
                         return false;
                     }
                     pending_tiles_authoritative = true;
+                    av1->tile_group_count++;
                 }
                 if (group_candidate) {
                     have_fallback_header             = true;
@@ -627,6 +751,7 @@ namespace {
                     selected_tiles                   = pending_tiles;
                     selected_tiles_authoritative     = pending_tiles_authoritative;
                     have_selected_header             = true;
+                    av1->selected_obu_type           = obu.obu_type;
                 } else if (have_selected_header && selected_header_offset == pending_header_offset) {
                     selected_tiles               = pending_tiles;
                     selected_tiles_authoritative = pending_tiles_authoritative;
@@ -637,6 +762,7 @@ namespace {
             }
 
             offset += consumed;
+            parsed_obu_index++;
         }
 
         if (!have_selected_header && !have_target_tile && have_fallback_header) {
@@ -646,6 +772,7 @@ namespace {
             selected_tiles                   = fallback_tiles;
             selected_tiles_authoritative     = fallback_tiles_authoritative;
             have_selected_header             = true;
+            av1->selected_obu_type           = fallback_tiles_authoritative ? GST_AV1_OBU_TILE_GROUP : GST_AV1_OBU_FRAME_HEADER;
         }
 
         if (!have_selected_header) {
@@ -657,13 +784,33 @@ namespace {
                 std::snprintf(reason, reason_size, "AV1 bitstream did not contain tile groups for the selected frame");
                 return false;
             }
-            av1->tiles = selected_tiles;
+            av1->parsed_tiles             = selected_tiles;
+            av1->tile_ranges_equivalent   = tile_ranges_equivalent(av1->va_tiles.empty() ? av1->tiles : av1->va_tiles, selected_tiles);
+            const AV1TileSourceMode mode  = av1_tile_source_mode();
+            const bool              use_parsed = mode == AV1TileSourceMode::Parsed || (mode == AV1TileSourceMode::Compare && av1->tile_ranges_equivalent);
+            av1->tile_source                 = use_parsed ? "parsed-tile-group" : "va-slice";
+            av1->tile_selection_reason       = mode == AV1TileSourceMode::Parsed       ? "forced-parsed"
+                : mode == AV1TileSourceMode::Va                                        ? "forced-va"
+                : av1->tile_ranges_equivalent                                          ? "compare-equivalent"
+                                                                                       : "compare-va-mismatch";
+            if (use_parsed) {
+                av1->tiles = selected_tiles;
+            }
+            VKVV_TRACE("av1-tile-source-compare",
+                       "tile_source=%s requested_mode=%s selection_reason=%s va_tile_count=%zu parsed_tile_count=%zu selected_tile_count=%zu equivalent=%u "
+                       "parser_used=1 parser_status=%d selected_obu_type=%u tile_group_count=%u",
+                       av1->tile_source, av1_tile_source_mode_name(mode), av1->tile_selection_reason, av1->va_tiles.size(), selected_tiles.size(), av1->tiles.size(),
+                       av1->tile_ranges_equivalent ? 1U : 0U, av1->parser_status, av1->selected_obu_type, av1->tile_group_count);
+        } else {
+            av1->tile_source           = "show-existing";
+            av1->tile_selection_reason = "show-existing-frame";
         }
 
         copy_gst_frame_header(selected_header, selected_header_offset, &av1->header);
         if (selected_updates_reference_state) {
             const GstAV1ParserResult update_result = gst_av1_parser_reference_frame_update(av1->parser, &selected_header);
             if (update_result != GST_AV1_PARSER_OK) {
+                av1->parser_status = update_result;
                 std::snprintf(reason, reason_size, "failed to update AV1 reference parser state: parser_result=%d offset=%u", update_result, selected_header_offset);
                 return false;
             }
@@ -746,11 +893,20 @@ void vkvv_av1_begin_picture(void* state) {
     av1->pic                = {};
     vkvv::clear_with_capacity_hysteresis(av1->pending_slices, av1->pending_slices_underused_frames);
     vkvv::clear_with_capacity_hysteresis(av1->tiles, av1->tiles_underused_frames);
+    vkvv::clear_with_capacity_hysteresis(av1->va_tiles, av1->va_tiles_underused_frames);
+    vkvv::clear_with_capacity_hysteresis(av1->parsed_tiles, av1->parsed_tiles_underused_frames);
     vkvv::clear_with_capacity_hysteresis(av1->bitstream, av1->bitstream_underused_frames);
     vkvv::clear_with_capacity_hysteresis(av1->decode_tiles, av1->decode_tiles_underused_frames);
     av1->decode_window_offset = 0;
     av1->decode_window_size   = 0;
     av1->header               = {};
+    av1->tile_source           = "unknown";
+    av1->tile_selection_reason = "none";
+    av1->parser_used           = false;
+    av1->parser_status         = 0;
+    av1->selected_obu_type     = 0;
+    av1->tile_group_count      = 0;
+    av1->tile_ranges_equivalent = false;
 }
 
 VAStatus vkvv_av1_render_buffer(void* state, const VkvvBuffer* buffer) {
@@ -920,5 +1076,16 @@ VAStatus vkvv_av1_get_decode_input(void* state, VkvvAV1DecodeInput* input) {
     input->fourcc               = av1_fourcc(input->bit_depth);
     input->frame_width          = static_cast<uint32_t>(av1->pic.frame_width_minus1) + 1;
     input->frame_height         = static_cast<uint32_t>(av1->pic.frame_height_minus1) + 1;
+    input->va_tiles             = presentation_only || av1->va_tiles.empty() ? nullptr : av1->va_tiles.data();
+    input->va_tile_count        = presentation_only ? 0 : av1->va_tiles.size();
+    input->parsed_tiles         = presentation_only || av1->parsed_tiles.empty() ? nullptr : av1->parsed_tiles.data();
+    input->parsed_tile_count    = presentation_only ? 0 : av1->parsed_tiles.size();
+    input->tile_source          = av1->tile_source;
+    input->tile_selection_reason = av1->tile_selection_reason;
+    input->parser_used          = av1->parser_used;
+    input->parser_status        = av1->parser_status;
+    input->selected_obu_type    = av1->selected_obu_type;
+    input->tile_group_count     = av1->tile_group_count;
+    input->tile_ranges_equivalent = av1->tile_ranges_equivalent;
     return VA_STATUS_SUCCESS;
 }

@@ -117,6 +117,11 @@ class StreamStats:
     export_seed_stale_drops: int = 0
     stale_visible_nondisplay: int = 0
     nondisplay_shadow_seeds: int = 0
+    av1_tile_submit_maps: int = 0
+    av1_tile_suspicious: int = 0
+    av1_dpb_maps: int = 0
+    av1_visible_audits: int = 0
+    av1_publish_failures: int = 0
 
     def remember_identity(self, fields: dict[str, str]) -> None:
         width = parse_int(fields.get("width"))
@@ -173,6 +178,11 @@ class TraceProfile:
         self.nondisplay_refresh_skips = 0
         self.stale_visible_nondisplay = 0
         self.nondisplay_shadow_seeds = 0
+        self.av1_tile_submit_maps = 0
+        self.av1_tile_suspicious = 0
+        self.av1_dpb_maps = 0
+        self.av1_visible_audits = 0
+        self.av1_publish_failures = 0
         self.export_copy_publish_skips = 0
         self.browser_dropped_frames_observed = False
         self.surfaces: dict[int, SurfaceInfo] = {}
@@ -300,6 +310,16 @@ class TraceProfile:
             stream.export_copy_wait_ns += parse_int(fields.get("wait_ns")) or 0
         elif event == "export-copy-publish-skip" and stream is not None:
             stream.export_copy_publish_skips += 1
+        elif event == "av1-tile-submit-map" and stream is not None and fields.get("scope") == "frame":
+            stream.av1_tile_submit_maps += 1
+            if (parse_int(fields.get("suspicious")) or 0) != 0:
+                stream.av1_tile_suspicious += 1
+        elif event in ("av1-dpb-map-before-submit", "av1-dpb-map-after-submit", "av1-dpb-map-after-refresh") and stream is not None and fields.get("scope") == "frame":
+            stream.av1_dpb_maps += 1
+        elif event == "av1-visible-frame-audit" and stream is not None:
+            stream.av1_visible_audits += 1
+            if fields.get("failure_stage") not in (None, "", "none"):
+                stream.av1_publish_failures += 1
         elif event == "retained-export-add" and stream is not None:
             stream.retained_added += 1
         elif event == "retained-export-prune" and stream is not None:
@@ -364,6 +384,16 @@ class TraceProfile:
             self.nondisplay_shadow_seeds += 1
         elif event == "export-copy-publish-skip":
             self.export_copy_publish_skips += 1
+        elif event == "av1-tile-submit-map" and fields.get("scope") == "frame":
+            self.av1_tile_submit_maps += 1
+            if (parse_int(fields.get("suspicious")) or 0) != 0:
+                self.av1_tile_suspicious += 1
+        elif event in ("av1-dpb-map-before-submit", "av1-dpb-map-after-submit", "av1-dpb-map-after-refresh") and fields.get("scope") == "frame":
+            self.av1_dpb_maps += 1
+        elif event == "av1-visible-frame-audit":
+            self.av1_visible_audits += 1
+            if fields.get("failure_stage") not in (None, "", "none"):
+                self.av1_publish_failures += 1
         elif event == "device-lost":
             self.note_device_lost(fields)
 
@@ -435,6 +465,11 @@ class TraceProfile:
             "nondisplay_refresh_skips": self.nondisplay_refresh_skips,
             "stale_visible_nondisplay": self.stale_visible_nondisplay,
             "nondisplay_shadow_seeds": self.nondisplay_shadow_seeds,
+            "av1_tile_submit_maps": self.av1_tile_submit_maps,
+            "av1_tile_suspicious": self.av1_tile_suspicious,
+            "av1_dpb_maps": self.av1_dpb_maps,
+            "av1_visible_audits": self.av1_visible_audits,
+            "av1_publish_failures": self.av1_publish_failures,
             "export_copy_publish_skips": self.export_copy_publish_skips,
             "device_lost": len(self.device_lost_pids),
             "chrome_vaapi_errors": sum(self.chrome_errors.values()),
@@ -460,6 +495,11 @@ class TraceProfile:
             total["nondisplay_refresh_skips"] += stream.refresh_skipped
             total["stale_visible_nondisplay"] += stream.stale_visible_nondisplay
             total["nondisplay_shadow_seeds"] += stream.nondisplay_shadow_seeds
+            total["av1_tile_submit_maps"] += stream.av1_tile_submit_maps
+            total["av1_tile_suspicious"] += stream.av1_tile_suspicious
+            total["av1_dpb_maps"] += stream.av1_dpb_maps
+            total["av1_visible_audits"] += stream.av1_visible_audits
+            total["av1_publish_failures"] += stream.av1_publish_failures
             total["export_copy_publish_skips"] += stream.export_copy_publish_skips
         return codecs
 
@@ -528,6 +568,11 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "nondisplay_refresh_skips": stream.refresh_skipped,
         "stale_visible_nondisplay": stream.stale_visible_nondisplay,
         "nondisplay_shadow_seeds": stream.nondisplay_shadow_seeds,
+        "av1_tile_submit_maps": stream.av1_tile_submit_maps,
+        "av1_tile_suspicious": stream.av1_tile_suspicious,
+        "av1_dpb_maps": stream.av1_dpb_maps,
+        "av1_visible_audits": stream.av1_visible_audits,
+        "av1_publish_failures": stream.av1_publish_failures,
         "export_copy_publish_skips": stream.export_copy_publish_skips,
     }
 
@@ -598,6 +643,8 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         f"driver_stale_drops={totals['driver_stale_drops']} predecode_stale_drops={totals['predecode_stale_drops']} "
         f"export_seed_stale_drops={totals['export_seed_stale_drops']} nondisplay_refresh_skips={totals['nondisplay_refresh_skips']} "
         f"stale_visible_nondisplay={totals['stale_visible_nondisplay']} nondisplay_shadow_seeds={totals['nondisplay_shadow_seeds']} "
+        f"av1_tile_submit_maps={totals['av1_tile_submit_maps']} av1_tile_suspicious={totals['av1_tile_suspicious']} "
+        f"av1_dpb_maps={totals['av1_dpb_maps']} av1_visible_audits={totals['av1_visible_audits']} av1_publish_failures={totals['av1_publish_failures']} "
         f"export_copy_publish_skips={totals['export_copy_publish_skips']} "
         f"browser_dropped_frames_observed={1 if profile.browser_dropped_frames_observed else 0} "
         f"device_lost={totals['device_lost']} chrome_vaapi_errors={totals['chrome_vaapi_errors']}"
@@ -613,6 +660,8 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"driver_stale_drops={values['driver_stale_drops']} predecode_stale_drops={values['predecode_stale_drops']} "
             f"export_seed_stale_drops={values['export_seed_stale_drops']} nondisplay_refresh_skips={values['nondisplay_refresh_skips']} "
             f"stale_visible_nondisplay={values['stale_visible_nondisplay']} nondisplay_shadow_seeds={values['nondisplay_shadow_seeds']} "
+            f"av1_tile_submit_maps={values['av1_tile_submit_maps']} av1_tile_suspicious={values['av1_tile_suspicious']} "
+            f"av1_dpb_maps={values['av1_dpb_maps']} av1_visible_audits={values['av1_visible_audits']} av1_publish_failures={values['av1_publish_failures']} "
             f"export_copy_publish_skips={values['export_copy_publish_skips']}"
         )
     for stream in sorted(profile.streams.values(), key=lambda item: item.key):
@@ -631,6 +680,8 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"driver_stale_drops={stream.stale_drops} predecode_stale_drops={stream.predecode_stale_drops} "
             f"export_seed_stale_drops={stream.export_seed_stale_drops} nondisplay_refresh_skips={stream.refresh_skipped} "
             f"stale_visible_nondisplay={stream.stale_visible_nondisplay} nondisplay_shadow_seeds={stream.nondisplay_shadow_seeds} "
+            f"av1_tile_submit_maps={stream.av1_tile_submit_maps} av1_tile_suspicious={stream.av1_tile_suspicious} "
+            f"av1_dpb_maps={stream.av1_dpb_maps} av1_visible_audits={stream.av1_visible_audits} av1_publish_failures={stream.av1_publish_failures} "
             f"export_copy_publish_skips={stream.export_copy_publish_skips}"
         )
     for message, count in profile.chrome_errors.most_common():

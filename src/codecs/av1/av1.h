@@ -116,6 +116,19 @@ typedef struct {
     uint32_t                  tile_index;
     uint32_t                  offset;
     uint32_t                  size;
+    bool                      has_va_range;
+    uint32_t                  va_slice_index;
+    uint32_t                  va_offset;
+    uint32_t                  va_size;
+    uint32_t                  va_data_offset;
+    uint32_t                  va_data_size;
+    bool                      has_parsed_range;
+    uint32_t                  parsed_obu_index;
+    uint32_t                  parsed_obu_offset;
+    uint32_t                  parsed_obu_size;
+    uint32_t                  parsed_payload_offset;
+    uint32_t                  parsed_entry_offset;
+    uint32_t                  parsed_entry_size;
 } VkvvAV1Tile;
 
 typedef struct {
@@ -132,6 +145,17 @@ typedef struct {
     unsigned int                          fourcc;
     uint32_t                              frame_width;
     uint32_t                              frame_height;
+    const VkvvAV1Tile*                    va_tiles;
+    size_t                                va_tile_count;
+    const VkvvAV1Tile*                    parsed_tiles;
+    size_t                                parsed_tile_count;
+    const char*                           tile_source;
+    const char*                           tile_selection_reason;
+    bool                                  parser_used;
+    int                                   parser_status;
+    uint32_t                              selected_obu_type;
+    uint32_t                              tile_group_count;
+    bool                                  tile_ranges_equivalent;
 } VkvvAV1DecodeInput;
 
 void*    vkvv_av1_state_create(void);

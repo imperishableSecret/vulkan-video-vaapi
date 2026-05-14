@@ -8,6 +8,7 @@
 #include "vulkan/runtime_internal.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <va/va_dec_av1.h>
 #include <va/va_dec_hevc.h>
@@ -324,8 +325,19 @@ namespace {
     }
 
     bool check_av1_parser(const VkvvDecodeOps* av1, uint8_t bit_depth_idx, uint8_t expected_bit_depth, unsigned int expected_fourcc, const char* label) {
+        const char* previous_tile_source = std::getenv("VKVV_AV1_TILE_SOURCE");
+        if (previous_tile_source != nullptr) {
+            previous_tile_source = ::strdup(previous_tile_source);
+        }
+        setenv("VKVV_AV1_TILE_SOURCE", "parsed", 1);
         void* state = av1 != nullptr ? av1->state_create() : nullptr;
         if (!check(state != nullptr, "AV1 codec state allocation failed")) {
+            if (previous_tile_source != nullptr) {
+                setenv("VKVV_AV1_TILE_SOURCE", previous_tile_source, 1);
+                std::free(const_cast<char*>(previous_tile_source));
+            } else {
+                unsetenv("VKVV_AV1_TILE_SOURCE");
+            }
             return false;
         }
 
@@ -571,6 +583,12 @@ namespace {
             ok;
 
         av1->state_destroy(state);
+        if (previous_tile_source != nullptr) {
+            setenv("VKVV_AV1_TILE_SOURCE", previous_tile_source, 1);
+            std::free(const_cast<char*>(previous_tile_source));
+        } else {
+            unsetenv("VKVV_AV1_TILE_SOURCE");
+        }
         return ok;
     }
 

@@ -8,6 +8,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -301,6 +302,175 @@ namespace {
         resource->av1_visible_show_existing_frame   = input->header.show_existing_frame;
         resource->av1_visible_refresh_frame_flags   = input->header.refresh_frame_flags;
         resource->av1_visible_frame_to_show_map_idx = input->header.frame_to_show_map_idx;
+    }
+
+    bool av1_env_flag_enabled(const char* name) {
+        const char* value = std::getenv(name);
+        return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 && std::strcmp(value, "off") != 0;
+    }
+
+    bool av1_trace_tiles_enabled() {
+        return vkvv_trace_deep_enabled() || av1_env_flag_enabled("VKVV_AV1_TRACE_TILES");
+    }
+
+    bool av1_trace_dpb_enabled() {
+        return vkvv_trace_deep_enabled() || av1_env_flag_enabled("VKVV_AV1_TRACE_DPB");
+    }
+
+    uint32_t av1_fingerprint_level() {
+        const char* value = std::getenv("VKVV_AV1_FINGERPRINT_LEVEL");
+        if (value == nullptr || value[0] == '\0') {
+            return 0;
+        }
+        const long parsed = std::strtol(value, nullptr, 10);
+        return static_cast<uint32_t>(std::clamp<long>(parsed, 0, 4));
+    }
+
+    uint64_t fnv1a64(uint64_t hash, uint64_t value) {
+        constexpr uint64_t prime = 1099511628211ULL;
+        for (uint32_t i = 0; i < 8; i++) {
+            hash ^= (value >> (i * 8)) & 0xffU;
+            hash *= prime;
+        }
+        return hash;
+    }
+
+    uint64_t av1_metadata_fingerprint(const SurfaceResource* resource, const VkvvAV1DecodeInput* input, uint64_t frame_seq, int target_dpb_slot) {
+        uint64_t hash = 1469598103934665603ULL;
+        hash          = fnv1a64(hash, frame_seq);
+        hash          = fnv1a64(hash, resource != nullptr ? resource->surface_id : VA_INVALID_ID);
+        hash          = fnv1a64(hash, resource != nullptr ? resource->content_generation + 1 : 0);
+        hash          = fnv1a64(hash, input != nullptr ? input->pic->order_hint : 0);
+        hash          = fnv1a64(hash, input != nullptr ? input->header.refresh_frame_flags : 0);
+        hash          = fnv1a64(hash, static_cast<uint64_t>(target_dpb_slot));
+        hash          = fnv1a64(hash, resource != nullptr ? vkvv_trace_handle(resource->image) : 0);
+        hash          = fnv1a64(hash, resource != nullptr ? vkvv_trace_handle(resource->export_resource.image) : 0);
+        return hash;
+    }
+
+    std::string av1_bytes_hex(const uint8_t* data, size_t size, uint32_t offset, uint32_t count) {
+        static constexpr char digits[] = "0123456789abcdef";
+        std::string           text;
+        if (data == nullptr || size == 0 || offset >= size || count == 0) {
+            return "-";
+        }
+        const uint32_t available = static_cast<uint32_t>(std::min<size_t>(count, size - offset));
+        text.reserve(available * 2);
+        for (uint32_t i = 0; i < available; i++) {
+            const uint8_t byte = data[offset + i];
+            text.push_back(digits[byte >> 4]);
+            text.push_back(digits[byte & 0xf]);
+        }
+        return text;
+    }
+
+    const VkvvAV1Tile* av1_find_tile_by_index(const VkvvAV1Tile* tiles, size_t count, uint32_t tile_index) {
+        if (tiles == nullptr) {
+            return nullptr;
+        }
+        for (size_t i = 0; i < count; i++) {
+            if (tiles[i].tile_index == tile_index) {
+                return &tiles[i];
+            }
+        }
+        return nullptr;
+    }
+
+    void trace_av1_tile_submit_map(const VkvvDriver* drv, const VkvvContext* vctx, VASurfaceID target_surface_id, uint64_t frame_seq, const VkvvAV1DecodeInput* input) {
+        if (input == nullptr || input->pic == nullptr || input->tiles == nullptr || input->tile_count == 0 || !av1_trace_tiles_enabled()) {
+            return;
+        }
+
+        std::vector<const VkvvAV1Tile*> sorted;
+        sorted.reserve(input->tile_count);
+        uint64_t sum_sizes   = 0;
+        uint32_t min_offset  = std::numeric_limits<uint32_t>::max();
+        uint64_t max_end     = 0;
+        bool     inside      = true;
+        bool     overlap     = false;
+        bool     gaps        = false;
+        bool     zero_size   = false;
+        for (size_t i = 0; i < input->tile_count; i++) {
+            const VkvvAV1Tile& tile = input->tiles[i];
+            sorted.push_back(&tile);
+            const uint64_t end = static_cast<uint64_t>(tile.offset) + tile.size;
+            sum_sizes += tile.size;
+            min_offset = std::min(min_offset, tile.offset);
+            max_end    = std::max(max_end, end);
+            if (tile.size == 0 || tile.offset >= input->bitstream_size || end > input->bitstream_size) {
+                inside = false;
+            }
+            zero_size |= tile.size == 0;
+        }
+        std::sort(sorted.begin(), sorted.end(), [](const VkvvAV1Tile* a, const VkvvAV1Tile* b) { return a->offset < b->offset; });
+        uint64_t previous_end = 0;
+        for (const VkvvAV1Tile* tile : sorted) {
+            if (previous_end != 0) {
+                overlap |= tile->offset < previous_end;
+                gaps |= tile->offset > previous_end;
+            }
+            previous_end = std::max(previous_end, static_cast<uint64_t>(tile->offset) + tile->size);
+        }
+        const bool implausibly_small = input->bitstream_size > 256 && sum_sizes < input->bitstream_size / 64;
+        const bool suspicious        = !inside || overlap || zero_size || implausibly_small;
+        VKVV_TRACE("av1-tile-submit-map",
+                   "scope=frame frame_seq=%llu driver=%llu stream=%llu surface=%u codec=0x%x profile=%u bit_depth=%u coded_width=%u coded_height=%u visible_width=%u "
+                   "visible_height=%u show_frame=%u show_existing_frame=%u showable_frame=%u refresh_frame_flags=0x%02x order_hint=%u frame_type=%u bitstream_size=%zu "
+                   "frame_header_offset=%u tile_count=%zu tile_cols=%u tile_rows=%u tile_source=%s selection_reason=%s parser_used=%u parser_status=%d selected_obu_type=%u "
+                   "tile_group_count=%u va_tile_count=%zu parsed_tile_count=%zu sum_final_tile_sizes=%llu min_final_tile_offset=%u max_final_tile_end=%llu "
+                   "ranges_inside_bitstream=%u ranges_overlap=%u ranges_have_gaps=%u tile_ranges_valid=%u suspicious=%u implausibly_small=%u",
+                   static_cast<unsigned long long>(frame_seq), drv != nullptr ? static_cast<unsigned long long>(drv->driver_instance_id) : 0ULL,
+                   vctx != nullptr ? static_cast<unsigned long long>(vctx->stream_id) : 0ULL, target_surface_id, VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR, input->pic->profile,
+                   input->bit_depth, round_up_16(input->frame_width), round_up_16(input->frame_height), input->frame_width, input->frame_height,
+                   input->header.show_frame ? 1U : 0U, input->header.show_existing_frame ? 1U : 0U, input->header.showable_frame ? 1U : 0U,
+                   input->header.refresh_frame_flags, input->pic->order_hint, input->pic->pic_info_fields.bits.frame_type, input->bitstream_size, input->header.frame_header_offset,
+                   input->tile_count, input->pic->tile_cols, input->pic->tile_rows, input->tile_source != nullptr ? input->tile_source : "unknown",
+                   input->tile_selection_reason != nullptr ? input->tile_selection_reason : "unknown", input->parser_used ? 1U : 0U, input->parser_status,
+                   input->selected_obu_type, input->tile_group_count, input->va_tile_count, input->parsed_tile_count, static_cast<unsigned long long>(sum_sizes),
+                   min_offset == std::numeric_limits<uint32_t>::max() ? 0U : min_offset, static_cast<unsigned long long>(max_end), inside ? 1U : 0U, overlap ? 1U : 0U,
+                   gaps ? 1U : 0U, !suspicious ? 1U : 0U, suspicious ? 1U : 0U, implausibly_small ? 1U : 0U);
+
+        previous_end = 0;
+        for (size_t i = 0; i < input->tile_count; i++) {
+            const VkvvAV1Tile& tile     = input->tiles[i];
+            const uint64_t     tile_end = static_cast<uint64_t>(tile.offset) + tile.size;
+            const bool         tile_inside = tile.size != 0 && tile.offset < input->bitstream_size && tile_end <= input->bitstream_size;
+            const bool         tile_overlap = i > 0 && tile.offset < previous_end;
+            const auto*        va_tile      = av1_find_tile_by_index(input->va_tiles, input->va_tile_count, tile.tile_index);
+            const auto*        parsed_tile  = av1_find_tile_by_index(input->parsed_tiles, input->parsed_tile_count, tile.tile_index);
+            const std::string  first_bytes  = av1_bytes_hex(input->bitstream, input->bitstream_size, tile.offset, 16);
+            const uint32_t     last_offset  = tile.size > 16 ? tile.offset + tile.size - 16 : tile.offset;
+            const std::string  last_bytes   = av1_bytes_hex(input->bitstream, input->bitstream_size, last_offset, 16);
+            VKVV_TRACE("av1-tile-submit-map",
+                       "scope=tile frame_seq=%llu surface=%u tile_index=%u tile_row=%u tile_col=%u va_slice_index=%u va_offset=%u va_size=%u va_data_offset=%u "
+                       "va_data_size=%u parsed_obu_index=%u parsed_obu_offset=%u parsed_obu_size=%u parsed_payload_offset=%u parsed_entry_offset=%u parsed_entry_size=%u "
+                       "final_vk_offset=%u final_vk_size=%u final_range_end=%llu inside_bitstream=%u overlap_previous=%u first_16_bytes_hex=%s last_16_bytes_hex=%s",
+                       static_cast<unsigned long long>(frame_seq), target_surface_id, tile.tile_index, tile.param.tile_row, tile.param.tile_column,
+                       va_tile != nullptr ? va_tile->va_slice_index : tile.va_slice_index, va_tile != nullptr ? va_tile->offset : tile.va_offset,
+                       va_tile != nullptr ? va_tile->size : tile.va_size, va_tile != nullptr ? va_tile->va_data_offset : tile.va_data_offset,
+                       va_tile != nullptr ? va_tile->va_data_size : tile.va_data_size, parsed_tile != nullptr ? parsed_tile->parsed_obu_index : tile.parsed_obu_index,
+                       parsed_tile != nullptr ? parsed_tile->parsed_obu_offset : tile.parsed_obu_offset,
+                       parsed_tile != nullptr ? parsed_tile->parsed_obu_size : tile.parsed_obu_size,
+                       parsed_tile != nullptr ? parsed_tile->parsed_payload_offset : tile.parsed_payload_offset,
+                       parsed_tile != nullptr ? parsed_tile->parsed_entry_offset : tile.parsed_entry_offset,
+                       parsed_tile != nullptr ? parsed_tile->parsed_entry_size : tile.parsed_entry_size, tile.offset, tile.size, static_cast<unsigned long long>(tile_end),
+                       tile_inside ? 1U : 0U, tile_overlap ? 1U : 0U, first_bytes.c_str(), last_bytes.c_str());
+            if (va_tile != nullptr || parsed_tile != nullptr) {
+                const uint32_t va_offset     = va_tile != nullptr ? va_tile->offset : 0;
+                const uint32_t va_size       = va_tile != nullptr ? va_tile->size : 0;
+                const uint32_t parsed_offset = parsed_tile != nullptr ? parsed_tile->offset : 0;
+                const uint32_t parsed_size   = parsed_tile != nullptr ? parsed_tile->size : 0;
+                VKVV_TRACE("av1-tile-source-compare",
+                           "frame_seq=%llu surface=%u tile_index=%u va_offset=%u va_size=%u parsed_offset=%u parsed_size=%u offset_delta=%d size_delta=%d same_offset=%u "
+                           "same_size=%u tile_source=%s selection_reason=%s",
+                           static_cast<unsigned long long>(frame_seq), target_surface_id, tile.tile_index, va_offset, va_size, parsed_offset, parsed_size,
+                           static_cast<int32_t>(parsed_offset) - static_cast<int32_t>(va_offset), static_cast<int32_t>(parsed_size) - static_cast<int32_t>(va_size),
+                           va_tile != nullptr && parsed_tile != nullptr && va_offset == parsed_offset ? 1U : 0U,
+                           va_tile != nullptr && parsed_tile != nullptr && va_size == parsed_size ? 1U : 0U, input->tile_source != nullptr ? input->tile_source : "unknown",
+                           input->tile_selection_reason != nullptr ? input->tile_selection_reason : "unknown");
+            }
+            previous_end = std::max(previous_end, tile_end);
+        }
     }
 
     void build_av1_tile_info(const VkvvAV1DecodeInput* input, AV1PictureStdData* std_data) {
@@ -651,6 +821,56 @@ namespace {
         return text.empty() ? "-" : text;
     }
 
+    void trace_av1_dpb_map(const char* event, const VkvvDriver* drv, const VkvvContext* vctx, VASurfaceID target_surface_id, uint64_t frame_seq,
+                           const AV1VideoSession* session, const VkvvAV1DecodeInput* input,
+                           const int32_t reference_name_slot_indices[VK_MAX_VIDEO_AV1_REFERENCES_PER_FRAME_KHR], int target_dpb_slot, bool has_setup_slot,
+                           bool current_updates_reference_map, bool references_valid, uint32_t reference_count) {
+        if (event == nullptr || session == nullptr || input == nullptr || input->pic == nullptr || !av1_trace_dpb_enabled()) {
+            return;
+        }
+
+        VKVV_TRACE(event,
+                   "scope=frame frame_seq=%llu driver=%llu stream=%llu surface=%u session_generation=0 sequence_generation=0 order_hint=%u frame_id=%u show_frame=%u "
+                   "show_existing_frame=%u showable_frame=%u refresh_frame_flags=0x%02x frame_type=%u target_dpb_slot=%d setup_slot=%d scratch_slot=%u stores_as_reference=%u "
+                   "references_valid=%u reference_count=%u",
+                   static_cast<unsigned long long>(frame_seq), drv != nullptr ? static_cast<unsigned long long>(drv->driver_instance_id) : 0ULL,
+                   vctx != nullptr ? static_cast<unsigned long long>(vctx->stream_id) : 0ULL, target_surface_id, input->pic->order_hint, input->header.current_frame_id,
+                   input->header.show_frame ? 1U : 0U, input->header.show_existing_frame ? 1U : 0U, input->header.showable_frame ? 1U : 0U,
+                   input->header.refresh_frame_flags, input->pic->pic_info_fields.bits.frame_type, target_dpb_slot, has_setup_slot ? target_dpb_slot : -1,
+                   has_setup_slot && !current_updates_reference_map ? 1U : 0U, current_updates_reference_map ? 1U : 0U, references_valid ? 1U : 0U, reference_count);
+
+        for (uint32_t i = 0; i < max_av1_reference_slots; i++) {
+            const AV1ReferenceSlot& entry = session->reference_slots[i];
+            VKVV_TRACE(event,
+                       "scope=map frame_seq=%llu map_index=%u surface=%u vulkan_dpb_slot=%d order_hint=%u frame_id=%u showable=%u content_generation=%llu "
+                       "session_generation=0 sequence_generation=0 valid=%u",
+                       static_cast<unsigned long long>(frame_seq), i, entry.surface_id, entry.slot, entry.info.OrderHint,
+                       entry.has_metadata ? entry.metadata.frame_id : 0U, entry.has_metadata && entry.metadata.showable ? 1U : 0U,
+                       entry.has_metadata ? static_cast<unsigned long long>(entry.metadata.content_generation) : 0ULL,
+                       entry.surface_id != VA_INVALID_ID && entry.slot >= 0 ? 1U : 0U);
+        }
+
+        if (reference_name_slot_indices == nullptr) {
+            return;
+        }
+        for (uint32_t i = 0; i < VK_MAX_VIDEO_AV1_REFERENCES_PER_FRAME_KHR; i++) {
+            const uint8_t ref_index   = av1_va_ref_frame_index(input->pic, i);
+            const bool    valid_index = ref_index < max_av1_reference_slots;
+            const auto*   slot        = valid_index ? av1_reference_slot_for_index(session, ref_index) : nullptr;
+            VKVV_TRACE(event,
+                       "scope=active frame_seq=%llu ref_name=%u ref_name_index=%u ref_frame_map_index=%u vulkan_dpb_slot=%d surface=%u surface_stream=%llu surface_codec=0x%x "
+                       "surface_content_generation=%llu surface_decode_generation=%llu surface_session_generation=0 order_hint=%u frame_id=%u valid=%u reason_if_invalid=%s",
+                       static_cast<unsigned long long>(frame_seq), i, i, valid_index ? ref_index : 0U, reference_name_slot_indices[i],
+                       slot != nullptr ? slot->surface_id : VA_INVALID_ID, slot != nullptr && slot->has_metadata ? static_cast<unsigned long long>(slot->metadata.stream_id) : 0ULL,
+                       slot != nullptr && slot->has_metadata ? slot->metadata.codec_operation : 0U,
+                       slot != nullptr && slot->has_metadata ? static_cast<unsigned long long>(slot->metadata.content_generation) : 0ULL,
+                       slot != nullptr && slot->has_metadata ? static_cast<unsigned long long>(slot->metadata.content_generation) : 0ULL,
+                       slot != nullptr ? slot->info.OrderHint : 0U, slot != nullptr && slot->has_metadata ? slot->metadata.frame_id : 0U,
+                       slot != nullptr && reference_name_slot_indices[i] >= 0 ? 1U : 0U,
+                       !valid_index ? "invalid-ref-index" : slot == nullptr ? "missing-slot" : reference_name_slot_indices[i] < 0 ? "missing-dpb-slot" : "none");
+        }
+    }
+
 } // namespace
 
 namespace vkvv {
@@ -769,23 +989,33 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     int32_t                                                reference_name_slot_indices[VK_MAX_VIDEO_AV1_REFERENCES_PER_FRAME_KHR] = {-1, -1, -1, -1, -1, -1, -1};
     const bool                                             trace_deep_enabled                                                     = vkvv_trace_deep_enabled();
     const bool                                             refresh_export                                                         = av1_decode_needs_export_refresh(input);
+    const uint64_t                                         frame_seq                                                              = ++session->frame_sequence;
 
     if (trace_deep_enabled) {
         const std::string ref_map              = av1_ref_frame_map_string(input->pic);
         const std::string ref_slots_before     = av1_reference_slots_string(session);
         const std::string surface_slots_before = av1_surface_slots_string(session);
         VKVV_TRACE("av1-frame-enter",
-                   "driver=%llu ctx_stream=%llu target=%u current_frame=%u order_hint=%u frame_type=%u show=%u hdr_existing=%u hdr_show=%u hdr_showable=%u refresh_export=%u "
+                   "frame_seq=%llu driver=%llu ctx_stream=%llu target=%u current_frame=%u order_hint=%u frame_type=%u show=%u hdr_existing=%u hdr_show=%u hdr_showable=%u refresh_export=%u "
                    "refresh=0x%02x primary_ref=%u depth=%u fourcc=0x%x bitstream=%zu header=%u tiles=%zu "
                    "ref_map=\"%s\" ref_slots=\"%s\" surface_slots=\"%s\"",
-                   static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id), target_surface_id, input->pic->current_frame,
-                   input->pic->order_hint, input->pic->pic_info_fields.bits.frame_type, input->pic->pic_info_fields.bits.show_frame, input->header.show_existing_frame ? 1U : 0U,
-                   input->header.show_frame ? 1U : 0U, input->header.showable_frame ? 1U : 0U, refresh_export ? 1U : 0U, input->header.refresh_frame_flags,
+                   static_cast<unsigned long long>(frame_seq), static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id),
+                   target_surface_id, input->pic->current_frame, input->pic->order_hint, input->pic->pic_info_fields.bits.frame_type, input->pic->pic_info_fields.bits.show_frame,
+                   input->header.show_existing_frame ? 1U : 0U, input->header.show_frame ? 1U : 0U, input->header.showable_frame ? 1U : 0U, refresh_export ? 1U : 0U,
+                   input->header.refresh_frame_flags,
                    input->pic->primary_ref_frame, input->bit_depth, input->fourcc, input->bitstream_size, input->header.frame_header_offset, input->tile_count, ref_map.c_str(),
                    ref_slots_before.c_str(), surface_slots_before.c_str());
     }
 
     if (input->header.show_existing_frame) {
+        if (av1_env_flag_enabled("VKVV_AV1_DISABLE_SHOW_EXISTING_FASTPATH")) {
+            VKVV_TRACE("av1-show-existing-disabled",
+                       "frame_seq=%llu driver=%llu ctx_stream=%llu target=%u map_idx=%d disable_show_existing_fastpath=1",
+                       static_cast<unsigned long long>(frame_seq), static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id),
+                       target_surface_id, input->header.frame_to_show_map_idx);
+            std::snprintf(reason, reason_size, "AV1 show-existing fastpath disabled by VKVV_AV1_DISABLE_SHOW_EXISTING_FASTPATH");
+            return VA_STATUS_ERROR_UNIMPLEMENTED;
+        }
         if (input->tile_count != 0 || input->bitstream_size != 0) {
             std::snprintf(reason, reason_size, "AV1 show-existing frame must not carry decode tiles: tiles=%zu bytes=%zu", input->tile_count, input->bitstream_size);
             return VA_STATUS_ERROR_INVALID_BUFFER;
@@ -829,6 +1059,32 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         target->sync_status = VA_STATUS_SUCCESS;
         if (target_resource != ref_resource) {
             target_resource->content_generation++;
+        }
+
+        const uint32_t fingerprint_level = av1_fingerprint_level();
+        const uint64_t show_fingerprint = fingerprint_level > 0 ? av1_metadata_fingerprint(target_resource, input, frame_seq, show_slot->slot) : 0;
+        const uint64_t previous_decode_fingerprint = target_resource->av1_decode_fingerprint;
+        target_resource->av1_frame_sequence     = frame_seq;
+        target_resource->av1_order_hint         = input->pic->order_hint;
+        target_resource->av1_frame_type         = input->pic->pic_info_fields.bits.frame_type;
+        target_resource->av1_tile_count         = 0;
+        target_resource->av1_tile_sum_size      = 0;
+        target_resource->av1_tile_ranges_valid  = true;
+        target_resource->av1_target_dpb_slot    = show_slot->slot;
+        target_resource->av1_setup_slot         = show_slot->slot;
+        target_resource->av1_references_valid   = true;
+        target_resource->av1_reference_count    = 1;
+        target_resource->av1_decode_fingerprint = show_fingerprint;
+        target_resource->av1_tile_source        = "show-existing";
+        if (fingerprint_level > 0) {
+            VKVV_TRACE("av1-decode-fingerprint",
+                       "frame_seq=%llu surface=%u content_generation=%llu order_hint=%u show_frame=%u refresh_frame_flags=0x%02x decode_image_handle=0x%llx "
+                       "decode_image_layout=%d decode_crc_valid=1 decode_y_tl_crc=0 decode_y_center_crc=0 decode_y_br_crc=0 decode_uv_center_crc=0 decode_combined_crc=0x%llx "
+                       "same_as_previous_decode=%u same_as_previous_visible_decode=%u fingerprint_level=%u fingerprint_kind=metadata",
+                       static_cast<unsigned long long>(frame_seq), target_surface_id, static_cast<unsigned long long>(target_resource->content_generation), input->pic->order_hint,
+                       input->header.show_frame ? 1U : 0U, input->header.refresh_frame_flags, vkvv_trace_handle(target_resource->image), target_resource->layout,
+                       static_cast<unsigned long long>(show_fingerprint), previous_decode_fingerprint == show_fingerprint ? 1U : 0U,
+                       target_resource->av1_previous_visible_fingerprint == show_fingerprint ? 1U : 0U, fingerprint_level);
         }
 
         set_av1_visible_output_trace(target_resource, input, true);
@@ -966,6 +1222,8 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
             av1_release_unreferenced_retained_dpb_resources(runtime, session);
         }
     }
+    trace_av1_dpb_map("av1-dpb-map-before-submit", drv, vctx, target_surface_id, frame_seq, session, input, reference_name_slot_indices, target_dpb_slot, has_setup_slot,
+                      current_updates_reference_map, true, reference_count);
 
     AV1SessionStdParameters session_params{};
     build_av1_session_parameters(input, &session_params);
@@ -1083,6 +1341,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         tile_offsets[i] = input->tiles[i].offset;
         tile_sizes[i]   = input->tiles[i].size;
     }
+    trace_av1_tile_submit_map(drv, vctx, target_surface_id, frame_seq, input);
 
     VkVideoDecodeAV1PictureInfoKHR av1_picture{};
     av1_picture.sType           = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_PICTURE_INFO_KHR;
@@ -1136,6 +1395,8 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         runtime->destroy_video_session_parameters(runtime->device, parameters, nullptr);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
+    trace_av1_dpb_map("av1-dpb-map-after-submit", drv, vctx, target_surface_id, frame_seq, session, input, reference_name_slot_indices, target_dpb_slot, has_setup_slot,
+                      current_updates_reference_map, true, reference_count);
 
     const AV1ReferenceMetadata current_metadata = build_current_reference_metadata(drv, vctx, target, target_resource, decode_key, input, refresh_export);
     if (current_updates_reference_map) {
@@ -1156,6 +1417,38 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
                        static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id), target_surface_id,
                        input->header.refresh_frame_flags, target_dpb_slot, input->pic->order_hint, surface_slots_after.c_str());
         }
+    }
+    trace_av1_dpb_map("av1-dpb-map-after-refresh", drv, vctx, target_surface_id, frame_seq, session, input, reference_name_slot_indices, target_dpb_slot, has_setup_slot,
+                      current_updates_reference_map, true, reference_count);
+
+    uint32_t tile_sum_size = 0;
+    for (size_t i = 0; i < input->tile_count; i++) {
+        tile_sum_size += input->tiles[i].size;
+    }
+    const uint32_t fingerprint_level = av1_fingerprint_level();
+    const uint64_t decode_fingerprint = fingerprint_level > 0 ? av1_metadata_fingerprint(target_resource, input, frame_seq, target_dpb_slot) : 0;
+    const uint64_t previous_decode_fingerprint = target_resource->av1_decode_fingerprint;
+    target_resource->av1_frame_sequence       = frame_seq;
+    target_resource->av1_order_hint           = input->pic->order_hint;
+    target_resource->av1_frame_type           = input->pic->pic_info_fields.bits.frame_type;
+    target_resource->av1_tile_count           = static_cast<uint32_t>(input->tile_count);
+    target_resource->av1_tile_sum_size        = tile_sum_size;
+    target_resource->av1_tile_ranges_valid    = true;
+    target_resource->av1_target_dpb_slot      = target_dpb_slot;
+    target_resource->av1_setup_slot           = has_setup_slot ? target_dpb_slot : -1;
+    target_resource->av1_references_valid     = true;
+    target_resource->av1_reference_count      = reference_count;
+    target_resource->av1_decode_fingerprint   = decode_fingerprint;
+    target_resource->av1_tile_source          = input->tile_source != nullptr ? input->tile_source : "unknown";
+    if (fingerprint_level > 0) {
+        VKVV_TRACE("av1-decode-fingerprint",
+                   "frame_seq=%llu surface=%u content_generation=%llu order_hint=%u show_frame=%u refresh_frame_flags=0x%02x decode_image_handle=0x%llx "
+                   "decode_image_layout=%d decode_crc_valid=1 decode_y_tl_crc=0 decode_y_center_crc=0 decode_y_br_crc=0 decode_uv_center_crc=0 decode_combined_crc=0x%llx "
+                   "same_as_previous_decode=%u same_as_previous_visible_decode=%u fingerprint_level=%u fingerprint_kind=metadata",
+                   static_cast<unsigned long long>(frame_seq), target_surface_id, static_cast<unsigned long long>(target_resource->content_generation + 1), input->pic->order_hint,
+                   input->header.show_frame ? 1U : 0U, input->header.refresh_frame_flags, vkvv_trace_handle(target_resource->image), target_resource->layout,
+                   static_cast<unsigned long long>(decode_fingerprint), previous_decode_fingerprint == decode_fingerprint ? 1U : 0U,
+                   target_resource->av1_previous_visible_fingerprint == decode_fingerprint ? 1U : 0U, fingerprint_level);
     }
 
     set_av1_visible_output_trace(target_resource, input, refresh_export);

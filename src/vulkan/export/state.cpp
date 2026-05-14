@@ -1,6 +1,14 @@
 #include "vulkan/runtime_internal.h"
 
+#include <cstdlib>
+#include <cstring>
+
 namespace vkvv {
+
+    bool av1_export_env_flag_enabled(const char* name) {
+        const char* value = std::getenv(name);
+        return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 && std::strcmp(value, "off") != 0;
+    }
 
     bool surface_resource_uses_av1_decode(const SurfaceResource* resource) {
         return resource != nullptr && resource->codec_operation == VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR;
@@ -25,6 +33,9 @@ namespace vkvv {
     }
 
     bool surface_resource_has_direct_import_output(const SurfaceResource* resource) {
+        if (av1_export_env_flag_enabled("VKVV_AV1_DISABLE_IMPORTED_OUTPUT") || av1_export_env_flag_enabled("VKVV_AV1_FORCE_EXPORTED_SHADOW")) {
+            return false;
+        }
         if (resource == nullptr || resource->content_generation == 0 || !resource->import.external || !resource->import.fd.valid || !resource->direct_import_presentable ||
             !resource->decode_image_is_imported_image || !resource->import_present_barrier_done || !resource->import_fd_stat_valid) {
             return false;
