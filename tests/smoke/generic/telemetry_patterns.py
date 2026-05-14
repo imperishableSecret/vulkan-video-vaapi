@@ -101,7 +101,9 @@ def main() -> int:
     export_text = (root / "src" / "vulkan" / "export.cpp").read_text(encoding="utf-8")
     shadow_text = (root / "src" / "vulkan" / "export" / "shadow_image.cpp").read_text(encoding="utf-8")
     export_state_text = (root / "src" / "vulkan" / "export" / "state.cpp").read_text(encoding="utf-8")
-    export_combined_text = export_text + "\n" + shadow_text + "\n" + export_state_text
+    export_retained_text = (root / "src" / "vulkan" / "export" / "retained.cpp").read_text(encoding="utf-8")
+    resource_text = (root / "src" / "vulkan" / "resources" / "surface.cpp").read_text(encoding="utf-8")
+    export_combined_text = export_text + "\n" + shadow_text + "\n" + export_state_text + "\n" + export_retained_text + "\n" + resource_text
     if '"av1-visible-output-check"' not in export_text:
         fail("AV1 visible output check trace is missing")
     for event in (
@@ -136,6 +138,8 @@ def main() -> int:
         '"private-decode-shadow-copy-enter"',
         '"private-decode-shadow-copy-done"',
         '"export-late-present-shadow-preserved"',
+        '"retained-role-mismatch-drop"',
+        '"retained-present-shadow-attach"',
         '"export-copy-proof"',
         '"visible-output-proof"',
         '"export-seed-register"',

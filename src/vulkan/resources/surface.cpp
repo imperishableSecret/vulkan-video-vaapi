@@ -424,7 +424,15 @@ namespace vkvv {
             return;
         }
 
-        const bool                   retainable = resource->export_resource.exported && resource->export_resource.allocation_size != 0 && !runtime->device_lost;
+        const bool role_retainable = resource->export_resource.exported && resource->export_resource.client_visible_shadow && !resource->export_resource.private_nondisplay_shadow;
+        if (resource->export_resource.private_nondisplay_shadow || (resource->export_resource.exported && !role_retainable)) {
+            VKVV_TRACE("retained-role-mismatch-drop", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx exported=%u client_visible=%u private_only=%u",
+                       resource->export_resource.owner_surface_id, static_cast<unsigned long long>(resource->export_resource.driver_instance_id),
+                       static_cast<unsigned long long>(resource->export_resource.stream_id), resource->export_resource.codec_operation,
+                       vkvv_trace_handle(resource->export_resource.memory), resource->export_resource.exported ? 1U : 0U, resource->export_resource.client_visible_shadow ? 1U : 0U,
+                       resource->export_resource.private_nondisplay_shadow ? 1U : 0U);
+        }
+        const bool                   retainable = role_retainable && resource->export_resource.allocation_size != 0 && !runtime->device_lost;
         std::unique_lock<std::mutex> lock(runtime->export_mutex);
         if (retainable) {
             try {
@@ -448,13 +456,17 @@ namespace vkvv {
         resource->exported = false;
         clear_surface_export_attach_state(resource);
         RetainedExportBacking backing{};
-        ExportResource&       detached = backing.resource;
-        detached                       = resource->export_resource;
-        resource->export_resource      = {};
-        detached.driver_instance_id    = resource->driver_instance_id;
-        detached.stream_id             = resource->stream_id;
-        detached.codec_operation       = resource->codec_operation;
-        detached.owner_surface_id      = resource->surface_id;
+        ExportResource&       detached        = backing.resource;
+        detached                              = resource->export_resource;
+        resource->export_resource             = {};
+        detached.driver_instance_id           = resource->driver_instance_id;
+        detached.stream_id                    = resource->stream_id;
+        detached.codec_operation              = resource->codec_operation;
+        detached.owner_surface_id             = resource->surface_id;
+        detached.client_visible_shadow        = detached.exported;
+        detached.private_nondisplay_shadow    = false;
+        detached.decode_shadow_private_active = false;
+        detached.decode_shadow_generation     = detached.content_generation;
         if (!retainable) {
             lock.unlock();
             destroy_export_resource(runtime, &detached);
@@ -484,6 +496,12 @@ namespace vkvv {
                        static_cast<unsigned long long>(detached_bytes), retained.fd.valid ? 1U : 0U, static_cast<unsigned long long>(retained.fd.dev),
                        static_cast<unsigned long long>(retained.fd.ino), runtime->retained_exports.size(), static_cast<unsigned long long>(runtime->retained_export_memory_bytes),
                        static_cast<unsigned long long>(retained.retained_sequence));
+            VKVV_TRACE("retained-present-shadow-attach",
+                       "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx content_gen=%llu present_gen=%llu client_visible=1 private_only=0 retained=%zu seq=%llu",
+                       retained.resource.owner_surface_id, static_cast<unsigned long long>(retained.resource.driver_instance_id),
+                       static_cast<unsigned long long>(retained.resource.stream_id), retained.resource.codec_operation, vkvv_trace_handle(retained.resource.memory),
+                       static_cast<unsigned long long>(retained.resource.content_generation), static_cast<unsigned long long>(retained.resource.present_generation),
+                       runtime->retained_exports.size(), static_cast<unsigned long long>(retained.retained_sequence));
             refresh_transition_retention_window_locked(runtime, &retained.resource, "detach");
             prune_detached_export_resources_locked(runtime);
         } catch (...) { destroy_export_resource(runtime, &detached); }

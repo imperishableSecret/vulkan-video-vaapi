@@ -138,6 +138,7 @@ namespace vkvv {
         ModifierMismatch,
         FormatMismatch,
         ExtentMismatch,
+        RoleMismatch,
     };
 
     struct RetainedExportBudget {

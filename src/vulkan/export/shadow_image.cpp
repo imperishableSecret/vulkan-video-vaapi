@@ -424,8 +424,19 @@ namespace vkvv {
                                                source->format, source->coded_extent);
             {
                 std::lock_guard<std::mutex> lock(runtime->export_mutex);
-                for (auto it = runtime->retained_exports.begin(); it != runtime->retained_exports.end(); ++it) {
+                for (auto it = runtime->retained_exports.begin(); it != runtime->retained_exports.end();) {
                     ExportResource& retained = it->resource;
+                    if (retained.private_nondisplay_shadow || !retained.exported || !retained.client_visible_shadow) {
+                        const VkDeviceSize bytes = retained.allocation_size;
+                        VKVV_TRACE("retained-role-mismatch-drop", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx exported=%u client_visible=%u private_only=%u",
+                                   retained.owner_surface_id, static_cast<unsigned long long>(retained.driver_instance_id), static_cast<unsigned long long>(retained.stream_id),
+                                   retained.codec_operation, vkvv_trace_handle(retained.memory), retained.exported ? 1U : 0U, retained.client_visible_shadow ? 1U : 0U,
+                                   retained.private_nondisplay_shadow ? 1U : 0U);
+                        destroy_export_resource(runtime, &retained);
+                        runtime->retained_export_memory_bytes = runtime->retained_export_memory_bytes > bytes ? runtime->retained_export_memory_bytes - bytes : 0;
+                        it                                    = runtime->retained_exports.erase(it);
+                        continue;
+                    }
                     if (retained.driver_instance_id == source->driver_instance_id && retained.owner_surface_id == source->surface_id && retained.stream_id == source->stream_id &&
                         retained.codec_operation == source->codec_operation && retained.format == source->format && retained.va_fourcc == source->va_fourcc &&
                         retained.extent.width == source->coded_extent.width && retained.extent.height == source->coded_extent.height) {
@@ -440,11 +451,17 @@ namespace vkvv {
                         it->state                        = RetainedExportState::Attached;
                         runtime->retained_export_memory_bytes =
                             runtime->retained_export_memory_bytes > resource->allocation_size ? runtime->retained_export_memory_bytes - resource->allocation_size : 0;
+                        VKVV_TRACE("retained-present-shadow-attach",
+                                   "surface=%u old_owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx content_gen=%llu present_gen=%llu client_visible=1 private_only=0",
+                                   source->surface_id, retained.owner_surface_id, static_cast<unsigned long long>(retained.driver_instance_id),
+                                   static_cast<unsigned long long>(retained.stream_id), retained.codec_operation, vkvv_trace_handle(retained.memory),
+                                   static_cast<unsigned long long>(retained.content_generation), static_cast<unsigned long long>(retained.present_generation));
                         runtime->retained_exports.erase(it);
                         note_retained_export_attached_locked(runtime);
                         reattached = true;
                         break;
                     }
+                    ++it;
                 }
             }
             if (reattached) {
