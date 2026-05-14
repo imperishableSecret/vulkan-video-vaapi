@@ -121,9 +121,16 @@ def main() -> int:
     for event in (
         '"nondisplay-export-guard"',
         '"nondisplay-export-current-refresh"',
+        '"nondisplay-present-pinned-skip"',
         '"nondisplay-export-post-check"',
+        '"export-present-state"',
         '"invalid-nondisplay-export-mutation"',
         '"invalid-nondisplay-stale-export-shadow"',
+        '"invalid-presentable-undecoded-surface"',
+        '"invalid-nondisplay-present-mutation"',
+        '"invalid-present-generation"',
+        '"invalid-visible-without-present-pin"',
+        '"predecode-seed-policy"',
         '"export-copy-proof"',
         '"visible-output-proof"',
         '"export-seed-register"',
@@ -173,9 +180,21 @@ def main() -> int:
         "attempted_seed=",
         "attempted_copy=",
         "copy_reason=",
+        "presentable=",
+        "present_pinned=",
+        "published_visible=",
+        "present_gen=",
+        "present_source=",
+        "display_visible=",
+        "mutation_action=skipped-client-shadow",
         "predecode-placeholder-seed",
         "visible-refresh",
+        "visible-present-pin",
         "nondisplay-current-refresh",
+        "nondisplay-current-refresh-unpinned",
+        "nondisplay-present-pinned-skip",
+        "keep-placeholder",
+        "seed-old-visible",
         "import-output",
         "previous_visible_surface=",
         "published_matches_previous=",
@@ -193,8 +212,9 @@ def main() -> int:
         "VKVV_AV1_TRACE_PUBLICATION",
         "VKVV_AV1_DISABLE_IMPORTED_OUTPUT",
         "VKVV_AV1_FORCE_EXPORTED_SHADOW",
+        "VKVV_EXPORT_THUMBNAIL_PLACEHOLDER_ONLY",
     ):
-        if toggle not in export_text and toggle not in export_state_text:
+        if toggle not in export_text and toggle not in export_state_text and toggle not in shadow_text:
             fail(f"AV1 publication telemetry toggle is missing: {toggle}")
 
     return 0
