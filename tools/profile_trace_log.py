@@ -118,6 +118,12 @@ class StreamStats:
     stale_visible_nondisplay: int = 0
     nondisplay_shadow_seeds: int = 0
     nondisplay_current_refreshes: int = 0
+    nondisplay_private_shadow_refreshes: int = 0
+    private_decode_shadow_copies: int = 0
+    private_decode_shadow_copy_bytes: int = 0
+    private_decode_shadow_copy_wait_ns: int = 0
+    decode_shadow_coherence_checks: int = 0
+    decode_shadow_incoherent_checks: int = 0
     present_state_traces: int = 0
     visible_present_pins: int = 0
     nondisplay_present_pinned_skips: int = 0
@@ -126,6 +132,9 @@ class StreamStats:
     invalid_nondisplay_present_mutations: int = 0
     invalid_present_generations: int = 0
     invalid_visible_without_present_pins: int = 0
+    invalid_stale_private_decode_shadows: int = 0
+    invalid_visible_present_states: int = 0
+    invalid_thumbnail_predecode_seeds: int = 0
     av1_tile_submit_maps: int = 0
     av1_tile_suspicious: int = 0
     av1_dpb_maps: int = 0
@@ -188,6 +197,12 @@ class TraceProfile:
         self.stale_visible_nondisplay = 0
         self.nondisplay_shadow_seeds = 0
         self.nondisplay_current_refreshes = 0
+        self.nondisplay_private_shadow_refreshes = 0
+        self.private_decode_shadow_copies = 0
+        self.private_decode_shadow_copy_bytes = 0
+        self.private_decode_shadow_copy_wait_ns = 0
+        self.decode_shadow_coherence_checks = 0
+        self.decode_shadow_incoherent_checks = 0
         self.present_state_traces = 0
         self.visible_present_pins = 0
         self.nondisplay_present_pinned_skips = 0
@@ -196,6 +211,9 @@ class TraceProfile:
         self.invalid_nondisplay_present_mutations = 0
         self.invalid_present_generations = 0
         self.invalid_visible_without_present_pins = 0
+        self.invalid_stale_private_decode_shadows = 0
+        self.invalid_visible_present_states = 0
+        self.invalid_thumbnail_predecode_seeds = 0
         self.av1_tile_submit_maps = 0
         self.av1_tile_suspicious = 0
         self.av1_dpb_maps = 0
@@ -320,6 +338,16 @@ class TraceProfile:
             stream.nondisplay_shadow_seeds += 1
         elif event == "nondisplay-export-current-refresh" and stream is not None:
             stream.nondisplay_current_refreshes += 1
+        elif event == "nondisplay-private-shadow-refresh" and stream is not None:
+            stream.nondisplay_private_shadow_refreshes += 1
+        elif event == "private-decode-shadow-copy-done" and stream is not None:
+            stream.private_decode_shadow_copies += 1
+            stream.private_decode_shadow_copy_bytes += parse_int(fields.get("copy_bytes")) or 0
+            stream.private_decode_shadow_copy_wait_ns += parse_int(fields.get("wait_ns")) or 0
+        elif event == "decode-shadow-coherence-check" and stream is not None:
+            stream.decode_shadow_coherence_checks += 1
+            if (parse_int(fields.get("coherent")) or 0) == 0:
+                stream.decode_shadow_incoherent_checks += 1
         elif event == "export-present-state" and stream is not None:
             stream.present_state_traces += 1
             if fields.get("action") == "visible-present-pin":
@@ -336,6 +364,12 @@ class TraceProfile:
             stream.invalid_present_generations += 1
         elif event == "invalid-visible-without-present-pin" and stream is not None:
             stream.invalid_visible_without_present_pins += 1
+        elif event == "invalid-stale-private-decode-shadow" and stream is not None:
+            stream.invalid_stale_private_decode_shadows += 1
+        elif event == "invalid-visible-present-state" and stream is not None:
+            stream.invalid_visible_present_states += 1
+        elif event == "invalid-thumbnail-predecode-seed" and stream is not None:
+            stream.invalid_thumbnail_predecode_seeds += 1
         elif event == "export-copy-done" and stream is not None:
             stream.export_copy_done += 1
             stream.export_copy_seed_targets += parse_int(fields.get("seeded_targets")) or 0
@@ -420,6 +454,16 @@ class TraceProfile:
             self.nondisplay_shadow_seeds += 1
         elif event == "nondisplay-export-current-refresh":
             self.nondisplay_current_refreshes += 1
+        elif event == "nondisplay-private-shadow-refresh":
+            self.nondisplay_private_shadow_refreshes += 1
+        elif event == "private-decode-shadow-copy-done":
+            self.private_decode_shadow_copies += 1
+            self.private_decode_shadow_copy_bytes += parse_int(fields.get("copy_bytes")) or 0
+            self.private_decode_shadow_copy_wait_ns += parse_int(fields.get("wait_ns")) or 0
+        elif event == "decode-shadow-coherence-check":
+            self.decode_shadow_coherence_checks += 1
+            if (parse_int(fields.get("coherent")) or 0) == 0:
+                self.decode_shadow_incoherent_checks += 1
         elif event == "export-present-state":
             self.present_state_traces += 1
             if fields.get("action") == "visible-present-pin":
@@ -436,6 +480,12 @@ class TraceProfile:
             self.invalid_present_generations += 1
         elif event == "invalid-visible-without-present-pin":
             self.invalid_visible_without_present_pins += 1
+        elif event == "invalid-stale-private-decode-shadow":
+            self.invalid_stale_private_decode_shadows += 1
+        elif event == "invalid-visible-present-state":
+            self.invalid_visible_present_states += 1
+        elif event == "invalid-thumbnail-predecode-seed":
+            self.invalid_thumbnail_predecode_seeds += 1
         elif event == "export-copy-publish-skip":
             self.export_copy_publish_skips += 1
         elif event == "av1-tile-submit-map" and fields.get("scope") == "frame":
@@ -520,6 +570,12 @@ class TraceProfile:
             "stale_visible_nondisplay": self.stale_visible_nondisplay,
             "nondisplay_shadow_seeds": self.nondisplay_shadow_seeds,
             "nondisplay_current_refreshes": self.nondisplay_current_refreshes,
+            "nondisplay_private_shadow_refreshes": self.nondisplay_private_shadow_refreshes,
+            "private_decode_shadow_copies": self.private_decode_shadow_copies,
+            "private_decode_shadow_copy_bytes": self.private_decode_shadow_copy_bytes,
+            "private_decode_shadow_copy_wait_ns": self.private_decode_shadow_copy_wait_ns,
+            "decode_shadow_coherence_checks": self.decode_shadow_coherence_checks,
+            "decode_shadow_incoherent_checks": self.decode_shadow_incoherent_checks,
             "present_state_traces": self.present_state_traces,
             "visible_present_pins": self.visible_present_pins,
             "nondisplay_present_pinned_skips": self.nondisplay_present_pinned_skips,
@@ -528,6 +584,9 @@ class TraceProfile:
             "invalid_nondisplay_present_mutations": self.invalid_nondisplay_present_mutations,
             "invalid_present_generations": self.invalid_present_generations,
             "invalid_visible_without_present_pins": self.invalid_visible_without_present_pins,
+            "invalid_stale_private_decode_shadows": self.invalid_stale_private_decode_shadows,
+            "invalid_visible_present_states": self.invalid_visible_present_states,
+            "invalid_thumbnail_predecode_seeds": self.invalid_thumbnail_predecode_seeds,
             "av1_tile_submit_maps": self.av1_tile_submit_maps,
             "av1_tile_suspicious": self.av1_tile_suspicious,
             "av1_dpb_maps": self.av1_dpb_maps,
@@ -559,6 +618,12 @@ class TraceProfile:
             total["stale_visible_nondisplay"] += stream.stale_visible_nondisplay
             total["nondisplay_shadow_seeds"] += stream.nondisplay_shadow_seeds
             total["nondisplay_current_refreshes"] += stream.nondisplay_current_refreshes
+            total["nondisplay_private_shadow_refreshes"] += stream.nondisplay_private_shadow_refreshes
+            total["private_decode_shadow_copies"] += stream.private_decode_shadow_copies
+            total["private_decode_shadow_copy_bytes"] += stream.private_decode_shadow_copy_bytes
+            total["private_decode_shadow_copy_wait_ns"] += stream.private_decode_shadow_copy_wait_ns
+            total["decode_shadow_coherence_checks"] += stream.decode_shadow_coherence_checks
+            total["decode_shadow_incoherent_checks"] += stream.decode_shadow_incoherent_checks
             total["present_state_traces"] += stream.present_state_traces
             total["visible_present_pins"] += stream.visible_present_pins
             total["nondisplay_present_pinned_skips"] += stream.nondisplay_present_pinned_skips
@@ -567,6 +632,9 @@ class TraceProfile:
             total["invalid_nondisplay_present_mutations"] += stream.invalid_nondisplay_present_mutations
             total["invalid_present_generations"] += stream.invalid_present_generations
             total["invalid_visible_without_present_pins"] += stream.invalid_visible_without_present_pins
+            total["invalid_stale_private_decode_shadows"] += stream.invalid_stale_private_decode_shadows
+            total["invalid_visible_present_states"] += stream.invalid_visible_present_states
+            total["invalid_thumbnail_predecode_seeds"] += stream.invalid_thumbnail_predecode_seeds
             total["av1_tile_submit_maps"] += stream.av1_tile_submit_maps
             total["av1_tile_suspicious"] += stream.av1_tile_suspicious
             total["av1_dpb_maps"] += stream.av1_dpb_maps
@@ -641,6 +709,12 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "stale_visible_nondisplay": stream.stale_visible_nondisplay,
         "nondisplay_shadow_seeds": stream.nondisplay_shadow_seeds,
         "nondisplay_current_refreshes": stream.nondisplay_current_refreshes,
+        "nondisplay_private_shadow_refreshes": stream.nondisplay_private_shadow_refreshes,
+        "private_decode_shadow_copies": stream.private_decode_shadow_copies,
+        "private_decode_shadow_copy_bytes": stream.private_decode_shadow_copy_bytes,
+        "private_decode_shadow_copy_wait_ns": stream.private_decode_shadow_copy_wait_ns,
+        "decode_shadow_coherence_checks": stream.decode_shadow_coherence_checks,
+        "decode_shadow_incoherent_checks": stream.decode_shadow_incoherent_checks,
         "present_state_traces": stream.present_state_traces,
         "visible_present_pins": stream.visible_present_pins,
         "nondisplay_present_pinned_skips": stream.nondisplay_present_pinned_skips,
@@ -649,6 +723,9 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "invalid_nondisplay_present_mutations": stream.invalid_nondisplay_present_mutations,
         "invalid_present_generations": stream.invalid_present_generations,
         "invalid_visible_without_present_pins": stream.invalid_visible_without_present_pins,
+        "invalid_stale_private_decode_shadows": stream.invalid_stale_private_decode_shadows,
+        "invalid_visible_present_states": stream.invalid_visible_present_states,
+        "invalid_thumbnail_predecode_seeds": stream.invalid_thumbnail_predecode_seeds,
         "av1_tile_submit_maps": stream.av1_tile_submit_maps,
         "av1_tile_suspicious": stream.av1_tile_suspicious,
         "av1_dpb_maps": stream.av1_dpb_maps,
@@ -725,12 +802,21 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         f"export_seed_stale_drops={totals['export_seed_stale_drops']} nondisplay_refresh_skips={totals['nondisplay_refresh_skips']} "
         f"stale_visible_nondisplay={totals['stale_visible_nondisplay']} nondisplay_shadow_seeds={totals['nondisplay_shadow_seeds']} "
         f"nondisplay_current_refreshes={totals['nondisplay_current_refreshes']} "
+        f"nondisplay_private_shadow_refreshes={totals['nondisplay_private_shadow_refreshes']} "
+        f"private_decode_shadow_copies={totals['private_decode_shadow_copies']} "
+        f"private_decode_shadow_copy_mb={mib(totals['private_decode_shadow_copy_bytes']):.2f} "
+        f"private_decode_shadow_copy_wait_ms={totals['private_decode_shadow_copy_wait_ns'] / 1000000.0:.3f} "
+        f"decode_shadow_coherence_checks={totals['decode_shadow_coherence_checks']} "
+        f"decode_shadow_incoherent_checks={totals['decode_shadow_incoherent_checks']} "
         f"present_state_traces={totals['present_state_traces']} visible_present_pins={totals['visible_present_pins']} "
         f"nondisplay_present_pinned_skips={totals['nondisplay_present_pinned_skips']} "
         f"invalid_nondisplay_stale_export_shadows={totals['invalid_nondisplay_stale_export_shadows']} "
         f"invalid_presentable_undecoded_surfaces={totals['invalid_presentable_undecoded_surfaces']} "
         f"invalid_nondisplay_present_mutations={totals['invalid_nondisplay_present_mutations']} "
         f"invalid_present_generations={totals['invalid_present_generations']} invalid_visible_without_present_pins={totals['invalid_visible_without_present_pins']} "
+        f"invalid_stale_private_decode_shadows={totals['invalid_stale_private_decode_shadows']} "
+        f"invalid_visible_present_states={totals['invalid_visible_present_states']} "
+        f"invalid_thumbnail_predecode_seeds={totals['invalid_thumbnail_predecode_seeds']} "
         f"av1_tile_submit_maps={totals['av1_tile_submit_maps']} av1_tile_suspicious={totals['av1_tile_suspicious']} "
         f"av1_dpb_maps={totals['av1_dpb_maps']} av1_visible_audits={totals['av1_visible_audits']} av1_publish_failures={totals['av1_publish_failures']} "
         f"export_copy_publish_skips={totals['export_copy_publish_skips']} "
@@ -749,12 +835,21 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"export_seed_stale_drops={values['export_seed_stale_drops']} nondisplay_refresh_skips={values['nondisplay_refresh_skips']} "
             f"stale_visible_nondisplay={values['stale_visible_nondisplay']} nondisplay_shadow_seeds={values['nondisplay_shadow_seeds']} "
             f"nondisplay_current_refreshes={values['nondisplay_current_refreshes']} "
+            f"nondisplay_private_shadow_refreshes={values['nondisplay_private_shadow_refreshes']} "
+            f"private_decode_shadow_copies={values['private_decode_shadow_copies']} "
+            f"private_decode_shadow_copy_mb={mib(values['private_decode_shadow_copy_bytes']):.2f} "
+            f"private_decode_shadow_copy_wait_ms={values['private_decode_shadow_copy_wait_ns'] / 1000000.0:.3f} "
+            f"decode_shadow_coherence_checks={values['decode_shadow_coherence_checks']} "
+            f"decode_shadow_incoherent_checks={values['decode_shadow_incoherent_checks']} "
             f"present_state_traces={values['present_state_traces']} visible_present_pins={values['visible_present_pins']} "
             f"nondisplay_present_pinned_skips={values['nondisplay_present_pinned_skips']} "
             f"invalid_nondisplay_stale_export_shadows={values['invalid_nondisplay_stale_export_shadows']} "
             f"invalid_presentable_undecoded_surfaces={values['invalid_presentable_undecoded_surfaces']} "
             f"invalid_nondisplay_present_mutations={values['invalid_nondisplay_present_mutations']} "
             f"invalid_present_generations={values['invalid_present_generations']} invalid_visible_without_present_pins={values['invalid_visible_without_present_pins']} "
+            f"invalid_stale_private_decode_shadows={values['invalid_stale_private_decode_shadows']} "
+            f"invalid_visible_present_states={values['invalid_visible_present_states']} "
+            f"invalid_thumbnail_predecode_seeds={values['invalid_thumbnail_predecode_seeds']} "
             f"av1_tile_submit_maps={values['av1_tile_submit_maps']} av1_tile_suspicious={values['av1_tile_suspicious']} "
             f"av1_dpb_maps={values['av1_dpb_maps']} av1_visible_audits={values['av1_visible_audits']} av1_publish_failures={values['av1_publish_failures']} "
             f"export_copy_publish_skips={values['export_copy_publish_skips']}"
@@ -776,12 +871,21 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"export_seed_stale_drops={stream.export_seed_stale_drops} nondisplay_refresh_skips={stream.refresh_skipped} "
             f"stale_visible_nondisplay={stream.stale_visible_nondisplay} nondisplay_shadow_seeds={stream.nondisplay_shadow_seeds} "
             f"nondisplay_current_refreshes={stream.nondisplay_current_refreshes} "
+            f"nondisplay_private_shadow_refreshes={stream.nondisplay_private_shadow_refreshes} "
+            f"private_decode_shadow_copies={stream.private_decode_shadow_copies} "
+            f"private_decode_shadow_copy_mb={mib(stream.private_decode_shadow_copy_bytes):.2f} "
+            f"private_decode_shadow_copy_wait_ms={stream.private_decode_shadow_copy_wait_ns / 1000000.0:.3f} "
+            f"decode_shadow_coherence_checks={stream.decode_shadow_coherence_checks} "
+            f"decode_shadow_incoherent_checks={stream.decode_shadow_incoherent_checks} "
             f"present_state_traces={stream.present_state_traces} visible_present_pins={stream.visible_present_pins} "
             f"nondisplay_present_pinned_skips={stream.nondisplay_present_pinned_skips} "
             f"invalid_nondisplay_stale_export_shadows={stream.invalid_nondisplay_stale_export_shadows} "
             f"invalid_presentable_undecoded_surfaces={stream.invalid_presentable_undecoded_surfaces} "
             f"invalid_nondisplay_present_mutations={stream.invalid_nondisplay_present_mutations} "
             f"invalid_present_generations={stream.invalid_present_generations} invalid_visible_without_present_pins={stream.invalid_visible_without_present_pins} "
+            f"invalid_stale_private_decode_shadows={stream.invalid_stale_private_decode_shadows} "
+            f"invalid_visible_present_states={stream.invalid_visible_present_states} "
+            f"invalid_thumbnail_predecode_seeds={stream.invalid_thumbnail_predecode_seeds} "
             f"av1_tile_submit_maps={stream.av1_tile_submit_maps} av1_tile_suspicious={stream.av1_tile_suspicious} "
             f"av1_dpb_maps={stream.av1_dpb_maps} av1_visible_audits={stream.av1_visible_audits} av1_publish_failures={stream.av1_publish_failures} "
             f"export_copy_publish_skips={stream.export_copy_publish_skips}"

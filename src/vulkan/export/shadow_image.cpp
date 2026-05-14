@@ -21,18 +21,19 @@ namespace vkvv {
         if (owner == nullptr || resource == nullptr) {
             return;
         }
-        VKVV_TRACE("export-present-state",
-                   "action=%s surface=%u codec=0x%x stream=%llu fd_dev=%llu fd_ino=%llu content_gen=%llu present_shadow_gen=%llu private_shadow_gen=%llu "
-                   "decode_shadow_gen=%llu present_gen=%llu presentable=%u present_pinned=%u published_visible=%u decode_shadow_private_active=%u predecode=%u seeded=%u "
-                   "placeholder=%u refresh_export=%u display_visible=%u present_source=%s client_visible_shadow=%u private_only=%u",
-                   action != nullptr ? action : "unknown", owner->surface_id, owner->codec_operation, static_cast<unsigned long long>(owner->stream_id),
-                   static_cast<unsigned long long>(resource->fd_dev), static_cast<unsigned long long>(resource->fd_ino), static_cast<unsigned long long>(owner->content_generation),
-                   static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(owner->private_decode_shadow.content_generation),
-                   static_cast<unsigned long long>(resource->decode_shadow_generation), static_cast<unsigned long long>(resource->present_generation),
-                   resource->presentable ? 1U : 0U, resource->present_pinned ? 1U : 0U, resource->published_visible ? 1U : 0U, resource->decode_shadow_private_active ? 1U : 0U,
-                   resource->predecode_exported ? 1U : 0U, resource->predecode_seeded ? 1U : 0U, resource->black_placeholder ? 1U : 0U, refresh_export ? 1U : 0U,
-                   display_visible ? 1U : 0U, vkvv_export_present_source_name(resource->present_source), resource->client_visible_shadow ? 1U : 0U,
-                   resource->private_nondisplay_shadow ? 1U : 0U);
+        const char* mutation_action = action != nullptr && std::strcmp(action, "nondisplay-present-pinned-skip") == 0 ? "skipped-client-shadow" : "none";
+        VKVV_TRACE(
+            "export-present-state",
+            "action=%s surface=%u codec=0x%x stream=%llu fd_dev=%llu fd_ino=%llu content_gen=%llu present_shadow_gen=%llu private_shadow_gen=%llu "
+            "decode_shadow_gen=%llu present_gen=%llu presentable=%u present_pinned=%u published_visible=%u decode_shadow_private_active=%u predecode=%u seeded=%u "
+            "placeholder=%u refresh_export=%u display_visible=%u present_source=%s mutation_action=%s client_visible_shadow_mutated=0 client_visible_shadow=%u private_only=%u",
+            action != nullptr ? action : "unknown", owner->surface_id, owner->codec_operation, static_cast<unsigned long long>(owner->stream_id),
+            static_cast<unsigned long long>(resource->fd_dev), static_cast<unsigned long long>(resource->fd_ino), static_cast<unsigned long long>(owner->content_generation),
+            static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(owner->private_decode_shadow.content_generation),
+            static_cast<unsigned long long>(resource->decode_shadow_generation), static_cast<unsigned long long>(resource->present_generation), resource->presentable ? 1U : 0U,
+            resource->present_pinned ? 1U : 0U, resource->published_visible ? 1U : 0U, resource->decode_shadow_private_active ? 1U : 0U, resource->predecode_exported ? 1U : 0U,
+            resource->predecode_seeded ? 1U : 0U, resource->black_placeholder ? 1U : 0U, refresh_export ? 1U : 0U, display_visible ? 1U : 0U,
+            vkvv_export_present_source_name(resource->present_source), mutation_action, resource->client_visible_shadow ? 1U : 0U, resource->private_nondisplay_shadow ? 1U : 0U);
         if (resource->content_generation == 0 && resource->presentable) {
             VKVV_TRACE("invalid-presentable-undecoded-surface",
                        "surface=%u codec=0x%x stream=%llu content_gen=%llu shadow_gen=%llu present_gen=%llu presentable=1 present_pinned=%u action=%s", owner->surface_id,
@@ -1270,10 +1271,15 @@ namespace vkvv {
                        source->surface_id, static_cast<unsigned long long>(source->stream_id), source->codec_operation, static_cast<unsigned long long>(source->content_generation),
                        target->owner_surface_id, vkvv_trace_handle(target->memory), static_cast<unsigned long long>(target->content_generation),
                        target->predecode_exported ? 1U : 0U);
+            const bool thumbnail_like = predecode_seed_target_thumbnail_like(target);
             VKVV_TRACE("predecode-seed-policy",
                        "surface=%u source_surface=%u action=seed-old-visible presentable=0 present_pinned=0 thumbnail_like=%u content_gen=%llu target_mem=0x%llx",
-                       target->owner_surface_id, source->surface_id, predecode_seed_target_thumbnail_like(target) ? 1U : 0U,
-                       static_cast<unsigned long long>(target->content_generation), vkvv_trace_handle(target->memory));
+                       target->owner_surface_id, source->surface_id, thumbnail_like ? 1U : 0U, static_cast<unsigned long long>(target->content_generation),
+                       vkvv_trace_handle(target->memory));
+            if (thumbnail_like) {
+                VKVV_TRACE("invalid-thumbnail-predecode-seed", "surface=%u source_surface=%u thumbnail_like=1 action=seed-old-visible content_gen=%llu target_mem=0x%llx",
+                           target->owner_surface_id, source->surface_id, static_cast<unsigned long long>(target->content_generation), vkvv_trace_handle(target->memory));
+            }
             VKVV_TRACE("export-copy-proof",
                        "codec=0x%x surface=%u source_surface=%u target_surface=%u source_content_gen=%llu target_content_gen_before=%llu target_content_gen_after=%llu "
                        "source_shadow_gen=%llu target_shadow_gen_before=%llu target_shadow_gen_after=%llu copy_reason=%s refresh_export=1",
@@ -1457,10 +1463,16 @@ namespace vkvv {
                        source->va_fourcc, source->coded_extent.width, source->coded_extent.height);
             return true;
         }
+        const bool thumbnail_like = predecode_seed_target_thumbnail_like(&target->export_resource);
         VKVV_TRACE("predecode-seed-policy",
                    "surface=%u source_surface=%u action=seed-old-visible presentable=0 present_pinned=0 thumbnail_like=%u content_gen=%llu target_mem=0x%llx", target->surface_id,
-                   source->surface_id, predecode_seed_target_thumbnail_like(&target->export_resource) ? 1U : 0U,
-                   static_cast<unsigned long long>(target->export_resource.content_generation), vkvv_trace_handle(target->export_resource.memory));
+                   source->surface_id, thumbnail_like ? 1U : 0U, static_cast<unsigned long long>(target->export_resource.content_generation),
+                   vkvv_trace_handle(target->export_resource.memory));
+        if (thumbnail_like) {
+            VKVV_TRACE("invalid-thumbnail-predecode-seed", "surface=%u source_surface=%u thumbnail_like=1 action=seed-old-visible content_gen=%llu target_mem=0x%llx",
+                       target->surface_id, source->surface_id, static_cast<unsigned long long>(target->export_resource.content_generation),
+                       vkvv_trace_handle(target->export_resource.memory));
+        }
         VKVV_TRACE("export-seed-hit",
                    "surface=%u driver=%llu stream=%llu codec=0x%x source_surface=%u source_gen=%llu source_seed_gen=%llu source_shadow_gen=%llu target_mem=0x%llx target_gen=%llu",
                    target->surface_id, static_cast<unsigned long long>(target->driver_instance_id), static_cast<unsigned long long>(target->stream_id), target->codec_operation,

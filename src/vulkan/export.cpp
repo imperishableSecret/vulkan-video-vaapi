@@ -74,6 +74,35 @@ namespace {
         return true;
     }
 
+    bool trace_decode_shadow_coherence_check(const SurfaceResource* resource, bool refresh_export, bool display_visible, const char* action) {
+        if (resource == nullptr || resource->export_resource.image == VK_NULL_HANDLE) {
+            return true;
+        }
+
+        const bool needs_decode_shadow = resource->content_generation != 0 && resource->export_resource.exported;
+        const bool coherent            = !needs_decode_shadow || surface_resource_has_current_decode_shadow(resource);
+        VKVV_TRACE("decode-shadow-coherence-check",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu refresh_export=%u display_visible=%u present_pinned=%u present_shadow_gen=%llu "
+                   "private_shadow_gen=%llu decode_shadow_gen=%llu coherent=%u action=%s",
+                   resource->surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                   resource->codec_operation, static_cast<unsigned long long>(resource->content_generation), refresh_export ? 1U : 0U, display_visible ? 1U : 0U,
+                   resource->export_resource.present_pinned ? 1U : 0U, static_cast<unsigned long long>(resource->export_resource.content_generation),
+                   static_cast<unsigned long long>(resource->private_decode_shadow.content_generation),
+                   static_cast<unsigned long long>(resource->export_resource.decode_shadow_generation), coherent ? 1U : 0U, action != nullptr ? action : "unknown");
+        if (!coherent) {
+            VKVV_TRACE("invalid-stale-private-decode-shadow",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu present_shadow_gen=%llu private_shadow_gen=%llu decode_shadow_gen=%llu exported=%u "
+                       "shadow_exported=%u action=%s",
+                       resource->surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                       resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                       static_cast<unsigned long long>(resource->export_resource.content_generation),
+                       static_cast<unsigned long long>(resource->private_decode_shadow.content_generation),
+                       static_cast<unsigned long long>(resource->export_resource.decode_shadow_generation), resource->exported ? 1U : 0U,
+                       resource->export_resource.exported ? 1U : 0U, action != nullptr ? action : "unknown");
+        }
+        return coherent;
+    }
+
     VkvvExportPresentSource visible_present_source(const SurfaceResource* resource) {
         if (surface_resource_uses_av1_decode(resource) && resource->av1_visible_output_trace_valid && resource->av1_visible_show_existing_frame) {
             return VkvvExportPresentSource::ShowExisting;
@@ -571,15 +600,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
             trace_export_present_state(resource, &resource->export_resource, "nondisplay-present-pinned-skip", false, false);
         }
         trace_nondisplay_post_check(action);
-        if (resource->export_resource.exported && resource->export_resource.image != VK_NULL_HANDLE && surface_resource_decode_shadow_stale(resource)) {
-            VKVV_TRACE("invalid-stale-private-decode-shadow",
-                       "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu present_shadow_gen=%llu private_shadow_gen=%llu decode_shadow_gen=%llu exported=%u "
-                       "shadow_exported=%u action=%s",
-                       surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
-                       static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->export_resource.content_generation),
-                       static_cast<unsigned long long>(resource->private_decode_shadow.content_generation),
-                       static_cast<unsigned long long>(resource->export_resource.decode_shadow_generation), resource->exported ? 1U : 0U,
-                       resource->export_resource.exported ? 1U : 0U, action);
+        if (!trace_decode_shadow_coherence_check(resource, false, false, action)) {
             return VA_STATUS_ERROR_OPERATION_FAILED;
         }
         VKVV_TRACE("export-refresh-skip-nondisplay",
@@ -617,12 +638,25 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
     trace_av1_visible_output_check(surface, resource, refresh_export);
     const bool visible_shadow_published = surface_resource_has_exported_shadow_output(resource);
     const bool visible_import_published = surface_resource_has_direct_import_output(resource);
-    if (visible_shadow_published && !resource->export_resource.present_pinned) {
-        VKVV_TRACE("invalid-visible-without-present-pin",
-                   "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_gen=%llu present_gen=%llu published_path=exported-shadow", surface->id,
-                   static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+    if (visible_shadow_published && (!resource->export_resource.present_pinned || resource->export_resource.present_generation != resource->content_generation)) {
+        VKVV_TRACE("invalid-visible-present-state",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu present_shadow_gen=%llu private_shadow_gen=%llu decode_shadow_gen=%llu present_gen=%llu "
+                   "present_pinned=%u published_path=exported-shadow",
+                   surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                    static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->export_resource.content_generation),
-                   static_cast<unsigned long long>(resource->export_resource.present_generation));
+                   static_cast<unsigned long long>(resource->private_decode_shadow.content_generation),
+                   static_cast<unsigned long long>(resource->export_resource.decode_shadow_generation),
+                   static_cast<unsigned long long>(resource->export_resource.present_generation), resource->export_resource.present_pinned ? 1U : 0U);
+        if (!resource->export_resource.present_pinned) {
+            VKVV_TRACE("invalid-visible-without-present-pin",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu shadow_gen=%llu present_gen=%llu published_path=exported-shadow", surface->id,
+                       static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                       static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->export_resource.content_generation),
+                       static_cast<unsigned long long>(resource->export_resource.present_generation));
+        }
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    if (!trace_decode_shadow_coherence_check(resource, refresh_export, display_visible, "visible-refresh")) {
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
     VKVV_TRACE("visible-output-proof",
