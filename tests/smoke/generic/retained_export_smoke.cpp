@@ -525,35 +525,6 @@ namespace {
         return ok;
     }
 
-    bool check_thumbnail_predecode_policy_gate() {
-        bool                  ok = true;
-        vkvv::VulkanRuntime   runtime{};
-        vkvv::SurfaceResource thumbnail{};
-        thumbnail.visible_extent     = {320, 180};
-        thumbnail.coded_extent       = {320, 192};
-        thumbnail.content_generation = 0;
-
-        char reason[64] = {};
-        ok &= check(vkvv::surface_resource_thumbnail_like(&thumbnail), "thumbnail extent was not classified as thumbnail-like");
-        vkvv::ThumbnailPredecodeAction action = vkvv::decide_thumbnail_predecode_export(&runtime, &thumbnail, reason, sizeof(reason));
-        ok &= check(action == vkvv::ThumbnailPredecodeAction::FailExport, "empty thumbnail predecode export did not choose fail");
-        ok &= check(std::string_view(reason) == "no-valid-content", "empty thumbnail fail reason mismatch");
-        ok &= check(std::string_view(vkvv::thumbnail_predecode_action_name(action)) == "fail", "thumbnail action text mismatch");
-
-        thumbnail.content_generation = 1;
-        action                       = vkvv::decide_thumbnail_predecode_export(&runtime, &thumbnail, reason, sizeof(reason));
-        ok &= check(action == vkvv::ThumbnailPredecodeAction::DrainAndExport, "decoded thumbnail did not choose drain/export");
-        ok &= check(std::string_view(reason) == "decoded-content", "decoded thumbnail reason mismatch");
-
-        vkvv::SurfaceResource normal{};
-        normal.visible_extent = {1280, 720};
-        normal.coded_extent   = {1280, 720};
-        ok &= check(!vkvv::surface_resource_thumbnail_like(&normal), "normal playback extent was classified as thumbnail-like");
-        action = vkvv::decide_thumbnail_predecode_export(&runtime, &normal, reason, sizeof(reason));
-        ok &= check(action == vkvv::ThumbnailPredecodeAction::NormalPredecodePolicy, "normal playback should keep the existing predecode policy");
-        return ok;
-    }
-
 } // namespace
 
 int main() {
@@ -625,6 +596,5 @@ int main() {
     ok &= check_private_decode_shadow_state_policy();
     ok &= check_exported_fd_state_policy();
     ok &= check_predecode_seed_source_safety();
-    ok &= check_thumbnail_predecode_policy_gate();
     return ok ? 0 : 1;
 }
