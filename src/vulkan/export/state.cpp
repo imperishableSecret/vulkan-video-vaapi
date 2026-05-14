@@ -14,6 +14,26 @@ namespace vkvv {
         return resource != nullptr && resource->content_generation != 0 && resource->export_resource.content_generation != resource->content_generation;
     }
 
+    bool surface_resource_has_current_export_shadow(const SurfaceResource* resource) {
+        return resource != nullptr && resource->content_generation != 0 && resource->export_resource.image != VK_NULL_HANDLE &&
+            resource->export_resource.memory != VK_NULL_HANDLE && resource->export_resource.content_generation == resource->content_generation &&
+            !surface_resource_export_shadow_stale(resource);
+    }
+
+    bool surface_resource_has_direct_import_output(const SurfaceResource* resource) {
+        if (resource == nullptr || resource->content_generation == 0 || !resource->import.external || !resource->import.fd.valid || !resource->direct_import_presentable ||
+            !resource->decode_image_is_imported_image || !resource->import_present_barrier_done || !resource->import_fd_stat_valid) {
+            return false;
+        }
+        return resource->import_present_generation == resource->content_generation && resource->import_fd_dev == resource->import.fd.dev &&
+            resource->import_fd_ino == resource->import.fd.ino && resource->import_driver_instance_id == resource->driver_instance_id &&
+            resource->import_stream_id == resource->stream_id && resource->import_codec_operation == resource->codec_operation;
+    }
+
+    bool surface_resource_has_published_visible_output(const SurfaceResource* resource) {
+        return surface_resource_has_current_export_shadow(resource) || surface_resource_has_direct_import_output(resource);
+    }
+
     bool av1_visible_export_requires_copy(const SurfaceResource* resource) {
         return surface_resource_uses_av1_decode(resource) &&
             (resource->export_resource.predecode_exported || resource->export_resource.predecode_seeded || resource->export_resource.black_placeholder ||
@@ -37,6 +57,22 @@ namespace vkvv {
         }
         resource->export_retained_attached = false;
         resource->export_import_attached   = false;
+    }
+
+    void clear_surface_direct_import_present_state(SurfaceResource* resource) {
+        if (resource == nullptr) {
+            return;
+        }
+        resource->direct_import_presentable      = false;
+        resource->decode_image_is_imported_image = false;
+        resource->import_present_barrier_done    = false;
+        resource->import_fd_stat_valid           = false;
+        resource->import_present_generation      = 0;
+        resource->import_fd_dev                  = 0;
+        resource->import_fd_ino                  = 0;
+        resource->import_driver_instance_id      = 0;
+        resource->import_stream_id               = 0;
+        resource->import_codec_operation         = 0;
     }
 
 } // namespace vkvv
