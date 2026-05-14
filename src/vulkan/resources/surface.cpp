@@ -119,6 +119,7 @@ namespace vkvv {
         resource->fd_stat_valid                = false;
         resource->fd_dev                       = 0;
         resource->fd_ino                       = 0;
+        resource->exported_fd                  = {};
         resource->external_sync                = {};
         clear_export_present_state(resource);
         resource->layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -478,6 +479,7 @@ namespace vkvv {
         detached.private_nondisplay_shadow    = false;
         detached.decode_shadow_private_active = false;
         detached.decode_shadow_generation     = detached.content_generation;
+        mark_export_fd_detached(&detached);
         if (!retainable) {
             lock.unlock();
             destroy_export_resource(runtime, &detached);

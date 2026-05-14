@@ -33,6 +33,8 @@ namespace vkvv {
         QueueFamilyOwnershipTransfer,
         ImplicitSyncOnly,
         ExplicitSyncFile,
+        ForceBarrierDebug,
+        NoSyncDebug,
     };
 
     const char* vkvv_external_release_mode_name(VkvvExternalReleaseMode mode);
@@ -49,6 +51,16 @@ namespace vkvv {
         uint64_t                released_generation       = 0;
         uint64_t                acquired_generation       = 0;
         VkvvExternalReleaseMode release_mode              = VkvvExternalReleaseMode::NoneRequired;
+    };
+
+    struct ExportedFdState {
+        bool     fd_exported                     = false;
+        uint64_t fd_dev                          = 0;
+        uint64_t fd_ino                          = 0;
+        bool     may_be_sampled_by_client        = false;
+        uint64_t fd_content_generation           = 0;
+        uint64_t last_written_content_generation = 0;
+        bool     detached_from_surface           = false;
     };
 
     struct ExportResource {
@@ -82,18 +94,19 @@ namespace vkvv {
         bool                          fd_stat_valid                = false;
         uint64_t                      fd_dev                       = 0;
         uint64_t                      fd_ino                       = 0;
-        bool                          present_pinned               = false;
-        bool                          presentable                  = false;
-        bool                          published_visible            = false;
-        uint64_t                      present_generation           = 0;
-        uint64_t                      present_fd_dev               = 0;
-        uint64_t                      present_fd_ino               = 0;
-        VASurfaceID                   present_surface_id           = VA_INVALID_ID;
-        uint64_t                      present_stream_id            = 0;
-        VkVideoCodecOperationFlagsKHR present_codec_operation      = 0;
-        VkvvExportPresentSource       present_source               = VkvvExportPresentSource::None;
-        bool                          client_visible_shadow        = false;
-        bool                          private_nondisplay_shadow    = false;
+        ExportedFdState               exported_fd{};
+        bool                          present_pinned            = false;
+        bool                          presentable               = false;
+        bool                          published_visible         = false;
+        uint64_t                      present_generation        = 0;
+        uint64_t                      present_fd_dev            = 0;
+        uint64_t                      present_fd_ino            = 0;
+        VASurfaceID                   present_surface_id        = VA_INVALID_ID;
+        uint64_t                      present_stream_id         = 0;
+        VkVideoCodecOperationFlagsKHR present_codec_operation   = 0;
+        VkvvExportPresentSource       present_source            = VkvvExportPresentSource::None;
+        bool                          client_visible_shadow     = false;
+        bool                          private_nondisplay_shadow = false;
         ExternalSyncState             external_sync{};
         VkImageLayout                 layout = VK_IMAGE_LAYOUT_UNDEFINED;
     };
@@ -499,6 +512,9 @@ namespace vkvv {
     bool                surface_resource_has_current_decode_shadow(const SurfaceResource* resource);
     bool                av1_visible_export_requires_copy(const SurfaceResource* resource);
     bool                export_visible_release_satisfied(const ExportResource* resource);
+    bool                export_resource_fd_may_be_sampled_by_client(const ExportResource* resource);
+    uint64_t            export_resource_fd_content_generation(const ExportResource* resource);
+    bool                export_resource_fd_fresh(const SurfaceResource* resource);
     bool                surface_resource_has_current_export_shadow(const SurfaceResource* resource);
     bool                surface_resource_visible_publish_ready(const SurfaceResource* resource, bool display_visible, bool copy_done, bool pixel_proof_required);
     bool                surface_resource_has_exported_shadow_output(const SurfaceResource* resource);
@@ -506,6 +522,9 @@ namespace vkvv {
     bool                surface_resource_has_published_visible_output(const SurfaceResource* resource);
     bool                surface_resource_requires_visible_publication(const SurfaceResource* resource, bool refresh_export);
     void                clear_export_present_state(ExportResource* resource);
+    void                mark_export_fd_returned(ExportResource* resource, const VkvvFdIdentity& fd, uint64_t content_generation);
+    void                mark_export_fd_written(ExportResource* resource, uint64_t content_generation);
+    void                mark_export_fd_detached(ExportResource* resource);
     void                mark_export_predecode_nonpresentable(ExportResource* resource);
     void                pin_export_visible_present(SurfaceResource* owner, ExportResource* resource, VkvvExportPresentSource source);
     ExportResource*     client_present_shadow(SurfaceResource* resource);
@@ -514,12 +533,14 @@ namespace vkvv {
     const ExportResource* current_decode_shadow(const SurfaceResource* resource);
     void                  clear_private_decode_shadow_state(SurfaceResource* resource);
     void                  trace_export_present_state(const SurfaceResource* owner, const ExportResource* resource, const char* action, bool refresh_export, bool display_visible);
-    void                  clear_predecode_export_state(ExportResource* resource);
-    void                  clear_nondisplay_predecode_presentation_state(SurfaceResource* resource);
-    void                  clear_surface_export_attach_state(SurfaceResource* resource);
-    void                  clear_surface_direct_import_present_state(SurfaceResource* resource);
-    void                  clear_surface_av1_visible_output_trace(SurfaceResource* resource);
-    VkDeviceSize          retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties& properties);
+    void         trace_exported_fd_freshness_check(const SurfaceResource* owner, const ExportResource* resource, bool refresh_export, bool display_visible, const char* action);
+    bool         predecode_seed_source_safe_for_client(const SurfaceResource* source);
+    void         clear_predecode_export_state(ExportResource* resource);
+    void         clear_nondisplay_predecode_presentation_state(SurfaceResource* resource);
+    void         clear_surface_export_attach_state(SurfaceResource* resource);
+    void         clear_surface_direct_import_present_state(SurfaceResource* resource);
+    void         clear_surface_av1_visible_output_trace(SurfaceResource* resource);
+    VkDeviceSize retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties& properties);
     RetainedExportBudget  retained_export_budget_from_expected(size_t expected_count, VkDeviceSize expected_bytes, VkDeviceSize global_cap_bytes);
     size_t                runtime_retained_export_count(VulkanRuntime* runtime);
     VkDeviceSize          runtime_retained_export_memory_bytes(VulkanRuntime* runtime);

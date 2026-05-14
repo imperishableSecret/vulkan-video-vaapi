@@ -40,22 +40,26 @@ namespace {
 
     vkvv::RetainedExportBacking make_backing() {
         vkvv::RetainedExportBacking backing{};
-        backing.resource.fd_stat_valid             = true;
-        backing.resource.fd_dev                    = 100;
-        backing.resource.fd_ino                    = 200;
-        backing.resource.driver_instance_id        = retained_driver;
-        backing.resource.stream_id                 = retained_stream;
-        backing.resource.codec_operation           = codec_vp9;
-        backing.resource.va_fourcc                 = fourcc_nv12;
-        backing.resource.format                    = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
-        backing.resource.extent                    = {1920, 1088};
-        backing.resource.allocation_size           = 1920 * 1088 * 3 / 2;
-        backing.resource.has_drm_format_modifier   = true;
-        backing.resource.drm_format_modifier       = modifier_linear;
-        backing.resource.exported                  = true;
-        backing.resource.client_visible_shadow     = true;
-        backing.resource.private_nondisplay_shadow = false;
-        backing.fd                                 = vkvv::retained_export_fd_identity(backing.resource);
+        backing.resource.fd_stat_valid                        = true;
+        backing.resource.fd_dev                               = 100;
+        backing.resource.fd_ino                               = 200;
+        backing.resource.driver_instance_id                   = retained_driver;
+        backing.resource.stream_id                            = retained_stream;
+        backing.resource.codec_operation                      = codec_vp9;
+        backing.resource.va_fourcc                            = fourcc_nv12;
+        backing.resource.format                               = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+        backing.resource.extent                               = {1920, 1088};
+        backing.resource.allocation_size                      = 1920 * 1088 * 3 / 2;
+        backing.resource.has_drm_format_modifier              = true;
+        backing.resource.drm_format_modifier                  = modifier_linear;
+        backing.resource.exported                             = true;
+        backing.resource.client_visible_shadow                = true;
+        backing.resource.private_nondisplay_shadow            = false;
+        backing.resource.exported_fd.fd_exported              = true;
+        backing.resource.exported_fd.fd_dev                   = backing.resource.fd_dev;
+        backing.resource.exported_fd.fd_ino                   = backing.resource.fd_ino;
+        backing.resource.exported_fd.may_be_sampled_by_client = true;
+        backing.fd                                            = vkvv::retained_export_fd_identity(backing.resource);
         return backing;
     }
 
@@ -455,6 +459,72 @@ namespace {
         return ok;
     }
 
+    bool check_exported_fd_state_policy() {
+        bool                  ok = true;
+        vkvv::SurfaceResource resource{};
+        resource.surface_id                         = 55;
+        resource.driver_instance_id                 = retained_driver;
+        resource.stream_id                          = retained_stream;
+        resource.codec_operation                    = codec_vp9;
+        resource.content_generation                 = 5;
+        resource.exported                           = true;
+        resource.export_resource.image              = fake_handle<VkImage>(1);
+        resource.export_resource.memory             = fake_handle<VkDeviceMemory>(2);
+        resource.export_resource.exported           = true;
+        resource.export_resource.content_generation = 4;
+
+        VkvvFdIdentity fd{};
+        fd.valid = true;
+        fd.dev   = 11;
+        fd.ino   = 22;
+        vkvv::mark_export_fd_returned(&resource.export_resource, fd, 4);
+        ok &= check(vkvv::export_resource_fd_may_be_sampled_by_client(&resource.export_resource), "returned export fd was not marked client-sampleable");
+        ok &= check(vkvv::export_resource_fd_content_generation(&resource.export_resource) == 4, "returned export fd generation mismatch");
+        ok &= check(!vkvv::export_resource_fd_fresh(&resource), "stale exported fd was treated as fresh");
+
+        resource.export_resource.content_generation = resource.content_generation;
+        vkvv::mark_export_fd_written(&resource.export_resource, resource.content_generation);
+        ok &= check(vkvv::export_resource_fd_fresh(&resource), "fresh exported fd was rejected");
+
+        vkvv::mark_export_fd_detached(&resource.export_resource);
+        ok &= check(!vkvv::export_resource_fd_may_be_sampled_by_client(&resource.export_resource), "detached export fd remained client-sampleable");
+        ok &= check(vkvv::export_resource_fd_fresh(&resource), "detached export fd should not force current-surface freshness");
+        return ok;
+    }
+
+    bool check_predecode_seed_source_safety() {
+        bool                  ok = true;
+        vkvv::SurfaceResource source{};
+        source.surface_id                         = 77;
+        source.driver_instance_id                 = retained_driver;
+        source.stream_id                          = retained_stream;
+        source.codec_operation                    = codec_vp9;
+        source.content_generation                 = 9;
+        source.exported                           = true;
+        source.export_resource.image              = fake_handle<VkImage>(3);
+        source.export_resource.memory             = fake_handle<VkDeviceMemory>(4);
+        source.export_resource.exported           = true;
+        source.export_resource.content_generation = source.content_generation;
+
+        VkvvFdIdentity fd{};
+        fd.valid = true;
+        fd.dev   = 33;
+        fd.ino   = 44;
+        vkvv::mark_export_fd_returned(&source.export_resource, fd, source.content_generation);
+        source.export_resource.external_sync.external_release_done = true;
+        source.export_resource.external_sync.released_generation   = source.content_generation;
+        source.export_resource.external_sync.release_mode          = vkvv::VkvvExternalReleaseMode::ImplicitSyncOnly;
+        vkvv::pin_export_visible_present(&source, &source.export_resource, vkvv::VkvvExportPresentSource::VisibleRefresh);
+
+        ok &= check(vkvv::predecode_seed_source_safe_for_client(&source), "released current visible fd was not accepted as a predecode seed source");
+        source.export_resource.exported_fd.fd_content_generation--;
+        ok &= check(!vkvv::predecode_seed_source_safe_for_client(&source), "stale fd content was accepted as a predecode seed source");
+        source.export_resource.exported_fd.fd_content_generation = source.content_generation;
+        source.export_resource.predecode_quarantined             = true;
+        ok &= check(!vkvv::predecode_seed_source_safe_for_client(&source), "quarantined source was accepted as a predecode seed source");
+        return ok;
+    }
+
 } // namespace
 
 int main() {
@@ -524,5 +594,7 @@ int main() {
     ok &= check_av1_visible_export_copy_policy();
     ok &= check_visible_output_publication_policy();
     ok &= check_private_decode_shadow_state_policy();
+    ok &= check_exported_fd_state_policy();
+    ok &= check_predecode_seed_source_safety();
     return ok ? 0 : 1;
 }
