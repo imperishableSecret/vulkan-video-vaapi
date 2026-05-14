@@ -309,6 +309,27 @@ namespace {
         return info;
     }
 
+    AV1ReferenceMetadata build_current_reference_metadata(const VkvvDriver* drv, const VkvvContext* vctx, const VkvvSurface* target, const SurfaceResource* resource,
+                                                          const DecodeImageKey& decode_key, const VkvvAV1DecodeInput* input, bool displayed) {
+        AV1ReferenceMetadata metadata{};
+        if (drv == nullptr || vctx == nullptr || target == nullptr || resource == nullptr || input == nullptr) {
+            return metadata;
+        }
+        metadata.driver_instance_id = drv->driver_instance_id;
+        metadata.stream_id          = vctx->stream_id;
+        metadata.codec_operation    = decode_key.codec_operation;
+        metadata.surface_id         = target->id;
+        metadata.content_generation = resource->content_generation + 1;
+        metadata.decode_key         = decode_key;
+        metadata.coded_extent       = resource->coded_extent;
+        metadata.va_rt_format       = target->rt_format;
+        metadata.va_fourcc          = target->fourcc;
+        metadata.bit_depth          = input->bit_depth;
+        metadata.showable           = input->header.showable_frame;
+        metadata.displayed          = displayed;
+        return metadata;
+    }
+
     bool validate_av1_decode_input_bounds(const VkvvAV1DecodeInput* input, char* reason, size_t reason_size) {
         if (input == nullptr || input->bitstream == nullptr || input->bitstream_size == 0 || input->tiles == nullptr || input->tile_count == 0) {
             std::snprintf(reason, reason_size, "missing AV1 decode bitstream bounds");
@@ -554,16 +575,13 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
 
             const AV1ReferenceSlot* stored_slot  = av1_reconcile_reference_slot(session, static_cast<uint32_t>(reference_index), ref_surface_id);
             const int               ref_dpb_slot = stored_slot != nullptr ? stored_slot->slot : -1;
-            if (!ref_surface->decoded || ref_surface->vulkan == nullptr || ref_dpb_slot < 0) {
-                std::snprintf(reason, reason_size,
-                              "AV1 reference surface %u is not ready: ref_name=%u ref_idx=%d decoded=%u vulkan=%u slot=%d stored_surface=%u target=%u current=%u", ref_surface_id,
-                              i, reference_index, ref_surface->decoded ? 1U : 0U, ref_surface->vulkan != nullptr ? 1U : 0U, ref_dpb_slot,
-                              stored_slot != nullptr ? stored_slot->surface_id : VA_INVALID_ID, vctx->render_target, input->pic->current_frame);
-                return VA_STATUS_ERROR_INVALID_SURFACE;
-            }
-            if (static_cast<uint32_t>(ref_dpb_slot) >= max_av1_dpb_slots) {
-                std::snprintf(reason, reason_size, "AV1 reference surface %u has invalid DPB slot: ref_name=%u ref_idx=%d slot=%d", ref_surface_id, i, reference_index,
-                              ref_dpb_slot);
+            auto*                   resource     = static_cast<SurfaceResource*>(ref_surface->vulkan);
+            if (!validate_av1_reference_slot(session, stored_slot, ref_surface, resource, drv, vctx, decode_key, reason, reason_size)) {
+                const size_t used = std::strlen(reason);
+                if (used < reason_size) {
+                    std::snprintf(reason + used, reason_size - used, ": ref_name=%u ref_idx=%d stored_surface=%u target=%u current=%u", i, reference_index,
+                                  stored_slot != nullptr ? stored_slot->surface_id : VA_INVALID_ID, vctx->render_target, input->pic->current_frame);
+                }
                 return VA_STATUS_ERROR_INVALID_SURFACE;
             }
 
@@ -573,7 +591,6 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
                 continue;
             }
 
-            auto*            resource          = static_cast<SurfaceResource*>(ref_surface->vulkan);
             ReferenceRecord& record            = references[reference_count++];
             record.surface                     = ref_surface;
             record.resource                    = resource;
@@ -799,8 +816,9 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
+    const AV1ReferenceMetadata current_metadata = build_current_reference_metadata(drv, vctx, target, target_resource, decode_key, input, refresh_export);
     if (current_updates_reference_map) {
-        av1_update_reference_slots_from_refresh(session, input, target_surface_id, target_dpb_slot, setup_std_ref);
+        av1_update_reference_slots_from_refresh(session, input, target_surface_id, target_dpb_slot, setup_std_ref, &current_metadata);
         if (trace_deep_enabled) {
             const std::string ref_slots_after     = av1_reference_slots_string(session);
             const std::string surface_slots_after = av1_surface_slots_string(session);

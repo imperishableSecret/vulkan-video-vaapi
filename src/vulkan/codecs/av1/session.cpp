@@ -314,6 +314,11 @@ VAStatus vkvv_vulkan_ensure_av1_session(void* runtime_ptr, void* session_ptr, un
     session->bitstream_size_alignment   = std::max<VkDeviceSize>(1, capabilities.video.minBitstreamBufferSizeAlignment);
     session->decode_flags               = capabilities.decode.flags;
     session->max_level                  = capabilities.av1.maxLevel;
+    if (capabilities.video.maxDpbSlots < min_av1_dpb_slots || capabilities.video.maxActiveReferencePictures < min_av1_active_references) {
+        std::snprintf(reason, reason_size, "AV1 Vulkan DPB/reference limits are too small: dpb=%u refs=%u min_dpb=%u min_refs=%u", capabilities.video.maxDpbSlots,
+                      capabilities.video.maxActiveReferencePictures, min_av1_dpb_slots, min_av1_active_references);
+        return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
+    }
     if (extent.width > capabilities.video.maxCodedExtent.width || extent.height > capabilities.video.maxCodedExtent.height) {
         std::snprintf(reason, reason_size, "AV1 coded extent %ux%u exceeds Vulkan limit %ux%u", extent.width, extent.height, capabilities.video.maxCodedExtent.width,
                       capabilities.video.maxCodedExtent.height);

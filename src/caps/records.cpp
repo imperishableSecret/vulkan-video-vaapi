@@ -1,4 +1,5 @@
 #include "va/private.h"
+#include "codecs/av1/av1.h"
 
 #include <cstdio>
 #include <va/va_dec_av1.h>
@@ -107,11 +108,31 @@ namespace {
         add_format_variant(cap, rt_format, format_supported, surface_wired);
     }
 
+    bool av1_limits_safe(VkvvVideoProfileLimits limits) {
+        return limits.max_dpb_slots >= VKVV_AV1_MIN_DPB_SLOTS && limits.max_active_references >= VKVV_AV1_MIN_ACTIVE_REFERENCES;
+    }
+
+    VkvvVideoProfileLimits av1_profile0_limits(const VkvvDriver* drv) {
+        if (drv == NULL) {
+            return {};
+        }
+        if (drv->caps.av1 && av1_limits_safe(drv->caps.av1_limits)) {
+            return drv->caps.av1_limits;
+        }
+        if (drv->caps.av1_10 && av1_limits_safe(drv->caps.av1_10_limits)) {
+            return drv->caps.av1_10_limits;
+        }
+        return drv->caps.av1_limits;
+    }
+
     void add_av1_profile0(VkvvDriver* drv) {
-        VkvvProfileCapability* cap = add_profile_record(drv, VAProfileAV1Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE, VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR,
-                                                        VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME, drv->caps.av1_limits, drv->caps.av1 || drv->caps.av1_10, true, true);
-        add_format_variant(cap, VA_RT_FORMAT_YUV420, drv->caps.av1, drv->caps.surface_export_nv12);
-        add_format_variant(cap, VA_RT_FORMAT_YUV420_10, drv->caps.av1_10, drv->caps.surface_export_p010);
+        const bool                   av1_8_safe  = drv->caps.av1 && av1_limits_safe(drv->caps.av1_limits);
+        const bool                   av1_10_safe = drv->caps.av1_10 && av1_limits_safe(drv->caps.av1_10_limits);
+        const VkvvVideoProfileLimits limits      = av1_profile0_limits(drv);
+        VkvvProfileCapability*       cap = add_profile_record(drv, VAProfileAV1Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE, VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR,
+                                                              VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME, limits, av1_8_safe || av1_10_safe, true, true);
+        add_format_variant(cap, VA_RT_FORMAT_YUV420, av1_8_safe, drv->caps.surface_export_nv12);
+        add_format_variant(cap, VA_RT_FORMAT_YUV420_10, av1_10_safe, drv->caps.surface_export_p010);
     }
 
     void add_vp9_profile2(VkvvDriver* drv) {
