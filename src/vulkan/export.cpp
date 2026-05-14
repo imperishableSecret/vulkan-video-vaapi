@@ -115,6 +115,36 @@ namespace {
         }
     }
 
+    bool export_env_flag_enabled(const char* name) {
+        const char* value = std::getenv(name);
+        return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 && std::strcmp(value, "off") != 0;
+    }
+
+    bool allow_placeholder_export() {
+        return export_env_flag_enabled("VKVV_ALLOW_PLACEHOLDER_EXPORT");
+    }
+
+    bool export_source_has_decoded_pixels(const SurfaceResource* owner, const ExportResource* resource, VkvvExportPixelSource pixel_source) {
+        if (owner == nullptr || owner->content_generation == 0 || pixel_source != VkvvExportPixelSource::DecodedContent) {
+            return false;
+        }
+        if (resource == nullptr) {
+            return true;
+        }
+        return resource->content_generation == owner->content_generation;
+    }
+
+    bool export_source_has_seed_pixels(const ExportResource* resource, VkvvExportPixelSource pixel_source) {
+        if (resource == nullptr || pixel_source != VkvvExportPixelSource::StreamLocalSeed) {
+            return false;
+        }
+        return resource->content_generation != 0 && resource->seed_source_generation != 0 && resource->content_generation == resource->seed_source_generation;
+    }
+
+    bool export_source_is_placeholder(const ExportResource* resource, VkvvExportPixelSource pixel_source) {
+        return pixel_source == VkvvExportPixelSource::Placeholder || (resource != nullptr && resource->black_placeholder);
+    }
+
     void trace_direct_export_fd_lifetime(const VkvvSurface* surface, const SurfaceResource* resource, const VkvvFdIdentity& fd_stat, const char* action,
                                          uint64_t generation_at_action, bool may_be_sampled_by_client) {
         if (surface == nullptr || resource == nullptr) {
@@ -1005,6 +1035,31 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         VkvvFdIdentity no_fd{};
         trace_export_summary(exported_shadow, nullptr, false, no_fd, "fail", "missing-export-memory", VA_STATUS_ERROR_INVALID_SURFACE);
         return VA_STATUS_ERROR_INVALID_SURFACE;
+    }
+
+    const VkvvExportPixelSource pre_fd_pixel_source =
+        exported_shadow != nullptr ? export_pixel_source_for_resource(resource, exported_shadow) :
+                                     (surface->decoded && resource->content_generation != 0 ? VkvvExportPixelSource::DecodedContent : VkvvExportPixelSource::None);
+    const bool valid_decoded_pixels_available = export_source_has_decoded_pixels(resource, exported_shadow, pre_fd_pixel_source);
+    const bool valid_seed_available           = export_source_has_seed_pixels(exported_shadow, pre_fd_pixel_source);
+    const bool placeholder_available          = export_source_is_placeholder(exported_shadow, pre_fd_pixel_source);
+    if (!valid_decoded_pixels_available && !valid_seed_available && !(placeholder_available && allow_placeholder_export())) {
+        VkvvFdIdentity no_fd{};
+        if (placeholder_available && exported_shadow != nullptr) {
+            trace_predecode_quarantine_outcome(resource, exported_shadow, "export-failed");
+        }
+        trace_export_summary(exported_shadow, nullptr, false, no_fd, "fail", "no-valid-decoded-or-seed-pixels", VA_STATUS_ERROR_OPERATION_FAILED);
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_OPERATION_FAILED,
+                          "surface export refused sampleable fd without decoded or valid seed pixels: surface=%u stream=%llu codec=0x%x content_gen=%llu pixel_source=%s",
+                          surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                          static_cast<unsigned long long>(resource->content_generation), vkvv_export_pixel_source_name(pre_fd_pixel_source));
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    if (placeholder_available) {
+        VKVV_TRACE("debug-placeholder-export",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu decision=return-placeholder returned_fd=1 unsafe=1 reason=debug-override",
+                   surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                   static_cast<unsigned long long>(resource->content_generation));
     }
 
     VkMemoryGetFdInfoKHR fd_info{};

@@ -147,6 +147,7 @@ def main() -> int:
         '"export-fd-lifetime"',
         '"predecode-quarantine-outcome"',
         '"generic-export-summary"',
+        '"debug-placeholder-export"',
         '"external-sync-proof"',
         '"predecode-quarantine-enter"',
         '"predecode-quarantine-exit"',
@@ -329,6 +330,7 @@ def main() -> int:
         "VKVV_TRACE_PIXEL_PROOF",
         "VKVV_TRACE_EXPORT_VALIDITY",
         "VKVV_TRACE_FD_LIFETIME",
+        "VKVV_ALLOW_PLACEHOLDER_EXPORT",
         "VKVV_EXPORT_SYNC_MODE",
     ):
         telemetry_text = (root / "src" / "telemetry.cpp").read_text(encoding="utf-8")
