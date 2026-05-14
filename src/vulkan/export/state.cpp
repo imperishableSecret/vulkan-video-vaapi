@@ -71,6 +71,18 @@ namespace vkvv {
         resource->seed_source_generation = 0;
     }
 
+    void clear_nondisplay_predecode_presentation_state(SurfaceResource* resource) {
+        if (resource == nullptr) {
+            return;
+        }
+
+        clear_predecode_export_state(&resource->export_resource);
+        resource->export_seed_generation                    = 0;
+        resource->last_nondisplay_skip_generation           = resource->content_generation;
+        resource->last_nondisplay_skip_shadow_generation    = resource->export_resource.content_generation;
+        resource->last_nondisplay_skip_shadow_memory        = resource->export_resource.memory;
+    }
+
     void clear_surface_export_attach_state(SurfaceResource* resource) {
         if (resource == nullptr) {
             return;
