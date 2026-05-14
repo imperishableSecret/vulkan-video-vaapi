@@ -35,6 +35,7 @@ namespace vkvv {
 
     bool     ensure_export_resource(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
     bool     ensure_private_decode_shadow(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
+    bool     copy_decode_to_private_shadow(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
     bool     attach_imported_export_resource_by_fd(VulkanRuntime* runtime, SurfaceResource* source);
     bool     ensure_export_only_surface_resource(VkvvSurface* surface, const ExportFormatInfo* format, VkExtent2D extent, char* reason, size_t reason_size);
     bool     copy_surface_to_export_resource(VulkanRuntime* runtime, SurfaceResource* source, uint32_t* seeded_predecode_exports, char* reason, size_t reason_size);

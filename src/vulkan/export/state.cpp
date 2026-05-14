@@ -11,6 +11,7 @@ namespace vkvv {
             case VkvvExportCopyReason::PredecodePlaceholderSeed: return "predecode-placeholder-seed";
             case VkvvExportCopyReason::ImportOutput: return "import-output";
             case VkvvExportCopyReason::NondisplayCurrentRefresh: return "nondisplay-current-refresh";
+            case VkvvExportCopyReason::NondisplayPrivateRefresh: return "nondisplay-private-refresh";
             default: return "unknown";
         }
     }

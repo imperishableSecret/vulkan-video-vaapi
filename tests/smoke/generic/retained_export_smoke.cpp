@@ -468,6 +468,8 @@ int main() {
                        vkvv::RetainedExportMatch::ExtentMismatch, "undersized retained backing");
 
     ok &= check(std::string_view(vkvv::retained_export_match_reason(vkvv::RetainedExportMatch::Match)) == "match", "match reason text should be stable");
+    ok &= check(std::string_view(vkvv::vkvv_export_copy_reason_name(vkvv::VkvvExportCopyReason::NondisplayPrivateRefresh)) == "nondisplay-private-refresh",
+                "private decode copy reason text should be stable");
     ok &= check_dynamic_budget();
     ok &= check_p010_over_cap_window_stays_retained();
     ok &= check_window_policy();
