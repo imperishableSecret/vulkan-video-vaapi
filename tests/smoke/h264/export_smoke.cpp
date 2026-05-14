@@ -296,11 +296,15 @@ namespace {
         VkvvSurface late_export{};
         init_nv12_surface(&late_export, 906, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
 
+        VkvvSurface newer_visible{};
+        init_nv12_surface(&newer_visible, 907, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+
         auto cleanup = [&]() {
             if (descriptor.objects[0].fd >= 0) {
                 close(descriptor.objects[0].fd);
                 descriptor.objects[0].fd = -1;
             }
+            vkvv_vulkan_surface_destroy(runtime, &newer_visible);
             vkvv_vulkan_surface_destroy(runtime, &late_export);
             vkvv_vulkan_surface_destroy(runtime, &decoded);
             vkvv_vulkan_h264_session_destroy(runtime, session);
@@ -350,6 +354,31 @@ namespace {
             late_resource->export_resource.black_placeholder || late_resource->export_resource.seed_source_surface_id != decoded.id ||
             late_resource->export_resource.seed_source_generation != decoded_resource->content_generation) {
             std::fprintf(stderr, "predecode export did not seed from the last same-stream decoded surface before fd return\n");
+            cleanup();
+            return false;
+        }
+
+        const vkvv::DecodeImageKey newer_decode_key = h264_decode_key(typed_session, &newer_visible, {64, 64});
+        if (!vkvv::ensure_surface_resource(runtime, &newer_visible, newer_decode_key, reason, sizeof(reason))) {
+            std::fprintf(stderr, "%s\n", reason);
+            cleanup();
+            return false;
+        }
+        auto* newer_resource = static_cast<vkvv::SurfaceResource*>(newer_visible.vulkan);
+        newer_visible.decoded = true;
+        newer_resource->content_generation++;
+        status = vkvv_vulkan_refresh_surface_export(runtime, &newer_visible, true, reason, sizeof(reason));
+        if (reason[0] != '\0') {
+            std::printf("%s\n", reason);
+        }
+        if (status != VA_STATUS_SUCCESS) {
+            cleanup();
+            return false;
+        }
+        if (!late_resource->export_resource.predecode_exported || !late_resource->export_resource.predecode_seeded ||
+            late_resource->export_resource.seed_source_surface_id != decoded.id ||
+            late_resource->export_resource.seed_source_generation != decoded_resource->content_generation || late_resource->export_resource.content_generation != 0) {
+            std::fprintf(stderr, "already-seeded predecode placeholder was reseeded by a newer visible frame\n");
             cleanup();
             return false;
         }

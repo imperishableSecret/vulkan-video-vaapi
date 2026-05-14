@@ -587,9 +587,10 @@ namespace vkvv {
                    static_cast<unsigned long long>(resource.seed_source_generation));
     }
 
-    bool predecode_seed_target_matches(const ExportResource* target, const SurfaceResource* source) {
+    bool can_seed_predecode_target(const ExportResource* target, const SurfaceResource* source) {
         return target != nullptr && source != nullptr && target != &source->export_resource && target->image != VK_NULL_HANDLE && target->memory != VK_NULL_HANDLE &&
-            target->predecode_exported && target->driver_instance_id == source->driver_instance_id && target->stream_id != 0 && target->stream_id == source->stream_id &&
+            target->predecode_exported && !target->predecode_seeded && target->content_generation == 0 && target->seed_source_surface_id == VA_INVALID_ID &&
+            target->seed_source_generation == 0 && target->driver_instance_id == source->driver_instance_id && target->stream_id != 0 && target->stream_id == source->stream_id &&
             target->codec_operation != 0 && target->codec_operation == source->codec_operation && target->format == source->format && target->va_fourcc == source->va_fourcc &&
             target->extent.width == source->coded_extent.width && target->extent.height == source->coded_extent.height;
     }
@@ -724,13 +725,13 @@ namespace vkvv {
                 runtime->predecode_exports.erase(runtime->predecode_exports.begin() + static_cast<std::ptrdiff_t>(i));
                 continue;
             }
-            if (predecode_seed_target_matches(record.resource, source)) {
+            if (can_seed_predecode_target(record.resource, source)) {
                 targets.push_back(record.resource);
             }
             i++;
         }
         for (RetainedExportBacking& backing : runtime->retained_exports) {
-            if (predecode_seed_target_matches(&backing.resource, source)) {
+            if (can_seed_predecode_target(&backing.resource, source)) {
                 targets.push_back(&backing.resource);
             }
         }
@@ -946,7 +947,7 @@ namespace vkvv {
         for (size_t i = 0; i < predecode_seed_targets.size(); i++) {
             ExportResource*                 target   = predecode_seed_targets[i];
             const ExportCopyTargetSnapshot& snapshot = predecode_snapshots[i];
-            if (!source_matches || !export_copy_target_still_matches(snapshot) || !predecode_seed_target_matches(target, source)) {
+            if (!source_matches || !export_copy_target_still_matches(snapshot) || !can_seed_predecode_target(target, source)) {
                 VKVV_TRACE("export-copy-publish-skip",
                            "kind=predecode source_surface=%u source_match=%u source_gen=%llu expected_gen=%llu target_owner=%u target_mem=0x%llx expected_mem=0x%llx "
                            "target_gen=%llu expected_target_gen=%llu target_predecode=%u expected_predecode=%u",
@@ -1103,6 +1104,19 @@ namespace vkvv {
 
         std::vector<ExportResource*> targets{&target->export_resource};
         target->export_resource.predecode_exported = true;
+        if (!can_seed_predecode_target(&target->export_resource, source)) {
+            VKVV_TRACE("export-seed-reject",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x source_surface=%u target_gen=%llu shadow_gen=%llu target_decoded=%u predecode=%u seeded=%u "
+                       "seed_surface=%u seed_gen=%llu source_driver=%llu source_stream=%llu source_codec=0x%x source_format=%d source_fourcc=0x%x source_extent=%ux%u",
+                       target->surface_id, static_cast<unsigned long long>(target->driver_instance_id), static_cast<unsigned long long>(target->stream_id), target->codec_operation,
+                       source->surface_id, static_cast<unsigned long long>(target->content_generation),
+                       static_cast<unsigned long long>(target->export_resource.content_generation), target->content_generation != 0 ? 1U : 0U,
+                       target->export_resource.predecode_exported ? 1U : 0U, target->export_resource.predecode_seeded ? 1U : 0U,
+                       target->export_resource.seed_source_surface_id, static_cast<unsigned long long>(target->export_resource.seed_source_generation),
+                       static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id), source->codec_operation, source->format,
+                       source->va_fourcc, source->coded_extent.width, source->coded_extent.height);
+            return true;
+        }
         VKVV_TRACE("export-seed-hit",
                    "surface=%u driver=%llu stream=%llu codec=0x%x source_surface=%u source_gen=%llu source_seed_gen=%llu source_shadow_gen=%llu target_mem=0x%llx target_gen=%llu",
                    target->surface_id, static_cast<unsigned long long>(target->driver_instance_id), static_cast<unsigned long long>(target->stream_id), target->codec_operation,
