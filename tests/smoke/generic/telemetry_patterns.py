@@ -292,6 +292,8 @@ def main() -> int:
         "reject_reason=",
         "source_crc=",
         "target_crc_after_copy=",
+        "target_sample_bytes=",
+        "target-does-not-match-source",
         "returned_crc=",
         "black_crc=",
         "zero_crc=",
