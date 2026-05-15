@@ -298,6 +298,7 @@ def main() -> int:
         "predecode-target-needs-proven-seed",
         "predecode-target-returned",
         "return-predecode-target",
+        "seed_used=",
         "failed-no-valid-source",
         "delay-if-pending",
         "drained-and-exported",
