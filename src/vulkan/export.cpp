@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <unistd.h>
 
 using namespace vkvv;
@@ -256,6 +257,30 @@ namespace {
 
     bool export_source_is_placeholder(const ExportResource* resource, VkvvExportPixelSource pixel_source) {
         return pixel_source == VkvvExportPixelSource::Placeholder || (resource != nullptr && resource->black_placeholder);
+    }
+
+    uint64_t stream_visible_generation_from_seed_records(VulkanRuntime* runtime, const SurfaceResource* target) {
+        if (runtime == nullptr || target == nullptr) {
+            return 0;
+        }
+        uint64_t visible_generation = 0;
+        std::lock_guard<std::mutex> export_lock(runtime->export_mutex);
+        for (const ExportSeedRecord& record : runtime->export_seed_records) {
+            const SurfaceResource* source = record.resource;
+            if (source == nullptr || source == target) {
+                continue;
+            }
+            const bool same_domain = record.driver_instance_id == target->driver_instance_id && record.stream_id == target->stream_id &&
+                record.codec_operation == target->codec_operation && record.format == target->format && record.va_fourcc == target->va_fourcc &&
+                record.coded_extent.width == target->coded_extent.width && record.coded_extent.height == target->coded_extent.height;
+            const bool same_visible =
+                source->visible_extent.width == target->visible_extent.width && source->visible_extent.height == target->visible_extent.height;
+            if (!same_domain || !same_visible) {
+                continue;
+            }
+            visible_generation = std::max<uint64_t>(visible_generation, record.content_generation);
+        }
+        return visible_generation;
     }
 
     void trace_direct_export_fd_lifetime(const VkvvSurface* surface, const SurfaceResource* resource, const VkvvFdIdentity& fd_stat, const char* action,
@@ -1211,31 +1236,51 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
     }
     export_role = effective_export_role_for_source(export_role, pre_fd_pixel_source, valid_decoded_pixels_available, valid_seed_available, exported_shadow);
     stamp_export_request(exported_shadow, export_role);
-    const bool bootstrap_placeholder_allowed        = export_role == VkvvExportRole::Bootstrap && placeholder_available && exported_shadow != nullptr;
-    const bool predecode_target_placeholder_allowed = export_role == VkvvExportRole::PredecodeTarget && placeholder_available && exported_shadow != nullptr;
+    const uint64_t stream_visible_generation = export_role == VkvvExportRole::PredecodeTarget ? stream_visible_generation_from_seed_records(runtime, resource) : 0;
+    const bool bootstrap_placeholder_allowed = export_role == VkvvExportRole::Bootstrap && placeholder_available && exported_shadow != nullptr;
+    const bool predecode_target_placeholder_allowed =
+        export_role == VkvvExportRole::PredecodeTarget && placeholder_available && exported_shadow != nullptr && stream_visible_generation == 0;
+    const bool active_predecode_placeholder_invalid =
+        export_role == VkvvExportRole::PredecodeTarget && placeholder_available && !valid_seed_available && stream_visible_generation != 0;
+    const bool debug_placeholder_allowed = placeholder_available && allow_placeholder_export() && export_role != VkvvExportRole::PredecodeTarget;
     if (!valid_decoded_pixels_available && !valid_seed_available && !bootstrap_placeholder_allowed && !predecode_target_placeholder_allowed &&
-        !(placeholder_available && allow_placeholder_export())) {
+        !debug_placeholder_allowed) {
         VkvvFdIdentity no_fd{};
         const VAStatus client_status = map_export_decision_to_va_status(export_role, VkvvExportDecision::PolicyFailure, true);
         if (placeholder_available && exported_shadow != nullptr) {
             const bool predecode_target = export_role == VkvvExportRole::PredecodeTarget;
             trace_predecode_quarantine_outcome(resource, exported_shadow, predecode_target ? "predecode-target-failed-no-valid-seed" : "sampleable-failed-no-valid-pixels",
-                                               predecode_target ? "valid-seed-required" : "no-valid-pixels", false);
+                                               active_predecode_placeholder_invalid ? "active-predecode-placeholder-after-visible" :
+                                                                                      (predecode_target ? "valid-seed-required" : "no-valid-pixels"),
+                                               false);
             if (predecode_target) {
+                if (active_predecode_placeholder_invalid) {
+                    VKVV_TRACE("invalid-active-predecode-placeholder",
+                               "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu stream_visible_generation=%llu "
+                               "valid_seed_available=%u pixel_source=%s export_intent=%s returned_fd=0 status=%d",
+                               surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                               resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                               static_cast<unsigned long long>(export_resource_fd_content_generation(exported_shadow)),
+                               static_cast<unsigned long long>(stream_visible_generation), valid_seed_available ? 1U : 0U,
+                               vkvv_export_pixel_source_name(pre_fd_pixel_source), vkvv_export_intent_name(export_intent), client_status);
+                }
                 VKVV_TRACE("predecode-target-export-refused",
                            "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu export_intent=%s valid_seed_required=1 valid_seed_available=%u "
-                           "status=%d reason=predecode-target-needs-proven-seed",
+                           "stream_visible_generation=%llu status=%d reason=%s",
                            surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
                            resource->codec_operation, static_cast<unsigned long long>(resource->content_generation), vkvv_export_intent_name(export_intent),
-                           valid_seed_available ? 1U : 0U, client_status);
+                           valid_seed_available ? 1U : 0U, static_cast<unsigned long long>(stream_visible_generation), client_status,
+                           active_predecode_placeholder_invalid ? "active-predecode-placeholder-after-visible" : "predecode-target-needs-proven-seed");
             }
         }
-        trace_export_summary(exported_shadow, nullptr, false, no_fd, "fail",
-                             export_role == VkvvExportRole::PredecodeTarget ? "predecode-target-needs-proven-seed" : "no-valid-decoded-or-seed-pixels", client_status);
+        const char* failure_reason = active_predecode_placeholder_invalid ? "active-predecode-placeholder-after-visible" :
+            (export_role == VkvvExportRole::PredecodeTarget ? "predecode-target-needs-proven-seed" : "no-valid-decoded-or-seed-pixels");
+        trace_export_summary(exported_shadow, nullptr, false, no_fd, "fail", failure_reason, client_status);
         VKVV_ERROR_REASON(reason, reason_size, client_status,
-                          "surface export refused sampleable fd without decoded or valid seed pixels: surface=%u stream=%llu codec=0x%x content_gen=%llu pixel_source=%s",
+                          "surface export refused sampleable fd without decoded or valid seed pixels: surface=%u stream=%llu codec=0x%x content_gen=%llu pixel_source=%s stream_visible_generation=%llu",
                           surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
-                          static_cast<unsigned long long>(resource->content_generation), vkvv_export_pixel_source_name(pre_fd_pixel_source));
+                          static_cast<unsigned long long>(resource->content_generation), vkvv_export_pixel_source_name(pre_fd_pixel_source),
+                          static_cast<unsigned long long>(stream_visible_generation));
         return client_status;
     }
     if (placeholder_available && !bootstrap_placeholder_allowed && !predecode_target_placeholder_allowed) {
