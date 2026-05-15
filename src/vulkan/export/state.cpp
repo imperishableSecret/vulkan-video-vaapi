@@ -179,8 +179,15 @@ namespace vkvv {
             sync.release_mode == VkvvExternalReleaseMode::NoSyncDebug;
     }
 
+    bool export_resource_fd_observable(const ExportResource* resource) {
+        if (resource == nullptr || !resource->exported_fd.fd_exported || resource->exported_fd.detached_from_surface) {
+            return false;
+        }
+        return resource->export_intent == VkvvExportIntent::ReadOnly || resource->export_intent == VkvvExportIntent::ReadWrite;
+    }
+
     bool export_resource_fd_may_be_sampled_by_client(const ExportResource* resource) {
-        return resource != nullptr && resource->exported_fd.fd_exported && resource->exported_fd.may_be_sampled_by_client && !resource->exported_fd.detached_from_surface;
+        return export_resource_fd_observable(resource);
     }
 
     uint64_t export_resource_fd_content_generation(const ExportResource* resource) {
@@ -288,10 +295,11 @@ namespace vkvv {
         resource->exported_fd.fd_exported                     = fd.valid;
         resource->exported_fd.fd_dev                          = fd.dev;
         resource->exported_fd.fd_ino                          = fd.ino;
-        resource->exported_fd.may_be_sampled_by_client        = fd.valid;
         resource->exported_fd.fd_content_generation           = content_generation;
         resource->exported_fd.last_written_content_generation = content_generation;
         resource->exported_fd.detached_from_surface           = false;
+        resource->exported_fd.may_be_sampled_by_client        = export_resource_fd_observable(resource);
+        trace_fd_observability(resource, "mark-returned");
     }
 
     void mark_export_fd_written(ExportResource* resource, uint64_t content_generation) {
@@ -301,6 +309,8 @@ namespace vkvv {
         resource->exported_fd.fd_content_generation           = content_generation;
         resource->exported_fd.last_written_content_generation = content_generation;
         resource->exported_fd.detached_from_surface           = false;
+        resource->exported_fd.may_be_sampled_by_client        = export_resource_fd_observable(resource);
+        trace_fd_observability(resource, "mark-written");
     }
 
     void mark_export_fd_detached(ExportResource* resource) {
@@ -309,6 +319,22 @@ namespace vkvv {
         }
         resource->exported_fd.detached_from_surface    = true;
         resource->exported_fd.may_be_sampled_by_client = false;
+        trace_fd_observability(resource, "mark-detached");
+    }
+
+    void trace_fd_observability(const ExportResource* resource, const char* reason) {
+        if (resource == nullptr) {
+            return;
+        }
+        const bool readable = resource->export_intent == VkvvExportIntent::ReadOnly || resource->export_intent == VkvvExportIntent::ReadWrite;
+        VKVV_TRACE("fd-observability",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu export_intent=%s fd_exported=%u fd_observable=%u readable_intent=%u "
+                   "detached_from_surface=%u may_be_sampled_by_client=%u reason=%s",
+                   resource->owner_surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                   resource->codec_operation, static_cast<unsigned long long>(resource->exported_fd.fd_dev), static_cast<unsigned long long>(resource->exported_fd.fd_ino),
+                   vkvv_export_intent_name(resource->export_intent), resource->exported_fd.fd_exported ? 1U : 0U, export_resource_fd_observable(resource) ? 1U : 0U,
+                   readable ? 1U : 0U, resource->exported_fd.detached_from_surface ? 1U : 0U,
+                   export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U, reason != nullptr ? reason : "unknown");
     }
 
     void trace_export_fd_lifetime(const SurfaceResource* owner, const ExportResource* resource, const char* action, uint64_t generation_at_action, bool may_be_sampled_by_client) {
@@ -324,11 +350,12 @@ namespace vkvv {
         const uint64_t    fd_ino     = resource->exported_fd.fd_exported ? resource->exported_fd.fd_ino : resource->fd_ino;
         VKVV_TRACE("export-fd-lifetime",
                    "event_action=%s surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu fd_content_gen=%llu present_gen=%llu "
-                   "predecode_quarantined=%u may_be_sampled_by_client=%u generation_at_action=%llu",
+                   "predecode_quarantined=%u may_be_sampled_by_client=%u fd_observable=%u generation_at_action=%llu",
                    action != nullptr ? action : "unknown", surface_id, static_cast<unsigned long long>(driver), static_cast<unsigned long long>(stream), codec,
                    static_cast<unsigned long long>(fd_dev), static_cast<unsigned long long>(fd_ino), static_cast<unsigned long long>(content),
                    static_cast<unsigned long long>(export_resource_fd_content_generation(resource)), static_cast<unsigned long long>(resource->present_generation),
-                   resource->predecode_quarantined ? 1U : 0U, may_be_sampled_by_client ? 1U : 0U, static_cast<unsigned long long>(generation_at_action));
+                   resource->predecode_quarantined ? 1U : 0U, may_be_sampled_by_client ? 1U : 0U, export_resource_fd_observable(resource) ? 1U : 0U,
+                   static_cast<unsigned long long>(generation_at_action));
     }
 
     void trace_predecode_quarantine_outcome(const SurfaceResource* owner, const ExportResource* resource, const char* outcome, const char* reason, bool returned_fd) {
@@ -347,13 +374,13 @@ namespace vkvv {
         const uint64_t    fd_ino     = resource->predecode_fd_ino != 0 ? resource->predecode_fd_ino : resource->fd_ino;
         VKVV_TRACE("predecode-quarantine-outcome",
                    "surface=%u fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x age_ms=%llu content_gen=%llu fd_content_gen=%llu decoded=%u had_va_begin=%u "
-                   "had_decode_submit=%u had_visible_decode=%u may_be_sampled_by_client=%u export_role=%s outcome=%s reason=%s returned_fd=%u",
+                   "had_decode_submit=%u had_visible_decode=%u may_be_sampled_by_client=%u fd_observable=%u export_role=%s outcome=%s reason=%s returned_fd=%u",
                    surface_id, static_cast<unsigned long long>(fd_dev), static_cast<unsigned long long>(fd_ino), static_cast<unsigned long long>(stream), codec,
                    static_cast<unsigned long long>(age_ms), static_cast<unsigned long long>(content),
                    static_cast<unsigned long long>(export_resource_fd_content_generation(resource)), decoded ? 1U : 0U, resource->predecode_had_va_begin ? 1U : 0U,
                    resource->predecode_had_decode_submit ? 1U : 0U, resource->predecode_had_visible_decode ? 1U : 0U,
-                   export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U, vkvv_export_role_name(resource->export_role), outcome != nullptr ? outcome : "unknown",
-                   reason != nullptr ? reason : "none", returned_fd ? 1U : 0U);
+                   export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U, export_resource_fd_observable(resource) ? 1U : 0U,
+                   vkvv_export_role_name(resource->export_role), outcome != nullptr ? outcome : "unknown", reason != nullptr ? reason : "none", returned_fd ? 1U : 0U);
     }
 
     void mark_export_predecode_nonpresentable(ExportResource* resource) {

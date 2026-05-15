@@ -54,7 +54,7 @@ namespace vkvv {
         const char* mutation_action = action != nullptr && std::strcmp(action, "nondisplay-present-pinned-skip") == 0 ? "skipped-client-shadow" : "none";
         VKVV_TRACE("export-present-state",
                    "action=%s surface=%u codec=0x%x stream=%llu fd_dev=%llu fd_ino=%llu content_gen=%llu present_shadow_gen=%llu private_shadow_gen=%llu "
-                   "decode_shadow_gen=%llu fd_exported=%u fd_content_gen=%llu may_be_sampled_by_client=%u detached_from_surface=%u present_gen=%llu presentable=%u "
+                   "decode_shadow_gen=%llu fd_exported=%u fd_content_gen=%llu may_be_sampled_by_client=%u fd_observable=%u detached_from_surface=%u present_gen=%llu presentable=%u "
                    "present_pinned=%u published_visible=%u decode_shadow_private_active=%u predecode=%u seeded=%u "
                    "predecode_quarantined=%u predecode_generation=%llu placeholder=%u export_role=%s export_intent=%s raw_export_flags=0x%x mem_type=0x%x had_va_begin=%u "
                    "had_decode_submit=%u refresh_export=%u display_visible=%u present_source=%s mutation_action=%s "
@@ -65,7 +65,8 @@ namespace vkvv {
                    static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(owner->private_decode_shadow.content_generation),
                    static_cast<unsigned long long>(resource->decode_shadow_generation), resource->exported_fd.fd_exported ? 1U : 0U,
                    static_cast<unsigned long long>(resource->exported_fd.fd_content_generation), export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U,
-                   resource->exported_fd.detached_from_surface ? 1U : 0U, static_cast<unsigned long long>(resource->present_generation), resource->presentable ? 1U : 0U,
+                   export_resource_fd_observable(resource) ? 1U : 0U, resource->exported_fd.detached_from_surface ? 1U : 0U,
+                   static_cast<unsigned long long>(resource->present_generation), resource->presentable ? 1U : 0U,
                    resource->present_pinned ? 1U : 0U, resource->published_visible ? 1U : 0U, resource->decode_shadow_private_active ? 1U : 0U,
                    resource->predecode_exported ? 1U : 0U, resource->predecode_seeded ? 1U : 0U, resource->predecode_quarantined ? 1U : 0U,
                    static_cast<unsigned long long>(resource->predecode_generation), resource->black_placeholder ? 1U : 0U, vkvv_export_role_name(resource->export_role),
@@ -96,7 +97,7 @@ namespace vkvv {
         }
         VKVV_TRACE("export-present-state",
                    "action=%s surface=%u codec=0x%x stream=%llu fd_dev=%llu fd_ino=%llu content_gen=0 present_shadow_gen=%llu private_shadow_gen=0 "
-                   "decode_shadow_gen=%llu fd_exported=%u fd_content_gen=%llu may_be_sampled_by_client=%u detached_from_surface=%u present_gen=%llu presentable=%u "
+                   "decode_shadow_gen=%llu fd_exported=%u fd_content_gen=%llu may_be_sampled_by_client=%u fd_observable=%u detached_from_surface=%u present_gen=%llu presentable=%u "
                    "present_pinned=%u published_visible=%u decode_shadow_private_active=%u predecode=%u seeded=%u predecode_quarantined=%u predecode_generation=%llu "
                    "placeholder=%u export_role=%s export_intent=%s raw_export_flags=0x%x mem_type=0x%x had_va_begin=%u had_decode_submit=%u refresh_export=1 display_visible=0 "
                    "present_source=%s mutation_action=none client_visible_shadow_mutated=0 client_visible_shadow=%u private_only=0 external_release_required=%u "
@@ -106,7 +107,8 @@ namespace vkvv {
                    static_cast<unsigned long long>(resource->fd_ino), static_cast<unsigned long long>(resource->content_generation),
                    static_cast<unsigned long long>(resource->decode_shadow_generation), resource->exported_fd.fd_exported ? 1U : 0U,
                    static_cast<unsigned long long>(resource->exported_fd.fd_content_generation), export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U,
-                   resource->exported_fd.detached_from_surface ? 1U : 0U, static_cast<unsigned long long>(resource->present_generation), resource->presentable ? 1U : 0U,
+                   export_resource_fd_observable(resource) ? 1U : 0U, resource->exported_fd.detached_from_surface ? 1U : 0U,
+                   static_cast<unsigned long long>(resource->present_generation), resource->presentable ? 1U : 0U,
                    resource->present_pinned ? 1U : 0U, resource->published_visible ? 1U : 0U, resource->decode_shadow_private_active ? 1U : 0U,
                    resource->predecode_exported ? 1U : 0U, resource->predecode_seeded ? 1U : 0U, resource->predecode_quarantined ? 1U : 0U,
                    static_cast<unsigned long long>(resource->predecode_generation), resource->black_placeholder ? 1U : 0U, vkvv_export_role_name(resource->export_role),
@@ -120,15 +122,16 @@ namespace vkvv {
         if (owner == nullptr || resource == nullptr) {
             return;
         }
-        const bool may_sample = export_resource_fd_may_be_sampled_by_client(resource);
-        const bool stale      = may_sample && owner->content_generation > resource->exported_fd.fd_content_generation;
+        const bool fd_observable = export_resource_fd_observable(resource);
+        const bool stale         = fd_observable && owner->content_generation > resource->exported_fd.fd_content_generation;
         VKVV_TRACE("exported-fd-freshness-check",
                    "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu fd_content_gen=%llu last_written_content_gen=%llu "
-                   "may_be_sampled_by_client=%u detached_from_surface=%u refresh_export=%u display_visible=%u action=%s",
+                   "may_be_sampled_by_client=%u fd_observable=%u detached_from_surface=%u refresh_export=%u display_visible=%u action=%s",
                    owner->surface_id, static_cast<unsigned long long>(owner->driver_instance_id), static_cast<unsigned long long>(owner->stream_id), owner->codec_operation,
                    static_cast<unsigned long long>(resource->exported_fd.fd_dev), static_cast<unsigned long long>(resource->exported_fd.fd_ino),
                    static_cast<unsigned long long>(owner->content_generation), static_cast<unsigned long long>(resource->exported_fd.fd_content_generation),
-                   static_cast<unsigned long long>(resource->exported_fd.last_written_content_generation), may_sample ? 1U : 0U,
+                   static_cast<unsigned long long>(resource->exported_fd.last_written_content_generation), export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U,
+                   fd_observable ? 1U : 0U,
                    resource->exported_fd.detached_from_surface ? 1U : 0U, refresh_export ? 1U : 0U, display_visible ? 1U : 0U, action != nullptr ? action : "unknown");
         if (stale) {
             VKVV_TRACE("invalid-stale-exported-fd", "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu action=%s", owner->surface_id,
@@ -966,12 +969,13 @@ namespace vkvv {
             }
             VKVV_TRACE("returned-fd-pixel-proof",
                        "surface=%u fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu pixel_source=%s returned_crc=0x%llx black_crc=0x%llx "
-                       "zero_crc=0x%llx is_black=%u is_zero=%u pixel_proof_valid=%u may_be_sampled_by_client=0 returned_fd=1 sample_bytes=0 proof_enabled=%u",
+                       "zero_crc=0x%llx is_black=%u is_zero=%u pixel_proof_valid=%u may_be_sampled_by_client=0 fd_observable=%u returned_fd=1 sample_bytes=0 proof_enabled=%u",
                        owner->surface_id, static_cast<unsigned long long>(fd.dev), static_cast<unsigned long long>(fd.ino), static_cast<unsigned long long>(owner->stream_id),
                        owner->codec_operation, static_cast<unsigned long long>(owner->content_generation),
                        static_cast<unsigned long long>(export_resource_fd_content_generation(resource)), vkvv_export_pixel_source_name(pixel_source),
                        static_cast<unsigned long long>(returned_crc), static_cast<unsigned long long>(resource->seed_black_crc),
                        static_cast<unsigned long long>(resource->seed_zero_crc), is_black ? 1U : 0U, is_zero ? 1U : 0U, pixel_proof_valid ? 1U : 0U,
+                       export_resource_fd_observable(resource) ? 1U : 0U,
                        export_pixel_proof_enabled() ? 1U : 0U);
             trace_pixel_proof_computed(owner->surface_id, fd.dev, fd.ino, export_resource_fd_content_generation(resource), pixel_source, returned_crc, resource->seed_black_crc,
                                        resource->seed_zero_crc, is_black, is_zero, 0, returned_state);
@@ -1009,12 +1013,13 @@ namespace vkvv {
         }
         VKVV_TRACE("returned-fd-pixel-proof",
                    "surface=%u fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu pixel_source=%s returned_crc=0x%llx black_crc=0x%llx "
-                   "zero_crc=0x%llx is_black=%u is_zero=%u pixel_proof_valid=%u may_be_sampled_by_client=%u returned_fd=1 sample_bytes=%llu proof_enabled=%u",
+                   "zero_crc=0x%llx is_black=%u is_zero=%u pixel_proof_valid=%u may_be_sampled_by_client=%u fd_observable=%u returned_fd=1 sample_bytes=%llu proof_enabled=%u",
                    owner->surface_id, static_cast<unsigned long long>(fd.dev), static_cast<unsigned long long>(fd.ino), static_cast<unsigned long long>(owner->stream_id),
                    owner->codec_operation, static_cast<unsigned long long>(owner->content_generation),
                    static_cast<unsigned long long>(export_resource_fd_content_generation(resource)), vkvv_export_pixel_source_name(pixel_source),
                    static_cast<unsigned long long>(crc_valid ? returned_crc : 0), static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc),
                    is_black ? 1U : 0U, is_zero ? 1U : 0U, pixel_proof_valid ? 1U : 0U, export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U,
+                   export_resource_fd_observable(resource) ? 1U : 0U,
                    static_cast<unsigned long long>(sample_bytes), export_pixel_proof_enabled() ? 1U : 0U);
         trace_pixel_proof_computed(owner->surface_id, fd.dev, fd.ino, export_resource_fd_content_generation(resource), pixel_source, crc_valid ? returned_crc : 0, black_crc,
                                    zero_crc, is_black, is_zero, sample_bytes, returned_state);
@@ -2182,7 +2187,8 @@ namespace vkvv {
                 target->exported_fd.fd_content_generation                   = seed_fd_content_generation;
                 target->exported_fd.last_written_content_generation         = seed_fd_content_generation;
                 target->exported_fd.detached_from_surface                   = false;
-                target->exported_fd.may_be_sampled_by_client                = false;
+                target->exported_fd.may_be_sampled_by_client                = export_resource_fd_observable(target);
+                trace_fd_observability(target, "predecode-target-seed");
                 target->presentable                                         = false;
                 target->present_pinned                                      = false;
                 target->published_visible                                   = false;

@@ -265,11 +265,12 @@ namespace {
         }
         VKVV_TRACE("export-fd-lifetime",
                    "event_action=%s surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu fd_content_gen=%llu present_gen=0 "
-                   "predecode_quarantined=0 may_be_sampled_by_client=%u generation_at_action=%llu",
+                   "predecode_quarantined=0 may_be_sampled_by_client=%u fd_observable=%u generation_at_action=%llu",
                    action != nullptr ? action : "unknown", surface->id, static_cast<unsigned long long>(resource->driver_instance_id),
                    static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, static_cast<unsigned long long>(fd_stat.dev),
                    static_cast<unsigned long long>(fd_stat.ino), static_cast<unsigned long long>(resource->content_generation),
-                   static_cast<unsigned long long>(resource->content_generation), may_be_sampled_by_client ? 1U : 0U, static_cast<unsigned long long>(generation_at_action));
+                   static_cast<unsigned long long>(resource->content_generation), may_be_sampled_by_client ? 1U : 0U, may_be_sampled_by_client ? 1U : 0U,
+                   static_cast<unsigned long long>(generation_at_action));
     }
 
     bool trace_decode_shadow_coherence_check(const SurfaceResource* resource, bool refresh_export, bool display_visible, const char* action) {
@@ -1022,7 +1023,9 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
             export_pixel_source_for_resource(resource, returned_resource) :
             (returned_fd && surface->decoded && resource->content_generation != 0 ? VkvvExportPixelSource::DecodedContent : VkvvExportPixelSource::None);
         const uint64_t fd_content_gen = returned_resource != nullptr ? export_resource_fd_content_generation(returned_resource) : (returned_fd ? resource->content_generation : 0);
-        const bool     may_sample     = returned_resource != nullptr ? export_resource_fd_may_be_sampled_by_client(returned_resource) : returned_fd;
+        const bool fd_observable = returned_resource != nullptr ?
+            export_resource_fd_observable(returned_resource) :
+            (returned_fd && (export_intent == VkvvExportIntent::ReadOnly || export_intent == VkvvExportIntent::ReadWrite));
         const bool     proof_black    = proof != nullptr && proof->pixel_crc != 0 && proof->black_crc != 0 && proof->pixel_crc == proof->black_crc;
         const bool     proof_zero     = proof != nullptr && proof->pixel_crc != 0 && proof->zero_crc != 0 && proof->pixel_crc == proof->zero_crc;
         const bool     placeholder =
@@ -1036,7 +1039,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         const VkvvExportRole summary_role = effective_export_role_for_source(export_role, pixel_source, valid_decoded_pixels_available, valid_seed_available, returned_resource);
         VKVV_TRACE("export-validity-gate",
                    "surface=%u driver=%llu stream=%llu codec=0x%x profile=0 width=%u height=%u fourcc=0x%x content_gen=%llu decoded=%u pending_decode=%u refresh_export=%u "
-                   "display_visible=%u fd_already_exported=%u fd_dev=%llu fd_ino=%llu fd_content_gen=%llu may_be_sampled_by_client=%u valid_decoded_pixels_available=%u "
+                   "display_visible=%u fd_already_exported=%u fd_dev=%llu fd_ino=%llu fd_content_gen=%llu may_be_sampled_by_client=%u fd_observable=%u valid_decoded_pixels_available=%u "
                    "valid_seed_available=%u placeholder_available=%u retained_candidate_available=%u export_role=%s export_intent=%s raw_export_flags=0x%x mem_type=0x%x "
                    "had_va_begin=%u had_decode_submit=%u decision=%s reason=%s returned_fd=%u status=%d",
                    surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
@@ -1044,14 +1047,14 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                    pending_before_export.found ? 1U : 0U, surface->decoded ? 1U : 0U, surface->decoded ? 1U : 0U, fd_already_exported_before ? 1U : 0U,
                    static_cast<unsigned long long>(fd_stat.valid ? fd_stat.dev : (returned_resource != nullptr ? returned_resource->exported_fd.fd_dev : 0)),
                    static_cast<unsigned long long>(fd_stat.valid ? fd_stat.ino : (returned_resource != nullptr ? returned_resource->exported_fd.fd_ino : 0)),
-                   static_cast<unsigned long long>(fd_content_gen), may_sample ? 1U : 0U, valid_decoded_pixels_available ? 1U : 0U, valid_seed_available ? 1U : 0U,
+                   static_cast<unsigned long long>(fd_content_gen), fd_observable ? 1U : 0U, fd_observable ? 1U : 0U, valid_decoded_pixels_available ? 1U : 0U, valid_seed_available ? 1U : 0U,
                    placeholder ? 1U : 0U, resource->export_retained_attached ? 1U : 0U, vkvv_export_role_name(summary_role), vkvv_export_intent_name(export_intent), flags,
                    export_mem_type, surface->had_va_begin ? 1U : 0U, surface->had_decode_submit ? 1U : 0U, decision != nullptr ? decision : "fail",
                    trace_reason != nullptr ? trace_reason : "unknown", returned_fd ? 1U : 0U, status);
         VKVV_TRACE("generic-export-summary",
                    "surface=%u stream=%llu codec=0x%x width=%u height=%u fourcc=0x%x content_gen=%llu fd_content_gen=%llu returned_fd=%u decision=%s pixel_source=%s "
                    "pixel_proof_valid=%u is_black=%u is_zero=%u pending_decode=%u valid_seed_available=%u quarantine_outcome=%s external_release_mode=%s status=%d "
-                   "va_status=%d actual_mem_type_supported=%u policy_status=%s may_be_sampled_by_client=%u export_role=%s export_intent=%s raw_export_flags=0x%x "
+                   "va_status=%d actual_mem_type_supported=%u policy_status=%s may_be_sampled_by_client=%u fd_observable=%u export_role=%s export_intent=%s raw_export_flags=0x%x "
                    "mem_type=0x%x had_va_begin=%u had_decode_submit=%u",
                    surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, surface->width, surface->height, resource->va_fourcc,
                    static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(fd_content_gen), returned_fd ? 1U : 0U,
@@ -1059,8 +1062,8 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                    proof_black || pixel_source == VkvvExportPixelSource::Placeholder ? 1U : 0U, proof_zero ? 1U : 0U, pending_before_export.found ? 1U : 0U,
                    valid_seed_available ? 1U : 0U, returned_resource != nullptr && returned_resource->predecode_quarantined ? "pending" : "none",
                    returned_resource != nullptr ? vkvv_external_release_mode_name(returned_resource->external_sync.release_mode) : "none", status, status,
-                   actual_mem_type_supported ? 1U : 0U, policy_status, may_sample ? 1U : 0U, vkvv_export_role_name(summary_role), vkvv_export_intent_name(export_intent),
-                   flags, export_mem_type, surface->had_va_begin ? 1U : 0U, surface->had_decode_submit ? 1U : 0U);
+                   actual_mem_type_supported ? 1U : 0U, policy_status, fd_observable ? 1U : 0U, fd_observable ? 1U : 0U, vkvv_export_role_name(summary_role),
+                   vkvv_export_intent_name(export_intent), flags, export_mem_type, surface->had_va_begin ? 1U : 0U, surface->had_decode_submit ? 1U : 0U);
     };
     VAStatus drain_status = drain_pending_surface_work_before_sync_command(runtime, const_cast<VkvvSurface*>(surface), reason, reason_size);
     trace_drain_attempt(drain_status);
@@ -1288,9 +1291,6 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         exported_shadow->fd_ino              = fd_stat.ino;
         const uint64_t fd_content_generation = exported_shadow->predecode_seeded ? exported_shadow->seed_source_generation : exported_shadow->content_generation;
         mark_export_fd_returned(exported_shadow, fd_stat, fd_content_generation);
-        if (export_role == VkvvExportRole::PredecodeTarget) {
-            exported_shadow->exported_fd.may_be_sampled_by_client = false;
-        }
         if (!surface->decoded) {
             mark_export_predecode_nonpresentable(exported_shadow);
             enter_predecode_quarantine(resource, exported_shadow);
@@ -1306,12 +1306,13 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
             if (seeded_predecode && export_role == VkvvExportRole::PredecodeTarget) {
                 VKVV_TRACE("predecode-target-export-return",
                            "surface=%u driver=%llu fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu presentable=0 published_visible=0 "
-                           "predecode_quarantined=1 may_be_sampled_by_client=0 seed_used=1 seed_source_surface=%u seed_source_generation=%llu export_role=%s "
+                           "predecode_quarantined=1 may_be_sampled_by_client=%u fd_observable=%u seed_used=1 seed_source_surface=%u seed_source_generation=%llu export_role=%s "
                            "export_intent=%s status=0",
                            surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(fd_stat.dev),
                            static_cast<unsigned long long>(fd_stat.ino), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                            static_cast<unsigned long long>(resource->content_generation),
-                           static_cast<unsigned long long>(export_resource_fd_content_generation(exported_shadow)), exported_shadow->seed_source_surface_id,
+                           static_cast<unsigned long long>(export_resource_fd_content_generation(exported_shadow)), export_resource_fd_may_be_sampled_by_client(exported_shadow) ? 1U : 0U,
+                           export_resource_fd_observable(exported_shadow) ? 1U : 0U, exported_shadow->seed_source_surface_id,
                            static_cast<unsigned long long>(exported_shadow->seed_source_generation), vkvv_export_role_name(export_role), vkvv_export_intent_name(export_intent));
                 VKVV_TRACE("predecode-target-export-returned",
                            "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu seed_used=1 fd_content_gen=%llu",
@@ -1332,11 +1333,12 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                 } else if (export_role == VkvvExportRole::PredecodeTarget) {
                     VKVV_TRACE("predecode-target-export-return",
                                "surface=%u driver=%llu fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu presentable=0 published_visible=0 "
-                               "predecode_quarantined=1 may_be_sampled_by_client=0 seed_used=0 export_role=%s export_intent=%s status=0",
+                               "predecode_quarantined=1 may_be_sampled_by_client=%u fd_observable=%u seed_used=0 export_role=%s export_intent=%s status=0",
                                surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(fd_stat.dev),
                                static_cast<unsigned long long>(fd_stat.ino), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                                static_cast<unsigned long long>(resource->content_generation),
-                               static_cast<unsigned long long>(export_resource_fd_content_generation(exported_shadow)), vkvv_export_role_name(export_role),
+                               static_cast<unsigned long long>(export_resource_fd_content_generation(exported_shadow)), export_resource_fd_may_be_sampled_by_client(exported_shadow) ? 1U : 0U,
+                               export_resource_fd_observable(exported_shadow) ? 1U : 0U, vkvv_export_role_name(export_role),
                                vkvv_export_intent_name(export_intent));
                     VKVV_TRACE("predecode-target-export-returned",
                                "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu seed_used=0 fd_content_gen=%llu",
@@ -1381,7 +1383,8 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         returned_proof.fd                       = fd;
         returned_proof.fd_dev                   = fd_stat.dev;
         returned_proof.fd_ino                   = fd_stat.ino;
-        returned_proof.may_be_sampled_by_client = fd_stat.valid;
+        returned_proof.may_be_sampled_by_client =
+            fd_stat.valid && (export_intent == VkvvExportIntent::ReadOnly || export_intent == VkvvExportIntent::ReadWrite);
         returned_proof.surface_id               = surface->id;
         returned_proof.stream_id                = resource->stream_id;
         returned_proof.codec_operation          = resource->codec_operation;
@@ -1391,10 +1394,10 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         returned_proof.decoded_pixels_valid     = surface->decoded && resource->content_generation != 0;
         VKVV_TRACE("returned-fd-pixel-proof",
                    "surface=%u fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu pixel_source=%s returned_crc=0x0 black_crc=0x0 zero_crc=0x0 "
-                   "is_black=0 is_zero=0 pixel_proof_valid=0 may_be_sampled_by_client=%u returned_fd=1 sample_bytes=0 proof_enabled=0",
+                   "is_black=0 is_zero=0 pixel_proof_valid=0 may_be_sampled_by_client=%u fd_observable=%u returned_fd=1 sample_bytes=0 proof_enabled=0",
                    surface->id, static_cast<unsigned long long>(fd_stat.dev), static_cast<unsigned long long>(fd_stat.ino), static_cast<unsigned long long>(resource->stream_id),
                    resource->codec_operation, static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->content_generation),
-                   vkvv_export_pixel_source_name(pixel_source), fd_stat.valid ? 1U : 0U);
+                   vkvv_export_pixel_source_name(pixel_source), returned_proof.may_be_sampled_by_client ? 1U : 0U, returned_proof.may_be_sampled_by_client ? 1U : 0U);
         trace_direct_export_fd_lifetime(surface, resource, fd_stat, "return", resource->content_generation, fd_stat.valid);
     }
     trace_export_summary(exported_shadow, &returned_proof, true, fd_stat, decision, "success", VA_STATUS_SUCCESS);

@@ -628,6 +628,7 @@ namespace vkvv {
     bool                surface_resource_has_current_decode_shadow(const SurfaceResource* resource);
     bool                av1_visible_export_requires_copy(const SurfaceResource* resource);
     bool                export_visible_release_satisfied(const ExportResource* resource);
+    bool                export_resource_fd_observable(const ExportResource* resource);
     bool                export_resource_fd_may_be_sampled_by_client(const ExportResource* resource);
     uint64_t            export_resource_fd_content_generation(const ExportResource* resource);
     bool                export_resource_fd_fresh(const SurfaceResource* resource);
@@ -642,6 +643,7 @@ namespace vkvv {
     void                  mark_export_fd_returned(ExportResource* resource, const VkvvFdIdentity& fd, uint64_t content_generation);
     void                  mark_export_fd_written(ExportResource* resource, uint64_t content_generation);
     void                  mark_export_fd_detached(ExportResource* resource);
+    void                  trace_fd_observability(const ExportResource* resource, const char* reason);
     void                  mark_export_predecode_nonpresentable(ExportResource* resource);
     void                  pin_export_visible_present(SurfaceResource* owner, ExportResource* resource, VkvvExportPresentSource source);
     ExportResource*       client_present_shadow(SurfaceResource* resource);

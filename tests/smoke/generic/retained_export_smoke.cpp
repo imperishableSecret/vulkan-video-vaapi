@@ -471,6 +471,7 @@ namespace {
         resource.export_resource.image              = fake_handle<VkImage>(1);
         resource.export_resource.memory             = fake_handle<VkDeviceMemory>(2);
         resource.export_resource.exported           = true;
+        resource.export_resource.export_intent      = vkvv::VkvvExportIntent::ReadOnly;
         resource.export_resource.content_generation = 4;
 
         VkvvFdIdentity fd{};
@@ -479,6 +480,7 @@ namespace {
         fd.ino   = 22;
         vkvv::mark_export_fd_returned(&resource.export_resource, fd, 4);
         ok &= check(vkvv::export_resource_fd_may_be_sampled_by_client(&resource.export_resource), "returned export fd was not marked client-sampleable");
+        ok &= check(vkvv::export_resource_fd_observable(&resource.export_resource), "returned read-only export fd was not observable");
         ok &= check(vkvv::export_resource_fd_content_generation(&resource.export_resource) == 4, "returned export fd generation mismatch");
         ok &= check(!vkvv::export_resource_fd_fresh(&resource), "stale exported fd was treated as fresh");
 
@@ -535,6 +537,7 @@ namespace {
         source.export_resource.image              = fake_handle<VkImage>(3);
         source.export_resource.memory             = fake_handle<VkDeviceMemory>(4);
         source.export_resource.exported           = true;
+        source.export_resource.export_intent      = vkvv::VkvvExportIntent::ReadOnly;
         source.export_resource.content_generation = source.content_generation;
 
         VkvvFdIdentity fd{};
