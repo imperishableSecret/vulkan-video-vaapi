@@ -48,6 +48,8 @@ nvidia-vulkan-vaapi: trace seq=36 event=export-copy-proof codec=0x8 surface=7 so
 nvidia-vulkan-vaapi: trace seq=37 event=export-present-state action=visible-present-pin surface=7 codec=0x8 stream=1 fd_dev=11 fd_ino=22 content_gen=1 shadow_gen=1 present_gen=1 presentable=1 present_pinned=1 published_visible=1 predecode=0 seeded=0 placeholder=0 refresh_export=1 display_visible=1 present_source=visible-refresh client_visible_shadow=1
 nvidia-vulkan-vaapi: trace seq=38 event=visible-output-proof codec=0x8 surface=7 content_gen=1 order_hint_or_frame_num=1 published_path=exported-shadow published_gen=1 previous_visible_surface=4294967295 previous_visible_gen=0 published_matches_previous=0
 nvidia-vulkan-vaapi: trace seq=39 event=export-seed-register codec=0x8 stream=1 source_surface=7 source_content_gen=1 source_shadow_gen=1 visible=1 refresh_export=1 published=1
+nvidia-vulkan-vaapi: trace seq=39 event=stream-seed-update surface=7 driver=2 stream=1 codec=0x8 fourcc=0x30313050 visible_width=3840 visible_height=2160 coded_width=3840 coded_height=2160 session_generation=1 present_gen=1 fd_content_gen=1 pixel_crc=0x20 pixel_identity_valid=1 pixel_content_valid=1 valid=1 source_safe=1
+nvidia-vulkan-vaapi: trace seq=39 event=stream-seed-invalidated surface=7 driver=2 stream=1 codec=0x8 present_gen=1 fd_content_gen=1 reason=source-detached
 nvidia-vulkan-vaapi: trace seq=40 event=export-present-state action=nondisplay-private-shadow-refresh surface=7 codec=0x8 stream=1 fd_dev=11 fd_ino=22 content_gen=3 present_shadow_gen=2 private_shadow_gen=3 decode_shadow_gen=3 present_gen=2 presentable=1 present_pinned=1 published_visible=1 decode_shadow_private_active=1 predecode=0 seeded=0 placeholder=0 refresh_export=0 display_visible=0 present_source=visible-refresh mutation_action=none client_visible_shadow_mutated=0 client_visible_shadow=1 private_only=0
 nvidia-vulkan-vaapi: trace seq=41 event=decode-shadow-coherence-check surface=7 driver=2 stream=1 codec=0x8 content_gen=3 refresh_export=0 display_visible=0 present_pinned=1 present_shadow_gen=2 private_shadow_gen=3 decode_shadow_gen=3 coherent=1 action=private-shadow-refresh
 nvidia-vulkan-vaapi: trace seq=42 event=decode-shadow-coherence-check surface=7 driver=2 stream=1 codec=0x8 content_gen=1 refresh_export=1 display_visible=1 present_pinned=1 present_shadow_gen=1 private_shadow_gen=0 decode_shadow_gen=1 coherent=1 action=visible-refresh
@@ -146,7 +148,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 85, "trace record count mismatch")
+    check(data["trace_records"] == 87, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -185,6 +187,15 @@ def main() -> int:
           and "presentation_separate=1" in FIXTURE,
           "observable fd decode refresh fixture missing")
     check(totals["predecode_export_policy_events"] == 2, "predecode export policy aggregate mismatch")
+    check(
+        data["events"].get("stream-seed-update") == 1 and data["events"].get("stream-seed-invalidated") == 1,
+        "stream seed registry telemetry count mismatch",
+    )
+    check(
+        "event=stream-seed-update" in FIXTURE and "present_gen=1 fd_content_gen=1" in FIXTURE and "pixel_identity_valid=1 pixel_content_valid=1 valid=1 source_safe=1" in FIXTURE,
+        "stream seed update fixture missing",
+    )
+    check("event=stream-seed-invalidated" in FIXTURE and "reason=source-detached" in FIXTURE, "stream seed invalidation fixture missing")
     check(totals["predecode_stream_local_seeds"] == 1 and totals["predecode_neutral_placeholders"] == 1, "predecode policy action aggregate mismatch")
     check(totals["export_validity_gates"] == 3 and totals["generic_export_summaries"] == 4, "generic export telemetry aggregate mismatch")
     check(totals["generic_export_placeholder_black_sampled"] == 0, "generic export placeholder aggregate mismatch")

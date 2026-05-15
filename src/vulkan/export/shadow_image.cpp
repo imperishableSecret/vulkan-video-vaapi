@@ -1693,6 +1693,74 @@ namespace vkvv {
             record.va_fourcc == target->va_fourcc && record.coded_extent.width == target->coded_extent.width && record.coded_extent.height == target->coded_extent.height;
     }
 
+    bool stream_seed_record_matches_domain(const StreamSeedRecord& record, const SurfaceResource* resource) {
+        return resource != nullptr && record.driver_instance_id == resource->driver_instance_id && record.stream_id == resource->stream_id &&
+            record.codec_operation == resource->codec_operation && record.format == resource->format && record.va_fourcc == resource->va_fourcc &&
+            record.visible_extent.width == resource->visible_extent.width && record.visible_extent.height == resource->visible_extent.height &&
+            record.coded_extent.width == resource->coded_extent.width && record.coded_extent.height == resource->coded_extent.height;
+    }
+
+    void remember_stream_seed_resource_locked(VulkanRuntime* runtime, SurfaceResource* resource) {
+        if (runtime == nullptr || resource == nullptr || resource->content_generation == 0 || !surface_resource_has_published_visible_output(resource)) {
+            return;
+        }
+
+        for (size_t i = 0; i < runtime->stream_seed_records.size();) {
+            if (stream_seed_record_matches_domain(runtime->stream_seed_records[i], resource)) {
+                runtime->stream_seed_records.erase(runtime->stream_seed_records.begin() + static_cast<std::ptrdiff_t>(i));
+                continue;
+            }
+            i++;
+        }
+
+        const SeedPixelProofState source_pixel_proof = predecode_seed_source_pixel_proof_state(resource);
+        const bool                source_safe        = predecode_seed_source_safe_for_client(resource);
+        StreamSeedRecord          record{};
+        record.valid                 = source_safe && source_pixel_proof.identity_valid && source_pixel_proof.content_valid;
+        record.driver_instance_id    = resource->driver_instance_id;
+        record.stream_id             = resource->stream_id;
+        record.codec_operation       = resource->codec_operation;
+        record.format                = resource->format;
+        record.va_fourcc             = resource->va_fourcc;
+        record.visible_extent        = resource->visible_extent;
+        record.coded_extent          = resource->coded_extent;
+        record.session_generation    = resource->stream_id;
+        record.resource              = resource;
+        record.surface_id            = resource->surface_id;
+        record.present_generation    = resource->export_resource.present_generation;
+        record.fd_content_generation = export_resource_fd_content_generation(&resource->export_resource);
+        record.pixel_crc             = source_pixel_proof.crc;
+        record.pixel_identity_valid  = source_pixel_proof.identity_valid;
+        record.pixel_content_valid   = source_pixel_proof.content_valid;
+        runtime->stream_seed_records.push_back(record);
+        VKVV_TRACE("stream-seed-update",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x fourcc=0x%x visible_width=%u visible_height=%u coded_width=%u coded_height=%u "
+                   "session_generation=%llu present_gen=%llu fd_content_gen=%llu pixel_crc=0x%llx pixel_identity_valid=%u pixel_content_valid=%u valid=%u "
+                   "source_safe=%u",
+                   resource->surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                   resource->codec_operation, resource->va_fourcc, resource->visible_extent.width, resource->visible_extent.height, resource->coded_extent.width,
+                   resource->coded_extent.height, static_cast<unsigned long long>(record.session_generation), static_cast<unsigned long long>(record.present_generation),
+                   static_cast<unsigned long long>(record.fd_content_generation), static_cast<unsigned long long>(record.pixel_crc), record.pixel_identity_valid ? 1U : 0U,
+                   record.pixel_content_valid ? 1U : 0U, record.valid ? 1U : 0U, source_safe ? 1U : 0U);
+    }
+
+    void invalidate_stream_seed_resource_locked(VulkanRuntime* runtime, SurfaceResource* resource) {
+        if (runtime == nullptr || resource == nullptr) {
+            return;
+        }
+        for (StreamSeedRecord& record : runtime->stream_seed_records) {
+            if (record.resource != resource) {
+                continue;
+            }
+            record.valid    = false;
+            record.resource = nullptr;
+            VKVV_TRACE("stream-seed-invalidated",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x present_gen=%llu fd_content_gen=%llu reason=source-detached",
+                       record.surface_id, static_cast<unsigned long long>(record.driver_instance_id), static_cast<unsigned long long>(record.stream_id),
+                       record.codec_operation, static_cast<unsigned long long>(record.present_generation), static_cast<unsigned long long>(record.fd_content_generation));
+        }
+    }
+
     void remember_export_seed_resource_locked(VulkanRuntime* runtime, SurfaceResource* resource) {
         if (runtime == nullptr || !export_seed_source_valid(resource)) {
             return;
@@ -1725,12 +1793,14 @@ namespace vkvv {
                    resource->codec_operation, static_cast<unsigned long long>(resource->stream_id), resource->surface_id,
                    static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->export_resource.content_generation),
                    surface_resource_has_published_visible_output(resource) ? 1U : 0U);
+        remember_stream_seed_resource_locked(runtime, resource);
     }
 
     void unregister_export_seed_resource_locked(VulkanRuntime* runtime, SurfaceResource* resource) {
         if (runtime == nullptr || resource == nullptr) {
             return;
         }
+        invalidate_stream_seed_resource_locked(runtime, resource);
         for (size_t i = 0; i < runtime->export_seed_records.size();) {
             const ExportSeedRecord& record = runtime->export_seed_records[i];
             if (record.resource == resource ||

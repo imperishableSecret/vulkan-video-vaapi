@@ -265,20 +265,19 @@ namespace {
         }
         uint64_t visible_generation = 0;
         std::lock_guard<std::mutex> export_lock(runtime->export_mutex);
-        for (const ExportSeedRecord& record : runtime->export_seed_records) {
-            const SurfaceResource* source = record.resource;
-            if (source == nullptr || source == target) {
+        for (const StreamSeedRecord& record : runtime->stream_seed_records) {
+            if (record.resource == target) {
                 continue;
             }
             const bool same_domain = record.driver_instance_id == target->driver_instance_id && record.stream_id == target->stream_id &&
                 record.codec_operation == target->codec_operation && record.format == target->format && record.va_fourcc == target->va_fourcc &&
                 record.coded_extent.width == target->coded_extent.width && record.coded_extent.height == target->coded_extent.height;
             const bool same_visible =
-                source->visible_extent.width == target->visible_extent.width && source->visible_extent.height == target->visible_extent.height;
+                record.visible_extent.width == target->visible_extent.width && record.visible_extent.height == target->visible_extent.height;
             if (!same_domain || !same_visible) {
                 continue;
             }
-            visible_generation = std::max<uint64_t>(visible_generation, record.content_generation);
+            visible_generation = std::max<uint64_t>(visible_generation, record.present_generation);
         }
         return visible_generation;
     }

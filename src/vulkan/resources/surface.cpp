@@ -185,6 +185,7 @@ namespace vkvv {
         std::lock_guard<std::mutex> lock(export_mutex);
         predecode_exports.clear();
         export_seed_records.clear();
+        stream_seed_records.clear();
         for (RetainedExportBacking& backing : retained_exports) {
             destroy_export_resource(this, &backing.resource);
         }

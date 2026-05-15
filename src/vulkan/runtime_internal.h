@@ -521,6 +521,25 @@ namespace vkvv {
         uint64_t                      content_generation = 0;
     };
 
+    struct StreamSeedRecord {
+        bool                          valid                 = false;
+        uint64_t                      driver_instance_id    = 0;
+        uint64_t                      stream_id             = 0;
+        VkVideoCodecOperationFlagsKHR codec_operation       = 0;
+        VkFormat                      format                = VK_FORMAT_UNDEFINED;
+        unsigned int                  va_fourcc             = 0;
+        VkExtent2D                    visible_extent{};
+        VkExtent2D                    coded_extent{};
+        uint64_t                      session_generation    = 0;
+        SurfaceResource*              resource              = nullptr;
+        VASurfaceID                   surface_id            = VA_INVALID_ID;
+        uint64_t                      present_generation    = 0;
+        uint64_t                      fd_content_generation = 0;
+        uint64_t                      pixel_crc             = 0;
+        bool                          pixel_identity_valid  = false;
+        bool                          pixel_content_valid   = false;
+    };
+
     class VulkanRuntime {
       public:
         ~VulkanRuntime();
@@ -578,6 +597,7 @@ namespace vkvv {
         std::vector<PredecodeExportRecord> predecode_exports;
         std::vector<RetainedExportBacking> retained_exports;
         std::vector<ExportSeedRecord>      export_seed_records;
+        std::vector<StreamSeedRecord>      stream_seed_records;
         VkDeviceSize                       retained_export_memory_bytes  = 0;
         VkDeviceSize                       retained_export_memory_budget = 64ull * 1024ull * 1024ull;
         size_t                             retained_export_count_limit   = 4;
