@@ -84,6 +84,8 @@ nvidia-vulkan-vaapi: trace seq=70 event=bootstrap-export-destroyed-unused surfac
 nvidia-vulkan-vaapi: trace seq=71 event=predecode-quarantine-outcome surface=8 fd_dev=33 fd_ino=44 stream=2 codec=0x4 age_ms=9 content_gen=1 fd_content_gen=1 decoded=1 had_va_begin=0 had_decode_submit=0 had_visible_decode=0 may_be_sampled_by_client=1 export_role=bootstrap outcome=bootstrap-upgraded reason=valid-pixels returned_fd=1
 nvidia-vulkan-vaapi: trace seq=72 event=export-seed-candidate target_surface=11 candidate_surface=10 same_driver=1 same_stream=1 same_codec=1 same_fourcc=1 same_visible_extent=1 same_coded_extent=1 same_sequence_generation=0 same_session_generation=1 candidate_present_gen=0 candidate_fd_content_gen=0 candidate_external_release_ok=0 candidate_pixel_source=placeholder candidate_pixel_identity_valid=1 candidate_pixel_content_valid=0 candidate_pixel_color_state=black candidate_pixel_proof_state=black candidate_pixel_proof_valid=0 candidate_is_black=1 candidate_is_zero=0 candidate_valid=0 reject_reason=bootstrap-placeholder
 nvidia-vulkan-vaapi: trace seq=73 event=bootstrap-export-unavailable surface=12 driver=2 stream=0 codec=0x0 reason=ensure-export-resource-failed status=20
+nvidia-vulkan-vaapi: trace seq=74 event=export-validity-gate surface=13 driver=2 stream=1 codec=0x8 profile=0 width=3840 height=2160 fourcc=0x30313050 content_gen=0 decoded=0 pending_decode=0 refresh_export=0 display_visible=0 fd_already_exported=0 fd_dev=0 fd_ino=0 fd_content_gen=0 may_be_sampled_by_client=0 valid_decoded_pixels_available=0 valid_seed_available=0 placeholder_available=1 retained_candidate_available=0 export_role=sampleable-presentation export_intent=read-only raw_export_flags=0x5 mem_type=0x40000000 had_va_begin=1 had_decode_submit=0 decision=fail reason=no-valid-decoded-or-seed-pixels returned_fd=0 status=18
+nvidia-vulkan-vaapi: trace seq=75 event=generic-export-summary surface=13 stream=1 codec=0x8 width=3840 height=2160 fourcc=0x30313050 content_gen=0 fd_content_gen=0 returned_fd=0 decision=fail pixel_source=placeholder pixel_proof_valid=0 is_black=1 is_zero=0 pending_decode=0 valid_seed_available=0 quarantine_outcome=pending external_release_mode=none status=18 may_be_sampled_by_client=0 export_role=sampleable-presentation export_intent=read-only raw_export_flags=0x5 mem_type=0x40000000 had_va_begin=1 had_decode_submit=0
 [1:2:0512/000000.000000:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:3552] vaEndPicture failed, VA error: operation failed
 nvidia-vulkan-vaapi: device-lost call=vkWaitForFences operation=AV1 decode result=-4 decode_submitted=1 decode_completed=0
 """
@@ -136,7 +138,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 75, "trace record count mismatch")
+    check(data["trace_records"] == 77, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -173,7 +175,7 @@ def main() -> int:
     check(totals["nondisplay_exported_fd_refreshes"] == 1, "nondisplay exported fd refresh aggregate mismatch")
     check(totals["predecode_export_policy_events"] == 2, "predecode export policy aggregate mismatch")
     check(totals["predecode_stream_local_seeds"] == 1 and totals["predecode_neutral_placeholders"] == 1, "predecode policy action aggregate mismatch")
-    check(totals["export_validity_gates"] == 2 and totals["generic_export_summaries"] == 3, "generic export telemetry aggregate mismatch")
+    check(totals["export_validity_gates"] == 3 and totals["generic_export_summaries"] == 4, "generic export telemetry aggregate mismatch")
     check(totals["generic_export_placeholder_black_sampled"] == 0, "generic export placeholder aggregate mismatch")
     check(totals["generic_export_seed_invalid"] == 0 and totals["generic_export_decoded_invalid"] == 0, "generic export invalid proof aggregate mismatch")
     check(totals["returned_fd_pixel_proofs"] == 1 and totals["returned_fd_placeholder_black"] == 0, "returned fd pixel proof aggregate mismatch")
@@ -208,6 +210,8 @@ def main() -> int:
     check("event=predecode-target-export-return" in FIXTURE and "seed_used=0" in FIXTURE and "may_be_sampled_by_client=0" in FIXTURE,
           "predecode target quarantined return fixture missing")
     check(data["events"].get("predecode-target-export-return") == 1, "predecode target return telemetry count mismatch")
+    check("export_role=sampleable-presentation" in FIXTURE and "decision=fail reason=no-valid-decoded-or-seed-pixels returned_fd=0 status=18" in FIXTURE,
+          "sampleable presentation failure fixture missing")
     check(
         data["events"].get("va-export-call") == 1
         and data["events"].get("export-role-decision") == 1
@@ -255,7 +259,7 @@ def main() -> int:
     check(codec["exported_fd_freshness_checks"] == 1 and codec["nondisplay_exported_fd_refreshes"] == 1, "codec exported fd freshness mismatch")
     check(codec["predecode_stream_local_seeds"] == 1 and codec["predecode_neutral_placeholders"] == 1, "codec predecode policy mismatch")
     check(
-        codec["export_validity_gates"] == 2
+        codec["export_validity_gates"] == 3
         and codec["generic_export_placeholder_black_sampled"] == 0
         and codec["generic_export_seed_invalid"] == 0
         and codec["generic_export_decoded_invalid"] == 0,
@@ -291,8 +295,8 @@ def main() -> int:
     check(stream["nondisplay_exported_fd_refreshes"] == 1, "stream nondisplay exported fd refresh mismatch")
     check(stream["predecode_stream_local_seeds"] == 1 and stream["predecode_neutral_placeholders"] == 1, "stream predecode policy mismatch")
     check(
-        stream["export_validity_gates"] == 2
-        and stream["generic_export_summaries"] == 2
+        stream["export_validity_gates"] == 3
+        and stream["generic_export_summaries"] == 3
         and stream["returned_fd_placeholder_black"] == 0
         and stream["predecode_quarantine_placeholder_returns"] == 0,
         "stream generic export mismatch",
@@ -320,7 +324,7 @@ def main() -> int:
     check("exported_fd_freshness_checks=1" in text_result.stdout, "text exported fd freshness aggregate missing")
     check("nondisplay_exported_fd_refreshes=1" in text_result.stdout, "text nondisplay exported fd refresh aggregate missing")
     check("predecode_stream_local_seeds=1" in text_result.stdout, "text predecode stream-local seed aggregate missing")
-    check("export_validity_gates=2" in text_result.stdout, "text export validity gate aggregate missing")
+    check("export_validity_gates=3" in text_result.stdout, "text export validity gate aggregate missing")
     check("generic_export_placeholder_black_sampled=0" in text_result.stdout, "text generic export placeholder aggregate missing")
     check("generic_export_seed_invalid=0" in text_result.stdout, "text generic export seed invalid aggregate missing")
     check("generic_export_decoded_invalid=0" in text_result.stdout, "text generic export decoded invalid aggregate missing")
