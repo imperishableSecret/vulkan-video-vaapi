@@ -18,7 +18,7 @@ namespace vkvv {
     const char* vkvv_export_copy_reason_name(VkvvExportCopyReason reason) {
         switch (reason) {
             case VkvvExportCopyReason::VisibleRefresh: return "visible-refresh";
-            case VkvvExportCopyReason::PredecodePlaceholderSeed: return "predecode-placeholder-seed";
+            case VkvvExportCopyReason::PredecodePlaceholderSeed: return "predecode-target-seed";
             case VkvvExportCopyReason::ImportOutput: return "import-output";
             case VkvvExportCopyReason::NondisplayCurrentRefresh: return "nondisplay-current-refresh";
             case VkvvExportCopyReason::NondisplayPrivateRefresh: return "nondisplay-private-refresh";
@@ -452,6 +452,11 @@ namespace vkvv {
         resource->seed_source_surface_id = VA_INVALID_ID;
         resource->seed_source_generation = 0;
         resource->seed_pixel_proof_valid = false;
+        resource->seed_pixel_crc         = 0;
+        resource->seed_black_crc         = 0;
+        resource->seed_zero_crc          = 0;
+        resource->seed_pixel_proof_state = VkvvPixelProofState::Unknown;
+        resource->seed_pixel_color_state = VkvvPixelColorState::Unknown;
     }
 
     void clear_predecode_quarantine_state(ExportResource* resource) {

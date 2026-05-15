@@ -169,6 +169,10 @@ namespace {
         if (valid_decoded_pixels || pixel_source == VkvvExportPixelSource::DecodedContent) {
             return VkvvExportRole::DecodedPresentation;
         }
+        if (requested_role == VkvvExportRole::PredecodeTarget &&
+            (valid_seed_pixels || pixel_source == VkvvExportPixelSource::StreamLocalSeed || pixel_source == VkvvExportPixelSource::Placeholder)) {
+            return VkvvExportRole::PredecodeTarget;
+        }
         if (valid_seed_pixels || pixel_source == VkvvExportPixelSource::StreamLocalSeed) {
             return VkvvExportRole::SeededPresentation;
         }
@@ -241,8 +245,13 @@ namespace {
         if (resource == nullptr || pixel_source != VkvvExportPixelSource::StreamLocalSeed) {
             return false;
         }
-        return resource->content_generation != 0 && resource->seed_source_generation != 0 && resource->content_generation == resource->seed_source_generation &&
-            resource->seed_pixel_proof_valid;
+        if (resource->seed_source_generation == 0 || !resource->seed_pixel_proof_valid) {
+            return false;
+        }
+        if (resource->predecode_exported && resource->predecode_seeded && resource->content_generation == 0) {
+            return true;
+        }
+        return resource->content_generation != 0 && resource->content_generation == resource->seed_source_generation;
     }
 
     bool export_source_is_placeholder(const ExportResource* resource, VkvvExportPixelSource pixel_source) {
@@ -1279,7 +1288,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         exported_shadow->fd_ino              = fd_stat.ino;
         const uint64_t fd_content_generation = exported_shadow->predecode_seeded ? exported_shadow->seed_source_generation : exported_shadow->content_generation;
         mark_export_fd_returned(exported_shadow, fd_stat, fd_content_generation);
-        if (predecode_target_placeholder_allowed) {
+        if (export_role == VkvvExportRole::PredecodeTarget) {
             exported_shadow->exported_fd.may_be_sampled_by_client = false;
         }
         if (!surface->decoded) {
@@ -1294,7 +1303,23 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                        pending_decode_before_export ? 1U : 0U, seeded_predecode ? "stream-local-seed" : "neutral-placeholder",
                        seeded_predecode ? exported_shadow->seed_source_surface_id : VA_INVALID_ID,
                        static_cast<unsigned long long>(seeded_predecode ? exported_shadow->seed_source_generation : 0), seeded_predecode ? 1U : 0U);
-            if (!seeded_predecode) {
+            if (seeded_predecode && export_role == VkvvExportRole::PredecodeTarget) {
+                VKVV_TRACE("predecode-target-export-return",
+                           "surface=%u driver=%llu fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu presentable=0 published_visible=0 "
+                           "predecode_quarantined=1 may_be_sampled_by_client=0 seed_used=1 seed_source_surface=%u seed_source_generation=%llu export_role=%s "
+                           "export_intent=%s status=0",
+                           surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(fd_stat.dev),
+                           static_cast<unsigned long long>(fd_stat.ino), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                           static_cast<unsigned long long>(resource->content_generation),
+                           static_cast<unsigned long long>(export_resource_fd_content_generation(exported_shadow)), exported_shadow->seed_source_surface_id,
+                           static_cast<unsigned long long>(exported_shadow->seed_source_generation), vkvv_export_role_name(export_role), vkvv_export_intent_name(export_intent));
+                VKVV_TRACE("predecode-target-export-returned",
+                           "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu seed_used=1 fd_content_gen=%llu",
+                           surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                           resource->codec_operation, static_cast<unsigned long long>(fd_stat.dev), static_cast<unsigned long long>(fd_stat.ino),
+                           static_cast<unsigned long long>(export_resource_fd_content_generation(exported_shadow)));
+                trace_predecode_quarantine_outcome(resource, exported_shadow, "predecode-target-returned", "stream-local-seed", true);
+            } else if (!seeded_predecode) {
                 if (exported_shadow->bootstrap_export) {
                     VKVV_TRACE("bootstrap-export-return",
                                "surface=%u driver=%llu fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu pixel_source=placeholder "
@@ -1313,6 +1338,11 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                                static_cast<unsigned long long>(resource->content_generation),
                                static_cast<unsigned long long>(export_resource_fd_content_generation(exported_shadow)), vkvv_export_role_name(export_role),
                                vkvv_export_intent_name(export_intent));
+                    VKVV_TRACE("predecode-target-export-returned",
+                               "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu seed_used=0 fd_content_gen=%llu",
+                               surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                               resource->codec_operation, static_cast<unsigned long long>(fd_stat.dev), static_cast<unsigned long long>(fd_stat.ino),
+                               static_cast<unsigned long long>(export_resource_fd_content_generation(exported_shadow)));
                     trace_predecode_quarantine_outcome(resource, exported_shadow, "predecode-target-returned", "non-sampleable-predecode", true);
                 } else {
                     trace_predecode_quarantine_outcome(resource, exported_shadow, "placeholder-returned", "debug-placeholder-export", true);

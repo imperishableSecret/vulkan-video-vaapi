@@ -103,8 +103,9 @@ def main() -> int:
     export_state_text = (root / "src" / "vulkan" / "export" / "state.cpp").read_text(encoding="utf-8")
     export_retained_text = (root / "src" / "vulkan" / "export" / "retained.cpp").read_text(encoding="utf-8")
     resource_text = (root / "src" / "vulkan" / "resources" / "surface.cpp").read_text(encoding="utf-8")
+    command_text = (root / "src" / "vulkan" / "command.cpp").read_text(encoding="utf-8")
     va_surface_text = (root / "src" / "va" / "surfaces.cpp").read_text(encoding="utf-8")
-    export_combined_text = export_text + "\n" + shadow_text + "\n" + export_state_text + "\n" + export_retained_text + "\n" + resource_text + "\n" + va_surface_text
+    export_combined_text = export_text + "\n" + shadow_text + "\n" + export_state_text + "\n" + export_retained_text + "\n" + resource_text + "\n" + command_text + "\n" + va_surface_text
     if '"av1-visible-output-check"' not in export_text:
         fail("AV1 visible output check trace is missing")
     for event in (
@@ -150,6 +151,8 @@ def main() -> int:
         '"predecode-quarantine-outcome"',
         '"generic-export-summary"',
         '"va-export-call"',
+        '"export-call-complete"',
+        '"export-call-incomplete"',
         '"export-role-decision"',
         '"bootstrap-export-return"',
         '"bootstrap-export-upgrade"',
@@ -157,6 +160,11 @@ def main() -> int:
         '"bootstrap-export-unavailable"',
         '"predecode-target-export-refused"',
         '"predecode-target-export-return"',
+        '"predecode-target-export-returned"',
+        '"predecode-target-seed-state"',
+        '"predecode-target-later-bound"',
+        '"predecode-target-later-decoded"',
+        '"seed-target-proof-failed"',
         '"debug-placeholder-export"',
         '"external-sync-proof"',
         '"predecode-quarantine-enter"',
@@ -275,7 +283,7 @@ def main() -> int:
         "nondisplay-private-refresh",
         "display_visible=",
         "mutation_action=skipped-client-shadow",
-        "predecode-placeholder-seed",
+        "predecode-target-seed",
         "visible-refresh",
         "visible-present-pin",
         "nondisplay-current-refresh",
@@ -298,7 +306,12 @@ def main() -> int:
         "predecode-target-needs-proven-seed",
         "predecode-target-returned",
         "return-predecode-target",
+        "return-seed",
+        "predecode-target-seeded",
         "seed_used=",
+        "seed_used=1",
+        "seed_source_surface=",
+        "seed_source_generation=",
         "failed-no-valid-source",
         "delay-if-pending",
         "drained-and-exported",
@@ -337,7 +350,6 @@ def main() -> int:
         "target_color_state=",
         "target_valid=",
         "pixel_proof_state=",
-        "target-does-not-match-source",
         "returned_crc=",
         "black_crc=",
         "zero_crc=",
@@ -370,9 +382,18 @@ def main() -> int:
         "source_content_gen=",
         "target_content_gen_before=",
         "target_content_gen_after=",
+        "target_fd_content_gen_after=",
+        "target_last_written_content_gen_after=",
+        "target_pixel_source=seed",
+        "target_shadow_pixel_gen=",
+        "target_predecode_quarantined=",
+        "target_predecode_exported=",
         "source_shadow_gen=",
         "target_shadow_gen_before=",
         "target_shadow_gen_after=",
+        "final_event=",
+        "ctx_stream=",
+        "ctx_codec=",
     ):
         if field not in export_combined_text:
             fail(f"export regression telemetry trace is missing field {field}")

@@ -199,6 +199,11 @@ namespace vkvv {
         VASurfaceID                   seed_source_surface_id        = VA_INVALID_ID;
         uint64_t                      seed_source_generation        = 0;
         bool                          seed_pixel_proof_valid        = false;
+        uint64_t                      seed_pixel_crc                = 0;
+        uint64_t                      seed_black_crc                = 0;
+        uint64_t                      seed_zero_crc                 = 0;
+        VkvvPixelProofState           seed_pixel_proof_state        = VkvvPixelProofState::Unknown;
+        VkvvPixelColorState           seed_pixel_color_state        = VkvvPixelColorState::Unknown;
         uint64_t                      content_generation            = 0;
         uint64_t                      decode_shadow_generation      = 0;
         bool                          decode_shadow_private_active  = false;

@@ -274,6 +274,12 @@ namespace vkvv {
         }
         if (resource != nullptr && resource->export_resource.image != VK_NULL_HANDLE) {
             if (resource->export_resource.predecode_quarantined) {
+                VKVV_TRACE("predecode-target-later-bound",
+                           "surface=%u driver=%llu stream=%llu codec=0x%x had_va_begin=%u ctx_stream=%llu ctx_codec=0x%x predecode_quarantined=1 fd_content_gen=%llu",
+                           surface != nullptr ? surface->id : VA_INVALID_ID, surface != nullptr ? static_cast<unsigned long long>(surface->driver_instance_id) : 0ULL,
+                           surface != nullptr ? static_cast<unsigned long long>(surface->stream_id) : 0ULL, surface != nullptr ? surface->codec_operation : 0U,
+                           surface != nullptr && surface->had_va_begin ? 1U : 0U, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                           static_cast<unsigned long long>(export_resource_fd_content_generation(&resource->export_resource)));
                 resource->export_resource.predecode_had_va_begin       = true;
                 resource->export_resource.predecode_had_decode_submit  = true;
                 resource->export_resource.predecode_had_visible_decode = resource->export_resource.predecode_had_visible_decode || refresh_export;
@@ -367,6 +373,13 @@ namespace vkvv {
             resource->content_generation++;
             if (resource->export_resource.predecode_quarantined && completed.refresh_export) {
                 resource->export_resource.predecode_had_visible_decode = true;
+            }
+            if (resource->export_resource.predecode_quarantined) {
+                VKVV_TRACE("predecode-target-later-decoded",
+                           "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu predecode_quarantined=1 refresh_export=%u",
+                           completed.surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                           resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                           static_cast<unsigned long long>(export_resource_fd_content_generation(&resource->export_resource)), completed.refresh_export ? 1U : 0U);
             }
             trace_export_fd_lifetime(resource, &resource->export_resource, "decode-complete", resource->content_generation,
                                      export_resource_fd_may_be_sampled_by_client(&resource->export_resource));

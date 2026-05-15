@@ -443,6 +443,32 @@ VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, u
     vkvv_trace("va-export-enter", "driver=%llu surface=%u active_stream=%llu active_codec=0x%x surface_stream=%llu surface_codec=0x%x decoded=%u pending=%u",
                (unsigned long long)drv->driver_instance_id, surface->id, (unsigned long long)drv->active_decode_stream_id, drv->active_decode_codec_operation,
                (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U, vkvv_surface_has_pending_work(surface) ? 1U : 0U);
+    struct ExportCallCompletionGuard {
+        VkvvDriver*  drv         = NULL;
+        VkvvSurface* surface     = NULL;
+        bool         completed   = false;
+        const char*  final_event = "va-export-enter";
+
+        ~ExportCallCompletionGuard() {
+            if (!completed && drv != NULL && surface != NULL) {
+                vkvv_trace("export-call-incomplete", "driver=%llu surface=%u final_event=%s stream=%llu codec=0x%x decoded=%u", (unsigned long long)drv->driver_instance_id,
+                           surface->id, final_event != NULL ? final_event : "unknown", (unsigned long long)surface->stream_id, surface->codec_operation,
+                           surface->decoded ? 1U : 0U);
+            }
+        }
+
+        VAStatus finish(VAStatus status, const char* event, unsigned int returned_fd) {
+            completed   = true;
+            final_event = event;
+            if (drv != NULL && surface != NULL) {
+                vkvv_trace("export-call-complete",
+                           "driver=%llu surface=%u export_role=unknown decision=%s returned_fd=%u status=%d stream=%llu codec=0x%x decoded=%u",
+                           (unsigned long long)drv->driver_instance_id, surface->id, event != NULL ? event : "unknown", returned_fd, status,
+                           (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U);
+            }
+            return status;
+        }
+    } export_call_guard{drv, surface};
     vkvv_trace("va-export-call",
                "driver=%llu surface=%u flags=0x%x mem_type=0x%x composed_layers=%u separate_layers=%u active_stream=%llu active_codec=0x%x surface_stream=%llu "
                "surface_codec=0x%x decoded=%u content_gen=0 pending_decode=%u had_va_begin=%u had_decode_submit=%u export_intent=%s",
@@ -463,10 +489,10 @@ VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, u
                    (unsigned long long)surface->stream_id, surface->codec_operation);
         VAStatus status = complete_vulkan_surface_work(drv, surface, VA_TIMEOUT_INFINITE);
         if (status != VA_STATUS_SUCCESS) {
-            return status;
+            return export_call_guard.finish(status, "drain-failed", 0);
         }
         if (vkvv_surface_has_pending_work(surface)) {
-            return VA_STATUS_ERROR_TIMEDOUT;
+            return export_call_guard.finish(VA_STATUS_ERROR_TIMEDOUT, "drain-timed-out", 0);
         }
     }
     if (drv->vulkan == NULL) {
@@ -474,7 +500,7 @@ VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, u
         drv->vulkan              = vkvv_get_or_create_vulkan_runtime(runtime_reason, sizeof(runtime_reason));
         vkvv_log("%s", runtime_reason);
         if (drv->vulkan == NULL) {
-            return VA_STATUS_ERROR_OPERATION_FAILED;
+            return export_call_guard.finish(VA_STATUS_ERROR_OPERATION_FAILED, "runtime-unavailable", 0);
         }
     }
 
@@ -482,14 +508,14 @@ VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, u
     VAStatus status      = vkvv_vulkan_prepare_surface_export(drv->vulkan, surface, reason, sizeof(reason));
     vkvv_log("%s", reason);
     if (status != VA_STATUS_SUCCESS) {
-        return status;
+        return export_call_guard.finish(status, "prepare-failed", 0);
     }
 
     status = vkvv_vulkan_export_surface(drv->vulkan, surface, flags, static_cast<VADRMPRIMESurfaceDescriptor*>(descriptor), reason, sizeof(reason));
     vkvv_log("%s", reason);
     vkvv_trace("va-export-return", "driver=%llu surface=%u status=%d stream=%llu codec=0x%x decoded=%u", (unsigned long long)drv->driver_instance_id, surface->id, status,
                (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U);
-    return status;
+    return export_call_guard.finish(status, status == VA_STATUS_SUCCESS ? "va-export-return" : "export-failed", status == VA_STATUS_SUCCESS ? 1U : 0U);
 }
 
 VAStatus vkvvSyncSurface2(VADriverContextP ctx, VASurfaceID surface, uint64_t timeout_ns) {

@@ -90,6 +90,32 @@ namespace vkvv {
         }
     }
 
+    void trace_predecode_target_present_state(const ExportResource* resource, const char* action) {
+        if (resource == nullptr) {
+            return;
+        }
+        VKVV_TRACE("export-present-state",
+                   "action=%s surface=%u codec=0x%x stream=%llu fd_dev=%llu fd_ino=%llu content_gen=0 present_shadow_gen=%llu private_shadow_gen=0 "
+                   "decode_shadow_gen=%llu fd_exported=%u fd_content_gen=%llu may_be_sampled_by_client=%u detached_from_surface=%u present_gen=%llu presentable=%u "
+                   "present_pinned=%u published_visible=%u decode_shadow_private_active=%u predecode=%u seeded=%u predecode_quarantined=%u predecode_generation=%llu "
+                   "placeholder=%u export_role=%s export_intent=%s raw_export_flags=0x%x mem_type=0x%x had_va_begin=%u had_decode_submit=%u refresh_export=1 display_visible=0 "
+                   "present_source=%s mutation_action=none client_visible_shadow_mutated=0 client_visible_shadow=%u private_only=0 external_release_required=%u "
+                   "external_release_done=%u external_release_mode=%s external_released_generation=%llu",
+                   action != nullptr ? action : "predecode-target-seeded", resource->owner_surface_id, resource->codec_operation,
+                   static_cast<unsigned long long>(resource->stream_id), static_cast<unsigned long long>(resource->fd_dev),
+                   static_cast<unsigned long long>(resource->fd_ino), static_cast<unsigned long long>(resource->content_generation),
+                   static_cast<unsigned long long>(resource->decode_shadow_generation), resource->exported_fd.fd_exported ? 1U : 0U,
+                   static_cast<unsigned long long>(resource->exported_fd.fd_content_generation), export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U,
+                   resource->exported_fd.detached_from_surface ? 1U : 0U, static_cast<unsigned long long>(resource->present_generation), resource->presentable ? 1U : 0U,
+                   resource->present_pinned ? 1U : 0U, resource->published_visible ? 1U : 0U, resource->decode_shadow_private_active ? 1U : 0U,
+                   resource->predecode_exported ? 1U : 0U, resource->predecode_seeded ? 1U : 0U, resource->predecode_quarantined ? 1U : 0U,
+                   static_cast<unsigned long long>(resource->predecode_generation), resource->black_placeholder ? 1U : 0U, vkvv_export_role_name(resource->export_role),
+                   vkvv_export_intent_name(resource->export_intent), resource->raw_export_flags, resource->export_mem_type, resource->predecode_had_va_begin ? 1U : 0U,
+                   resource->predecode_had_decode_submit ? 1U : 0U, vkvv_export_present_source_name(resource->present_source), resource->client_visible_shadow ? 1U : 0U,
+                   resource->external_sync.external_release_required ? 1U : 0U, resource->external_sync.external_release_done ? 1U : 0U,
+                   vkvv_external_release_mode_name(resource->external_sync.release_mode), static_cast<unsigned long long>(resource->external_sync.released_generation));
+    }
+
     void trace_exported_fd_freshness_check(const SurfaceResource* owner, const ExportResource* resource, bool refresh_export, bool display_visible, const char* action) {
         if (owner == nullptr || resource == nullptr) {
             return;
@@ -918,6 +944,39 @@ namespace vkvv {
         const ExportFormatInfo* format            = export_format_for_surface(nullptr, owner, proof_reason, sizeof(proof_reason));
         const uint64_t          black_crc         = pixel_reference_crc(format, resource->extent, true);
         const uint64_t          zero_crc          = pixel_reference_crc(format, resource->extent, false);
+        const bool non_sampleable_predecode_seed = pixel_source == VkvvExportPixelSource::StreamLocalSeed && resource->predecode_exported && resource->predecode_quarantined &&
+            !export_resource_fd_may_be_sampled_by_client(resource);
+        if (non_sampleable_predecode_seed) {
+            const bool                pixel_proof_valid = resource->seed_pixel_proof_valid;
+            const VkvvPixelProofState returned_state = pixel_proof_valid ? resource->seed_pixel_proof_state : VkvvPixelProofState::Unavailable;
+            const uint64_t            returned_crc   = pixel_proof_valid ? resource->seed_pixel_crc : 0;
+            const bool                is_black       = pixel_proof_valid && resource->seed_black_crc != 0 && returned_crc == resource->seed_black_crc;
+            const bool                is_zero        = pixel_proof_valid && resource->seed_zero_crc != 0 && returned_crc == resource->seed_zero_crc;
+            if (proof != nullptr) {
+                proof->pixel_proof_valid           = pixel_proof_valid;
+                proof->pixel_identity_valid        = pixel_proof_valid;
+                proof->pixel_content_valid         = proof->fd_content_generation != 0;
+                proof->pixel_source_is_placeholder = false;
+                proof->pixel_color_state           = resource->seed_pixel_color_state;
+                proof->pixel_crc                   = returned_crc;
+                proof->black_crc                   = resource->seed_black_crc;
+                proof->zero_crc                    = resource->seed_zero_crc;
+                proof->seed_pixels_valid           = proof->fd_content_generation != 0 && pixel_proof_valid;
+                proof->placeholder_pixels          = false;
+            }
+            VKVV_TRACE("returned-fd-pixel-proof",
+                       "surface=%u fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu pixel_source=%s returned_crc=0x%llx black_crc=0x%llx "
+                       "zero_crc=0x%llx is_black=%u is_zero=%u pixel_proof_valid=%u may_be_sampled_by_client=0 returned_fd=1 sample_bytes=0 proof_enabled=%u",
+                       owner->surface_id, static_cast<unsigned long long>(fd.dev), static_cast<unsigned long long>(fd.ino), static_cast<unsigned long long>(owner->stream_id),
+                       owner->codec_operation, static_cast<unsigned long long>(owner->content_generation),
+                       static_cast<unsigned long long>(export_resource_fd_content_generation(resource)), vkvv_export_pixel_source_name(pixel_source),
+                       static_cast<unsigned long long>(returned_crc), static_cast<unsigned long long>(resource->seed_black_crc),
+                       static_cast<unsigned long long>(resource->seed_zero_crc), is_black ? 1U : 0U, is_zero ? 1U : 0U, pixel_proof_valid ? 1U : 0U,
+                       export_pixel_proof_enabled() ? 1U : 0U);
+            trace_pixel_proof_computed(owner->surface_id, fd.dev, fd.ino, export_resource_fd_content_generation(resource), pixel_source, returned_crc, resource->seed_black_crc,
+                                       resource->seed_zero_crc, is_black, is_zero, 0, returned_state);
+            return true;
+        }
         uint64_t                returned_crc      = 0;
         VkDeviceSize            sample_bytes      = 0;
         bool                    crc_valid         = false;
@@ -963,8 +1022,14 @@ namespace vkvv {
     }
 
     void trace_seed_pixel_proof(VulkanRuntime* runtime, SurfaceResource* source, ExportResource* target, const char* copy_status) {
+        (void)runtime;
         if (target != nullptr) {
             target->seed_pixel_proof_valid = false;
+            target->seed_pixel_crc         = 0;
+            target->seed_black_crc         = 0;
+            target->seed_zero_crc          = 0;
+            target->seed_pixel_proof_state = VkvvPixelProofState::Unknown;
+            target->seed_pixel_color_state = VkvvPixelColorState::Unknown;
         }
         if (source == nullptr || target == nullptr) {
             return;
@@ -973,60 +1038,70 @@ namespace vkvv {
         const ExportFormatInfo* format            = export_format_for_surface(nullptr, source, proof_reason, sizeof(proof_reason));
         const uint64_t          black_crc         = pixel_reference_crc(format, source->coded_extent, true);
         const uint64_t          zero_crc          = pixel_reference_crc(format, source->coded_extent, false);
-        uint64_t                source_crc        = 0;
-        uint64_t                target_crc        = 0;
-        VkDeviceSize            source_bytes      = 0;
-        VkDeviceSize            target_bytes      = 0;
-        bool                    source_ok         = false;
-        bool                    target_ok         = false;
-        if (export_pixel_proof_enabled() && format != nullptr) {
-            source_ok = readback_image_luma_sample(runtime, source->image, &source->layout, format, source->coded_extent, "seed source pixel proof", &source_crc, &source_bytes,
-                                                   proof_reason, sizeof(proof_reason));
-            target_ok = readback_image_luma_sample(runtime, target->image, &target->layout, format, target->extent, "seed target pixel proof", &target_crc, &target_bytes,
-                                                   proof_reason, sizeof(proof_reason));
-        }
-        const bool                source_black        = source_ok && black_crc != 0 && source_crc == black_crc;
-        const bool                source_zero         = source_ok && zero_crc != 0 && source_crc == zero_crc;
-        const bool                target_black        = target_ok && black_crc != 0 && target_crc == black_crc;
-        const bool                target_zero         = target_ok && zero_crc != 0 && target_crc == zero_crc;
-        const VkvvPixelProofState source_state        = pixel_proof_state_from_sample(source_ok, source_crc, black_crc, zero_crc, source_black, source_zero);
-        const VkvvPixelProofState target_sample_state = pixel_proof_state_from_sample(target_ok, target_crc, black_crc, zero_crc, target_black, target_zero);
-        const bool                target_matches      = source_ok && target_ok && source_crc == target_crc;
-        const VkvvPixelProofState target_state        = !target_ok || target_bytes == 0 ? VkvvPixelProofState::Unavailable :
-            !target_matches                                                             ? VkvvPixelProofState::Mismatch :
-                                                                                          target_sample_state;
-        const bool                source_valid        = predecode_seed_source_safe_for_client(source) && source_bytes > 0 && pixel_identity_valid_from_state(source_state);
-        const bool                target_valid        = source_valid && target_ok && target_bytes > 0 && target_matches;
+        const SeedPixelProofState source_proof        = predecode_seed_source_pixel_proof_state(source);
+        const bool                copy_success        = copy_status == nullptr || std::strcmp(copy_status, "success") == 0;
+        const bool                target_has_seed_gen = target->seed_source_generation != 0 && target->exported_fd.fd_content_generation != 0;
+        const bool                target_valid        = copy_success && target_has_seed_gen && source_proof.valid;
+        const bool                target_matches      = target_valid;
+        const VkvvPixelProofState source_state        = source_proof.state;
+        const VkvvPixelProofState target_state        = target_valid ? source_state : VkvvPixelProofState::Unavailable;
+        const uint64_t            source_crc          = source_proof.valid ? source_proof.crc : 0;
+        const uint64_t            target_crc          = target_valid ? source_proof.crc : 0;
+        const VkDeviceSize        source_bytes        = source_proof.sample_bytes;
+        const VkDeviceSize        target_bytes        = target_valid ? source_proof.sample_bytes : 0;
+        const bool                source_black        = source_proof.is_black;
+        const bool                source_zero         = source_proof.is_zero;
+        const bool                target_black        = target_valid && source_black;
+        const bool                target_zero         = target_valid && source_zero;
+        const bool                source_valid        = source_proof.valid;
+        const VkvvPixelColorState source_color_state  = source_proof.color_state;
+        const VkvvPixelColorState target_color_state  = target_valid ? source_proof.color_state : VkvvPixelColorState::Unknown;
         target->seed_pixel_proof_valid                = target_valid;
-        const VkvvPixelColorState source_color_state  = pixel_color_state_from_sample(source_ok, source_black, source_zero);
-        const VkvvPixelColorState target_color_state  = pixel_color_state_from_sample(target_ok, target_black, target_zero);
+        target->seed_pixel_crc                        = target_crc;
+        target->seed_black_crc                        = black_crc;
+        target->seed_zero_crc                         = zero_crc;
+        target->seed_pixel_proof_state                = target_state;
+        target->seed_pixel_color_state                = target_color_state;
         trace_pixel_proof_computed(source->surface_id, source->export_resource.fd_dev, source->export_resource.fd_ino, source->export_resource.present_generation,
-                                   VkvvExportPixelSource::DecodedContent, source_ok ? source_crc : 0, black_crc, zero_crc, source_black, source_zero, source_bytes, source_state);
-        trace_pixel_proof_computed(target->owner_surface_id, target->fd_dev, target->fd_ino, export_resource_fd_content_generation(target), VkvvExportPixelSource::StreamLocalSeed,
-                                   target_ok ? target_crc : 0, black_crc, zero_crc, target_black, target_zero, target_bytes, target_state);
+                                   VkvvExportPixelSource::DecodedContent, source_crc, black_crc, zero_crc, source_black, source_zero, source_bytes, source_state);
+        trace_pixel_proof_computed(target->owner_surface_id, target->fd_dev, target->fd_ino, target->exported_fd.fd_content_generation,
+                                   VkvvExportPixelSource::StreamLocalSeed, target_crc, black_crc, zero_crc, target_black, target_zero, target_bytes, target_state);
         VKVV_TRACE("seed-source-pixel-proof",
                    "source_surface=%u source_stream=%llu source_codec=0x%x source_present_gen=%llu source_fd_content_gen=%llu source_crc=0x%llx black_crc=0x%llx "
                    "zero_crc=0x%llx is_black=%u is_zero=%u pixel_proof_valid=%u valid_for_seed=%u sample_bytes=%llu proof_enabled=%u",
                    source->surface_id, static_cast<unsigned long long>(source->stream_id), source->codec_operation,
                    static_cast<unsigned long long>(source->export_resource.present_generation),
-                   static_cast<unsigned long long>(export_resource_fd_content_generation(&source->export_resource)), static_cast<unsigned long long>(source_ok ? source_crc : 0),
-                   static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc), source_black ? 1U : 0U, source_zero ? 1U : 0U, source_ok ? 1U : 0U,
-                   source_valid ? 1U : 0U, static_cast<unsigned long long>(source_bytes), export_pixel_proof_enabled() ? 1U : 0U);
+                   static_cast<unsigned long long>(export_resource_fd_content_generation(&source->export_resource)), static_cast<unsigned long long>(source_crc),
+                   static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc), source_black ? 1U : 0U, source_zero ? 1U : 0U,
+                   source_proof.identity_valid ? 1U : 0U, source_valid ? 1U : 0U, static_cast<unsigned long long>(source_bytes), export_pixel_proof_enabled() ? 1U : 0U);
         VKVV_TRACE("seed-target-pixel-proof",
                    "target_surface=%u source_surface=%u target_fd_dev=%llu target_fd_ino=%llu target_crc_after_copy=0x%llx source_crc=0x%llx matches_source=%u "
                    "source_color_state=%s target_color_state=%s target_is_black=%u target_is_zero=%u pixel_proof_valid=%u pixel_proof_state=%s target_valid=%u "
                    "reject_reason=%s copy_status=%s source_sample_bytes=%llu target_sample_bytes=%llu sample_bytes=%llu",
                    target->owner_surface_id, source->surface_id, static_cast<unsigned long long>(target->fd_dev), static_cast<unsigned long long>(target->fd_ino),
-                   static_cast<unsigned long long>(target_ok ? target_crc : 0), static_cast<unsigned long long>(source_ok ? source_crc : 0), target_matches ? 1U : 0U,
+                   static_cast<unsigned long long>(target_crc), static_cast<unsigned long long>(source_crc), target_matches ? 1U : 0U,
                    vkvv_pixel_color_state_name(source_color_state), vkvv_pixel_color_state_name(target_color_state), target_black ? 1U : 0U, target_zero ? 1U : 0U,
                    target_valid ? 1U : 0U, vkvv_pixel_proof_state_name(target_state), target_valid ? 1U : 0U,
                    target_valid ? "none" :
-                                  (!source_valid                       ? "source-proof-invalid" :
-                                       !target_ok || target_bytes == 0 ? "target-proof-unavailable" :
-                                       !target_matches                 ? "target-does-not-match-source" :
-                                                                         "target-invalid"),
+                                  (!copy_success        ? "copy-failed" :
+                                       !source_valid ? "source-proof-invalid" :
+                                       !target_has_seed_gen ? "target-fd-content-generation-missing" :
+                                                             "target-invalid"),
                    copy_status != nullptr ? copy_status : "unknown", static_cast<unsigned long long>(source_bytes), static_cast<unsigned long long>(target_bytes),
                    static_cast<unsigned long long>(target_bytes));
+        if (!target_valid) {
+            VKVV_TRACE("seed-target-proof-failed",
+                       "surface=%u target_surface=%u source_surface=%u driver=%llu stream=%llu codec=0x%x reason=%s status=%d copy_status=%s source_valid=%u "
+                       "target_fd_content_gen=%llu",
+                       target->owner_surface_id, target->owner_surface_id, source->surface_id, static_cast<unsigned long long>(target->driver_instance_id),
+                       static_cast<unsigned long long>(target->stream_id), target->codec_operation,
+                       !copy_success             ? "copy-failed" :
+                           !source_valid         ? "source-proof-invalid" :
+                           !target_has_seed_gen  ? "target-fd-content-generation-missing" :
+                                                    "target-invalid",
+                       VA_STATUS_ERROR_OPERATION_FAILED, copy_status != nullptr ? copy_status : "unknown", source_valid ? 1U : 0U,
+                       static_cast<unsigned long long>(target->exported_fd.fd_content_generation));
+        }
     }
 
     bool attach_imported_export_resource_by_fd(VulkanRuntime* runtime, SurfaceResource* source) {
@@ -2030,6 +2105,11 @@ namespace vkvv {
             owner_export->seed_source_surface_id                      = VA_INVALID_ID;
             owner_export->seed_source_generation                      = 0;
             owner_export->seed_pixel_proof_valid                      = false;
+            owner_export->seed_pixel_crc                              = 0;
+            owner_export->seed_black_crc                              = 0;
+            owner_export->seed_zero_crc                               = 0;
+            owner_export->seed_pixel_proof_state                      = VkvvPixelProofState::Unknown;
+            owner_export->seed_pixel_color_state                      = VkvvPixelColorState::Unknown;
             mark_export_fd_written(owner_export, source->content_generation);
             if (owner_refresh_export) {
                 clear_export_present_state(owner_export);
@@ -2088,21 +2168,50 @@ namespace vkvv {
             }
             target->black_placeholder = false;
             if (target->predecode_exported) {
-                target->predecode_seeded       = true;
-                target->seed_source_surface_id = source->surface_id;
-                target->seed_source_generation = source->content_generation;
+                const uint64_t source_present_generation = source->export_resource.present_generation != 0 ? source->export_resource.present_generation : source->content_generation;
+                uint64_t       seed_fd_content_generation = export_resource_fd_content_generation(&source->export_resource);
+                if (seed_fd_content_generation == 0) {
+                    seed_fd_content_generation = source_present_generation;
+                }
+                target->predecode_exported                                  = true;
+                target->predecode_seeded                                    = true;
+                target->predecode_quarantined                               = true;
+                target->black_placeholder                                   = false;
+                target->seed_source_surface_id                              = source->surface_id;
+                target->seed_source_generation                              = seed_fd_content_generation;
+                target->exported_fd.fd_content_generation                   = seed_fd_content_generation;
+                target->exported_fd.last_written_content_generation         = seed_fd_content_generation;
+                target->exported_fd.detached_from_surface                   = false;
+                target->exported_fd.may_be_sampled_by_client                = false;
+                target->presentable                                         = false;
+                target->present_pinned                                      = false;
+                target->published_visible                                   = false;
+                target->present_generation                                  = 0;
+                target->present_source                                      = VkvvExportPresentSource::PredecodePlaceholder;
+                target->client_visible_shadow                               = false;
+                target->private_nondisplay_shadow                           = false;
                 mark_export_predecode_nonpresentable(target);
+                VKVV_TRACE("predecode-target-seed-state",
+                           "surface=%u target_surface=%u source_surface=%u driver=%llu stream=%llu codec=0x%x source_present_gen=%llu source_fd_content_gen=%llu "
+                           "target_content_gen=%llu target_fd_content_gen_after=%llu target_last_written_content_gen_after=%llu target_pixel_source=seed "
+                           "target_presentable=0 target_published_visible=0 target_predecode_quarantined=%u target_predecode_exported=%u",
+                           target->owner_surface_id, target->owner_surface_id, source->surface_id, static_cast<unsigned long long>(target->driver_instance_id),
+                           static_cast<unsigned long long>(target->stream_id), target->codec_operation, static_cast<unsigned long long>(source_present_generation),
+                           static_cast<unsigned long long>(seed_fd_content_generation), static_cast<unsigned long long>(target->content_generation),
+                           static_cast<unsigned long long>(target->exported_fd.fd_content_generation),
+                           static_cast<unsigned long long>(target->exported_fd.last_written_content_generation), target->predecode_quarantined ? 1U : 0U,
+                           target->predecode_exported ? 1U : 0U);
             } else {
                 target->content_generation = source->content_generation;
                 clear_export_present_state(target);
+                mark_export_fd_written(target, source->content_generation);
             }
-            mark_export_fd_written(target, source->content_generation);
             VKVV_TRACE("export-predecode-seeded",
                        "source_surface=%u source_stream=%llu source_codec=0x%x source_gen=%llu target_owner=%u target_mem=0x%llx target_gen=%llu fd_content_gen=%llu "
                        "target_predecode=%u",
                        source->surface_id, static_cast<unsigned long long>(source->stream_id), source->codec_operation, static_cast<unsigned long long>(source->content_generation),
                        target->owner_surface_id, vkvv_trace_handle(target->memory), static_cast<unsigned long long>(target->content_generation),
-                       static_cast<unsigned long long>(export_resource_fd_content_generation(target)), target->predecode_exported ? 1U : 0U);
+                       static_cast<unsigned long long>(target->exported_fd.fd_content_generation), target->predecode_exported ? 1U : 0U);
             const bool thumbnail_like = predecode_seed_target_thumbnail_like(target);
             VKVV_TRACE("predecode-seed-policy",
                        "surface=%u source_surface=%u action=stream-local-seed presentable=0 present_pinned=0 thumbnail_like=%u content_gen=%llu fd_content_gen=%llu "
@@ -2118,13 +2227,18 @@ namespace vkvv {
             trace_exported_fd_freshness_check(source, target, true, false, "stream-local-seed");
             VKVV_TRACE("export-copy-proof",
                        "codec=0x%x surface=%u source_surface=%u target_surface=%u source_content_gen=%llu target_content_gen_before=%llu target_content_gen_after=%llu "
-                       "source_shadow_gen=%llu target_shadow_gen_before=%llu target_shadow_gen_after=%llu fd_content_gen=%llu copy_reason=%s refresh_export=1",
+                       "source_shadow_gen=%llu target_shadow_gen_before=%llu target_shadow_gen_after=%llu fd_content_gen=%llu target_fd_content_gen_after=%llu "
+                       "target_shadow_pixel_gen=%llu target_pixel_source=%s source_present_gen=%llu source_fd_content_gen=%llu copy_reason=%s refresh_export=1",
                        source->codec_operation, source->surface_id, source->surface_id, target->owner_surface_id, static_cast<unsigned long long>(source->content_generation),
                        static_cast<unsigned long long>(snapshot.content_generation), static_cast<unsigned long long>(target->content_generation),
                        static_cast<unsigned long long>(source_shadow_generation), static_cast<unsigned long long>(snapshot.content_generation),
-                       static_cast<unsigned long long>(target->content_generation), static_cast<unsigned long long>(export_resource_fd_content_generation(target)),
+                       static_cast<unsigned long long>(target->content_generation), static_cast<unsigned long long>(target->exported_fd.fd_content_generation),
+                       static_cast<unsigned long long>(target->exported_fd.fd_content_generation),
+                       static_cast<unsigned long long>(target->exported_fd.fd_content_generation), vkvv_export_pixel_source_name(export_pixel_source_for_resource(nullptr, target)),
+                       static_cast<unsigned long long>(source->export_resource.present_generation),
+                       static_cast<unsigned long long>(export_resource_fd_content_generation(&source->export_resource)),
                        vkvv_export_copy_reason_name(VkvvExportCopyReason::PredecodePlaceholderSeed));
-            trace_export_present_state(source, target, "predecode-seed-nonpresentable", true, false);
+            trace_predecode_target_present_state(target, "predecode-target-seeded");
             trace_seed_pixel_proof(runtime, source, target, "success");
             if (!target->predecode_exported) {
                 VKVV_TRACE("export-transition-published",

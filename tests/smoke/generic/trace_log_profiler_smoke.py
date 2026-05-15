@@ -63,10 +63,16 @@ nvidia-vulkan-vaapi: trace seq=52 event=exported-fd-freshness-check surface=7 dr
 nvidia-vulkan-vaapi: trace seq=53 event=nondisplay-exported-fd-refresh surface=7 driver=2 stream=1 codec=0x8 content_gen=2 fd_content_gen_before=1 fd_content_gen_after=2 refresh_export=0 display_published=0 may_be_sampled_by_client=1 present_gen=1
 nvidia-vulkan-vaapi: trace seq=54 event=predecode-export-policy surface=7 codec=0x8 stream=1 content_gen=0 pending_decode=0 policy=stream-local-last-visible action=stream-local-seed source_surface=6 source_present_gen=1 source_external_release_ok=1
 nvidia-vulkan-vaapi: trace seq=55 event=predecode-export-policy surface=7 codec=0x8 stream=1 content_gen=0 pending_decode=0 policy=stream-local-last-visible action=neutral-placeholder source_surface=4294967295 source_present_gen=0 source_external_release_ok=0
-nvidia-vulkan-vaapi: trace seq=56 event=predecode-target-export-return surface=7 driver=2 fd_dev=11 fd_ino=22 stream=1 codec=0x8 content_gen=0 fd_content_gen=0 presentable=0 published_visible=0 predecode_quarantined=1 may_be_sampled_by_client=0 seed_used=0 export_role=predecode-target export_intent=read-only status=0
-nvidia-vulkan-vaapi: trace seq=57 event=export-validity-gate surface=7 driver=2 stream=1 codec=0x8 profile=0 width=3840 height=2160 fourcc=0x30313050 content_gen=0 decoded=0 pending_decode=0 refresh_export=0 display_visible=0 fd_already_exported=0 fd_dev=11 fd_ino=22 fd_content_gen=0 may_be_sampled_by_client=0 valid_decoded_pixels_available=0 valid_seed_available=0 placeholder_available=1 retained_candidate_available=0 export_role=predecode-target export_intent=read-only raw_export_flags=0x5 mem_type=0x40000000 had_va_begin=0 had_decode_submit=0 decision=return-predecode-target reason=success returned_fd=1 status=0
-nvidia-vulkan-vaapi: trace seq=58 event=generic-export-summary surface=7 stream=1 codec=0x8 width=3840 height=2160 fourcc=0x30313050 content_gen=0 fd_content_gen=0 returned_fd=1 decision=return-predecode-target pixel_source=placeholder pixel_proof_valid=0 is_black=1 is_zero=0 pending_decode=0 valid_seed_available=0 quarantine_outcome=pending external_release_mode=none status=0 va_status=0 actual_mem_type_supported=1 policy_status=success may_be_sampled_by_client=0 export_role=predecode-target export_intent=read-only raw_export_flags=0x5 mem_type=0x40000000 had_va_begin=0 had_decode_submit=0
-nvidia-vulkan-vaapi: trace seq=58 event=predecode-quarantine-outcome surface=7 fd_dev=11 fd_ino=22 stream=1 codec=0x8 age_ms=0 content_gen=0 fd_content_gen=0 decoded=0 had_va_begin=0 had_decode_submit=0 had_visible_decode=0 may_be_sampled_by_client=0 export_role=predecode-target outcome=predecode-target-returned reason=non-sampleable-predecode returned_fd=1
+nvidia-vulkan-vaapi: trace seq=56 event=predecode-target-seed-state surface=7 target_surface=7 source_surface=6 driver=2 stream=1 codec=0x8 source_present_gen=1 source_fd_content_gen=1 target_content_gen=0 target_fd_content_gen_after=1 target_last_written_content_gen_after=1 target_pixel_source=seed target_presentable=0 target_published_visible=0 target_predecode_quarantined=1 target_predecode_exported=1
+nvidia-vulkan-vaapi: trace seq=57 event=export-copy-proof codec=0x8 surface=6 source_surface=6 target_surface=7 source_content_gen=1 target_content_gen_before=0 target_content_gen_after=0 source_shadow_gen=1 target_shadow_gen_before=0 target_shadow_gen_after=0 fd_content_gen=1 target_fd_content_gen_after=1 target_shadow_pixel_gen=1 target_pixel_source=seed source_present_gen=1 source_fd_content_gen=1 copy_reason=predecode-target-seed refresh_export=1
+nvidia-vulkan-vaapi: trace seq=58 event=export-present-state action=predecode-target-seeded surface=7 codec=0x8 stream=1 fd_dev=11 fd_ino=22 content_gen=0 present_shadow_gen=0 private_shadow_gen=0 decode_shadow_gen=0 fd_exported=0 fd_content_gen=1 may_be_sampled_by_client=0 detached_from_surface=0 present_gen=0 presentable=0 present_pinned=0 published_visible=0 decode_shadow_private_active=0 predecode=1 seeded=1 predecode_quarantined=1 predecode_generation=0 placeholder=0 export_role=predecode-target export_intent=read-only raw_export_flags=0x5 mem_type=0x40000000 had_va_begin=0 had_decode_submit=0 refresh_export=1 display_visible=0 present_source=predecode-placeholder mutation_action=none client_visible_shadow_mutated=0 client_visible_shadow=0 private_only=0 external_release_required=0 external_release_done=0 external_release_mode=none-required external_released_generation=0
+nvidia-vulkan-vaapi: trace seq=59 event=predecode-target-export-return surface=7 driver=2 fd_dev=11 fd_ino=22 stream=1 codec=0x8 content_gen=0 fd_content_gen=1 presentable=0 published_visible=0 predecode_quarantined=1 may_be_sampled_by_client=0 seed_used=1 seed_source_surface=6 seed_source_generation=1 export_role=predecode-target export_intent=read-only status=0
+nvidia-vulkan-vaapi: trace seq=60 event=predecode-target-export-returned surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 seed_used=1 fd_content_gen=1
+nvidia-vulkan-vaapi: trace seq=61 event=export-validity-gate surface=7 driver=2 stream=1 codec=0x8 profile=0 width=3840 height=2160 fourcc=0x30313050 content_gen=0 decoded=0 pending_decode=0 refresh_export=0 display_visible=0 fd_already_exported=0 fd_dev=11 fd_ino=22 fd_content_gen=1 may_be_sampled_by_client=0 valid_decoded_pixels_available=0 valid_seed_available=1 placeholder_available=0 retained_candidate_available=0 export_role=predecode-target export_intent=read-only raw_export_flags=0x5 mem_type=0x40000000 had_va_begin=0 had_decode_submit=0 decision=return-seed reason=success returned_fd=1 status=0
+nvidia-vulkan-vaapi: trace seq=62 event=generic-export-summary surface=7 stream=1 codec=0x8 width=3840 height=2160 fourcc=0x30313050 content_gen=0 fd_content_gen=1 returned_fd=1 decision=return-seed pixel_source=seed pixel_proof_valid=1 is_black=0 is_zero=1 pending_decode=0 valid_seed_available=1 quarantine_outcome=pending external_release_mode=none-required status=0 va_status=0 actual_mem_type_supported=1 policy_status=success may_be_sampled_by_client=0 export_role=predecode-target export_intent=read-only raw_export_flags=0x5 mem_type=0x40000000 had_va_begin=0 had_decode_submit=0
+nvidia-vulkan-vaapi: trace seq=63 event=predecode-quarantine-outcome surface=7 fd_dev=11 fd_ino=22 stream=1 codec=0x8 age_ms=0 content_gen=0 fd_content_gen=1 decoded=0 had_va_begin=0 had_decode_submit=0 had_visible_decode=0 may_be_sampled_by_client=0 export_role=predecode-target outcome=predecode-target-returned reason=stream-local-seed returned_fd=1
+nvidia-vulkan-vaapi: trace seq=64 event=returned-fd-pixel-proof surface=7 fd_dev=11 fd_ino=22 stream=1 codec=0x8 content_gen=0 fd_content_gen=1 pixel_source=seed returned_crc=0x20 black_crc=0x10 zero_crc=0x20 is_black=0 is_zero=1 pixel_proof_valid=1 may_be_sampled_by_client=0 returned_fd=1 sample_bytes=0 proof_enabled=1
+nvidia-vulkan-vaapi: trace seq=65 event=pixel-proof-computed surface=7 fd_dev=11 fd_ino=22 generation=1 pixel_source=seed crc=0x20 black_crc=0x10 zero_crc=0x20 is_black=0 is_zero=1 sample_bytes=0 state=zero pixel_proof_mode=seed
 nvidia-vulkan-vaapi: trace seq=59 event=export-seed-candidate target_surface=7 candidate_surface=6 same_driver=1 same_stream=1 same_codec=1 same_fourcc=1 same_visible_extent=1 same_coded_extent=1 same_sequence_generation=0 same_session_generation=1 candidate_present_gen=1 candidate_fd_content_gen=1 candidate_external_release_ok=1 candidate_pixel_source=decoded candidate_pixel_identity_valid=1 candidate_pixel_content_valid=1 candidate_pixel_color_state=zero candidate_pixel_proof_state=zero candidate_pixel_proof_valid=1 candidate_is_black=0 candidate_is_zero=1 candidate_valid=1 reject_reason=none
 nvidia-vulkan-vaapi: trace seq=59 event=seed-target-pixel-proof target_surface=7 source_surface=6 target_fd_dev=11 target_fd_ino=22 target_crc_after_copy=0x20 source_crc=0x20 matches_source=1 source_color_state=zero target_color_state=zero target_is_black=0 target_is_zero=1 pixel_proof_valid=1 pixel_proof_state=zero target_valid=1 reject_reason=none copy_status=success source_sample_bytes=8192 target_sample_bytes=8192 sample_bytes=8192
 nvidia-vulkan-vaapi: trace seq=60 event=export-validity-gate surface=7 driver=2 stream=1 codec=0x8 profile=0 width=3840 height=2160 fourcc=0x30313050 content_gen=1 decoded=1 pending_decode=0 refresh_export=1 display_visible=1 fd_already_exported=1 fd_dev=11 fd_ino=22 fd_content_gen=1 may_be_sampled_by_client=1 valid_decoded_pixels_available=1 valid_seed_available=0 placeholder_available=0 retained_candidate_available=0 decision=return-decoded reason=success returned_fd=1 status=0
@@ -138,7 +144,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 77, "trace record count mismatch")
+    check(data["trace_records"] == 83, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -162,7 +168,7 @@ def main() -> int:
     check(totals["private_decode_shadow_copy_wait_ns"] == 5000, "private decode shadow copy wait mismatch")
     check(totals["decode_shadow_coherence_checks"] == 2, "decode shadow coherence aggregate mismatch")
     check(totals["decode_shadow_incoherent_checks"] == 0, "decode shadow incoherent aggregate mismatch")
-    check(totals["present_state_traces"] == 3, "present state trace aggregate mismatch")
+    check(totals["present_state_traces"] == 4, "present state trace aggregate mismatch")
     check(totals["visible_present_pins"] == 1, "visible present pin aggregate mismatch")
     check(totals["predecode_quarantine_enters"] == 1, "predecode quarantine enter aggregate mismatch")
     check(totals["predecode_quarantine_exits"] == 1, "predecode quarantine exit aggregate mismatch")
@@ -178,7 +184,7 @@ def main() -> int:
     check(totals["export_validity_gates"] == 3 and totals["generic_export_summaries"] == 4, "generic export telemetry aggregate mismatch")
     check(totals["generic_export_placeholder_black_sampled"] == 0, "generic export placeholder aggregate mismatch")
     check(totals["generic_export_seed_invalid"] == 0 and totals["generic_export_decoded_invalid"] == 0, "generic export invalid proof aggregate mismatch")
-    check(totals["returned_fd_pixel_proofs"] == 1 and totals["returned_fd_placeholder_black"] == 0, "returned fd pixel proof aggregate mismatch")
+    check(totals["returned_fd_pixel_proofs"] == 2 and totals["returned_fd_placeholder_black"] == 0, "returned fd pixel proof aggregate mismatch")
     check(totals["predecode_quarantine_placeholder_returns"] == 0 and totals["predecode_quarantine_timeouts"] == 0, "quarantine outcome aggregate mismatch")
     check(totals["external_sync_proofs"] == 1 and totals["external_sync_implicit"] == 1, "external sync aggregate mismatch")
     check(totals["decode_pixel_proofs"] == 2 and totals["present_pixel_proofs"] == 1 and totals["decode_pixel_black"] == 1, "visible pixel proof aggregate mismatch")
@@ -205,13 +211,17 @@ def main() -> int:
     check(totals["av1_visible_audits"] == 1 and totals["av1_publish_failures"] == 0, "AV1 audit aggregate mismatch")
     check(data["events"].get("av1-submit") == 1, "AV1 submit event count mismatch")
     check(data["events"].get("av1-show-existing") == 1, "AV1 show-existing event count mismatch")
-    check("export_role=predecode-target" in FIXTURE and "decision=return-predecode-target reason=success returned_fd=1 status=0" in FIXTURE,
-          "predecode target return fixture missing")
-    check("decision=return-predecode-target" in FIXTURE and "va_status=0 actual_mem_type_supported=1 policy_status=success" in FIXTURE,
-          "predecode target generic status telemetry missing")
-    check("event=predecode-target-export-return" in FIXTURE and "seed_used=0" in FIXTURE and "may_be_sampled_by_client=0" in FIXTURE,
-          "predecode target quarantined return fixture missing")
+    check("event=predecode-target-seed-state" in FIXTURE and "target_fd_content_gen_after=1" in FIXTURE and "target_pixel_source=seed" in FIXTURE,
+          "predecode target seed state fixture missing")
+    check("export_role=predecode-target" in FIXTURE and "decision=return-seed reason=success returned_fd=1 status=0" in FIXTURE,
+          "predecode target seeded return fixture missing")
+    check("decision=return-seed" in FIXTURE and "va_status=0 actual_mem_type_supported=1 policy_status=success" in FIXTURE,
+          "predecode target seeded generic status telemetry missing")
+    check("event=predecode-target-export-return" in FIXTURE and "seed_used=1" in FIXTURE and "may_be_sampled_by_client=0" in FIXTURE,
+          "predecode target seeded quarantined return fixture missing")
     check(data["events"].get("predecode-target-export-return") == 1, "predecode target return telemetry count mismatch")
+    check(data["events"].get("predecode-target-export-returned") == 1, "predecode target returned telemetry count mismatch")
+    check(data["events"].get("export-call-incomplete", 0) == 0, "export call incomplete guard fired in fixture")
     check("export_role=predecode-target" in FIXTURE and "status=0" in FIXTURE and "predecode-target-needs-proven-seed returned_fd=0" not in FIXTURE,
           "predecode target status mapping regressed")
     check("export_role=sampleable-presentation" in FIXTURE and "decision=fail reason=no-valid-decoded-or-seed-pixels returned_fd=0 status=18" in FIXTURE,
@@ -294,7 +304,7 @@ def main() -> int:
         and stream["decode_shadow_incoherent_checks"] == 0,
         "stream private decode shadow mismatch",
     )
-    check(stream["present_state_traces"] == 3 and stream["visible_present_pins"] == 1, "stream present state mismatch")
+    check(stream["present_state_traces"] == 4 and stream["visible_present_pins"] == 1, "stream present state mismatch")
     check(stream["predecode_quarantine_enters"] == 1 and stream["predecode_quarantine_exits"] == 1, "stream predecode quarantine mismatch")
     check(stream["export_visible_releases"] == 1 and stream["export_visible_acquires"] == 1, "stream visible handoff mismatch")
     check(stream["exported_fd_freshness_checks"] == 1 and stream["exported_fd_refreshes"] == 1, "stream exported fd freshness mismatch")
