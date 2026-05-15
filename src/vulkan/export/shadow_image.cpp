@@ -2045,6 +2045,9 @@ namespace vkvv {
             if (owner_refresh_export || export_resource_fd_may_be_sampled_by_client(owner_export)) {
                 mark_export_visible_release(source, owner_export, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
             }
+            if (owner_refresh_export && !export_visible_pixel_proof_required()) {
+                pin_export_visible_present(source, owner_export, VkvvExportPresentSource::VisibleRefresh);
+            }
             if (owner_export->predecode_quarantined && owner_export->content_generation != 0) {
                 exit_predecode_quarantine(source, owner_export, export_visible_release_satisfied(owner_export));
             }
