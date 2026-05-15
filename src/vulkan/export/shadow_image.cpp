@@ -1863,9 +1863,7 @@ namespace vkvv {
             owner_export->content_generation                          = source->content_generation;
             owner_export->predecode_exported                          = false;
             owner_export->predecode_seeded                            = false;
-            owner_export->bootstrap_export                            = false;
             owner_export->black_placeholder                           = false;
-            owner_export->export_role                                 = VkvvExportRole::DecodedPresentation;
             owner_export->seed_source_surface_id                      = VA_INVALID_ID;
             owner_export->seed_source_generation                      = 0;
             owner_export->seed_pixel_proof_valid                      = false;
@@ -1896,6 +1894,8 @@ namespace vkvv {
                            static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(export_resource_fd_content_generation(owner_export)),
                            owner_refresh_export ? 1U : 0U, owner_export->presentable ? 1U : 0U, owner_export->published_visible ? 1U : 0U);
             }
+            owner_export->bootstrap_export = false;
+            owner_export->export_role      = VkvvExportRole::DecodedPresentation;
             trace_exported_fd_freshness_check(source, owner_export, owner_refresh_export, owner_refresh_export, "copied-to-export-fd");
             VKVV_TRACE("export-copy-proof",
                        "codec=0x%x surface=%u source_surface=%u target_surface=%u source_content_gen=%llu target_content_gen_before=%llu target_content_gen_after=%llu "
