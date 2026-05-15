@@ -1663,6 +1663,10 @@ namespace vkvv {
             if (valid) {
                 valid_candidate_count++;
             }
+            const char* proof_reject_reason = source_pixel_proof.state == VkvvPixelProofState::Black ? "black-source" :
+                source_pixel_proof.state == VkvvPixelProofState::Zero                                  ? "zero-source" :
+                source_pixel_proof.state == VkvvPixelProofState::Mismatch                              ? "pixel-proof-mismatch" :
+                                                                                                         "no-pixel-proof";
             const char* reject_reason = valid                ? "none" :
                 source == target                              ? "self" :
                 !same_driver                                  ? "driver-mismatch" :
@@ -1672,7 +1676,7 @@ namespace vkvv {
                 !same_coded                                   ? "coded-extent-mismatch" :
                 bootstrap_placeholder                         ? "bootstrap-placeholder" :
                 !source_safe                                  ? "source-not-client-safe" :
-                !source_pixel_proof.valid                     ? "no-pixel-proof" :
+                !source_pixel_proof.valid                     ? proof_reject_reason :
                                                                  "domain-mismatch";
             if (!valid && reject_summary[0] == 'n' && std::strcmp(reject_summary, "none") == 0) {
                 reject_summary = reject_reason;
@@ -1680,14 +1684,15 @@ namespace vkvv {
             VKVV_TRACE("export-seed-candidate",
                        "target_surface=%u candidate_surface=%u same_driver=%u same_stream=%u same_codec=%u same_fourcc=%u same_visible_extent=%u same_coded_extent=%u "
                        "same_sequence_generation=%u same_session_generation=%u candidate_present_gen=%llu candidate_fd_content_gen=%llu candidate_external_release_ok=%u "
-                       "candidate_pixel_proof_valid=%u candidate_is_black=%u candidate_is_zero=%u candidate_valid=%u reject_reason=%s",
+                       "candidate_pixel_proof_state=%s candidate_pixel_proof_valid=%u candidate_is_black=%u candidate_is_zero=%u candidate_valid=%u reject_reason=%s",
                        target->surface_id, source != nullptr ? source->surface_id : VA_INVALID_ID, same_driver ? 1U : 0U, same_stream ? 1U : 0U, same_codec ? 1U : 0U,
                        same_fourcc ? 1U : 0U, same_visible ? 1U : 0U, same_coded ? 1U : 0U,
                        source != nullptr && source->export_seed_generation == target->export_seed_generation ? 1U : 0U, same_stream ? 1U : 0U,
                        source != nullptr ? static_cast<unsigned long long>(source->export_resource.present_generation) : 0ULL,
                        source != nullptr ? static_cast<unsigned long long>(export_resource_fd_content_generation(&source->export_resource)) : 0ULL,
                        source != nullptr && export_visible_release_satisfied(&source->export_resource) ? 1U : 0U,
-                       source_pixel_proof.valid ? 1U : 0U, source_pixel_proof.is_black ? 1U : 0U, source_pixel_proof.is_zero ? 1U : 0U, valid ? 1U : 0U, reject_reason);
+                       vkvv_pixel_proof_state_name(source_pixel_proof.state), source_pixel_proof.valid ? 1U : 0U, source_pixel_proof.is_black ? 1U : 0U,
+                       source_pixel_proof.is_zero ? 1U : 0U, valid ? 1U : 0U, reject_reason);
             if (same_domain && selected == nullptr) {
                 selected = source;
                 if (valid) {
