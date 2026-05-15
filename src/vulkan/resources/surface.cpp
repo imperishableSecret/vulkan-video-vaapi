@@ -2,6 +2,7 @@
 #include "telemetry.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <mutex>
@@ -77,7 +78,19 @@ namespace vkvv {
             return;
         }
         if (resource->predecode_quarantined) {
-            trace_predecode_quarantine_outcome(nullptr, resource, "destroyed", "surface-destroy", false);
+            const bool bootstrap_destroyed_unused = resource->bootstrap_export && resource->content_generation == 0 && !resource->predecode_had_decode_submit;
+            trace_predecode_quarantine_outcome(nullptr, resource, bootstrap_destroyed_unused ? "bootstrap-destroyed-unused" : "destroyed", "surface-destroy", false);
+            if (bootstrap_destroyed_unused) {
+                const uint64_t now_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+                const uint64_t age_ms = resource->predecode_quarantine_enter_ms != 0 && now_ms >= resource->predecode_quarantine_enter_ms ?
+                    now_ms - resource->predecode_quarantine_enter_ms :
+                    0;
+                VKVV_TRACE("bootstrap-export-destroyed-unused",
+                           "surface=%u fd_dev=%llu fd_ino=%llu age_ms=%llu content_gen=%llu had_decode_submit=%u",
+                           resource->owner_surface_id, static_cast<unsigned long long>(resource->predecode_fd_dev),
+                           static_cast<unsigned long long>(resource->predecode_fd_ino), static_cast<unsigned long long>(age_ms),
+                           static_cast<unsigned long long>(resource->content_generation), resource->predecode_had_decode_submit ? 1U : 0U);
+            }
             VKVV_TRACE("export-resource-destroy", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx fd_dev=%llu fd_ino=%llu content_gen=%llu predecode_quarantined=1",
                        resource->owner_surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
                        resource->codec_operation, vkvv_trace_handle(resource->memory), static_cast<unsigned long long>(resource->predecode_fd_dev),
