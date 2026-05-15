@@ -51,6 +51,7 @@ namespace vkvv {
         switch (role) {
             case VkvvExportRole::SampleablePresentation: return "sampleable-presentation";
             case VkvvExportRole::Bootstrap: return "bootstrap";
+            case VkvvExportRole::PredecodeTarget: return "predecode-target";
             case VkvvExportRole::DecodedPresentation: return "decoded-presentation";
             case VkvvExportRole::SeededPresentation: return "seeded-presentation";
             case VkvvExportRole::Unknown: return "unknown";

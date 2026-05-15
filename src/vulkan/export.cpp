@@ -144,10 +144,17 @@ namespace {
         const bool has_no_pending     = !pending_before_export.found;
         const bool has_no_lifecycle   = !surface->had_va_begin && !surface->had_decode_submit;
         const bool has_incomplete_key = surface->stream_id == 0 || surface->codec_operation == 0 || resource->stream_id == 0 || resource->codec_operation == 0;
-        if (has_no_content && has_no_pending && has_no_lifecycle && has_incomplete_key) {
-            decision.role   = VkvvExportRole::Bootstrap;
-            decision.reason = "initial-undecoded-incomplete-domain";
-            return decision;
+        if (has_no_content && has_no_pending && has_no_lifecycle) {
+            if (has_incomplete_key) {
+                decision.role   = VkvvExportRole::Bootstrap;
+                decision.reason = "initial-undecoded-incomplete-domain";
+                return decision;
+            }
+            if (surface->stream_id == resource->stream_id && surface->codec_operation == resource->codec_operation) {
+                decision.role   = VkvvExportRole::PredecodeTarget;
+                decision.reason = "active-stream-undecoded-predecode";
+                return decision;
+            }
         }
         decision.role   = VkvvExportRole::SampleablePresentation;
         decision.reason = pending_before_export.found ? "pending-decode-sampleable" : "undecoded-sampleable";

@@ -333,6 +333,8 @@ def main() -> int:
         "had_decode_submit=",
         "had_visible_decode=",
         "export_role=",
+        "predecode-target",
+        "active-stream-undecoded-predecode",
         "export_intent=",
         "raw_export_flags=",
         "mem_type=",

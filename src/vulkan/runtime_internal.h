@@ -62,6 +62,7 @@ namespace vkvv {
         Unknown = 0,
         SampleablePresentation,
         Bootstrap,
+        PredecodeTarget,
         DecodedPresentation,
         SeededPresentation,
     };
