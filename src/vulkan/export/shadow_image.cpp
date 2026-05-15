@@ -1857,12 +1857,15 @@ namespace vkvv {
                            vkvv_trace_handle(owner_snapshot.memory));
                 return false;
             }
+            const bool                  was_bootstrap_export        = owner_export->bootstrap_export;
             const uint64_t                previous_present_generation = owner_export->present_generation;
             const VkvvExportPresentSource previous_present_source     = owner_export->present_source;
             owner_export->content_generation                          = source->content_generation;
             owner_export->predecode_exported                          = false;
             owner_export->predecode_seeded                            = false;
+            owner_export->bootstrap_export                            = false;
             owner_export->black_placeholder                           = false;
+            owner_export->export_role                                 = VkvvExportRole::DecodedPresentation;
             owner_export->seed_source_surface_id                      = VA_INVALID_ID;
             owner_export->seed_source_generation                      = 0;
             owner_export->seed_pixel_proof_valid                      = false;
@@ -1883,6 +1886,15 @@ namespace vkvv {
             }
             if (owner_export->predecode_quarantined && owner_export->content_generation != 0) {
                 exit_predecode_quarantine(source, owner_export, export_visible_release_satisfied(owner_export));
+            }
+            if (was_bootstrap_export) {
+                VKVV_TRACE("bootstrap-export-upgrade",
+                           "surface=%u driver=%llu fd_dev=%llu fd_ino=%llu codec=0x%x stream=%llu content_gen=%llu fd_content_gen=%llu display_visible=%u presentable=%u "
+                           "published_visible=%u",
+                           source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(owner_export->fd_dev),
+                           static_cast<unsigned long long>(owner_export->fd_ino), source->codec_operation, static_cast<unsigned long long>(source->stream_id),
+                           static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(export_resource_fd_content_generation(owner_export)),
+                           owner_refresh_export ? 1U : 0U, owner_export->presentable ? 1U : 0U, owner_export->published_visible ? 1U : 0U);
             }
             trace_exported_fd_freshness_check(source, owner_export, owner_refresh_export, owner_refresh_export, "copied-to-export-fd");
             VKVV_TRACE("export-copy-proof",

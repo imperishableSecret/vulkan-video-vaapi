@@ -151,6 +151,7 @@ def main() -> int:
         '"va-export-call"',
         '"export-role-decision"',
         '"bootstrap-export-return"',
+        '"bootstrap-export-upgrade"',
         '"debug-placeholder-export"',
         '"external-sync-proof"',
         '"predecode-quarantine-enter"',
