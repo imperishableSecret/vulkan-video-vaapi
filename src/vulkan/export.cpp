@@ -214,6 +214,19 @@ namespace {
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
+    const char* export_policy_status_name(VAStatus status, bool actual_mem_type_supported) {
+        if (!actual_mem_type_supported || status == VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE) {
+            return "unsupported-memory-type";
+        }
+        if (status == VA_STATUS_SUCCESS) {
+            return "success";
+        }
+        if (status == VA_STATUS_ERROR_OPERATION_FAILED) {
+            return "policy-failed";
+        }
+        return "driver-error";
+    }
+
     bool export_source_has_decoded_pixels(const SurfaceResource* owner, const ExportResource* resource, VkvvExportPixelSource pixel_source) {
         if (owner == nullptr || owner->content_generation == 0 || pixel_source != VkvvExportPixelSource::DecodedContent) {
             return false;
@@ -1005,6 +1018,8 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         const bool     proof_zero     = proof != nullptr && proof->pixel_crc != 0 && proof->zero_crc != 0 && proof->pixel_crc == proof->zero_crc;
         const bool     placeholder =
             pixel_source == VkvvExportPixelSource::Placeholder || (returned_resource != nullptr && returned_resource->black_placeholder) || proof_black || proof_zero;
+        const bool  actual_mem_type_supported = true;
+        const char* policy_status             = export_policy_status_name(status, actual_mem_type_supported);
         const bool valid_decoded_pixels_available = surface->decoded && resource->content_generation != 0 &&
             (returned_resource == nullptr || returned_resource->content_generation == resource->content_generation || pixel_source == VkvvExportPixelSource::DecodedContent);
         const bool valid_seed_available = pixel_source == VkvvExportPixelSource::StreamLocalSeed && fd_content_gen != 0 && returned_resource != nullptr &&
@@ -1027,15 +1042,16 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         VKVV_TRACE("generic-export-summary",
                    "surface=%u stream=%llu codec=0x%x width=%u height=%u fourcc=0x%x content_gen=%llu fd_content_gen=%llu returned_fd=%u decision=%s pixel_source=%s "
                    "pixel_proof_valid=%u is_black=%u is_zero=%u pending_decode=%u valid_seed_available=%u quarantine_outcome=%s external_release_mode=%s status=%d "
-                   "may_be_sampled_by_client=%u export_role=%s export_intent=%s raw_export_flags=0x%x mem_type=0x%x had_va_begin=%u had_decode_submit=%u",
+                   "va_status=%d actual_mem_type_supported=%u policy_status=%s may_be_sampled_by_client=%u export_role=%s export_intent=%s raw_export_flags=0x%x "
+                   "mem_type=0x%x had_va_begin=%u had_decode_submit=%u",
                    surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, surface->width, surface->height, resource->va_fourcc,
                    static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(fd_content_gen), returned_fd ? 1U : 0U,
                    decision != nullptr ? decision : "fail", vkvv_export_pixel_source_name(pixel_source), proof != nullptr && proof->pixel_proof_valid ? 1U : 0U,
                    proof_black || pixel_source == VkvvExportPixelSource::Placeholder ? 1U : 0U, proof_zero ? 1U : 0U, pending_before_export.found ? 1U : 0U,
                    valid_seed_available ? 1U : 0U, returned_resource != nullptr && returned_resource->predecode_quarantined ? "pending" : "none",
-                   returned_resource != nullptr ? vkvv_external_release_mode_name(returned_resource->external_sync.release_mode) : "none", status, may_sample ? 1U : 0U,
-                   vkvv_export_role_name(summary_role), vkvv_export_intent_name(export_intent), flags, export_mem_type, surface->had_va_begin ? 1U : 0U,
-                   surface->had_decode_submit ? 1U : 0U);
+                   returned_resource != nullptr ? vkvv_external_release_mode_name(returned_resource->external_sync.release_mode) : "none", status, status,
+                   actual_mem_type_supported ? 1U : 0U, policy_status, may_sample ? 1U : 0U, vkvv_export_role_name(summary_role), vkvv_export_intent_name(export_intent),
+                   flags, export_mem_type, surface->had_va_begin ? 1U : 0U, surface->had_decode_submit ? 1U : 0U);
     };
     VAStatus drain_status = drain_pending_surface_work_before_sync_command(runtime, const_cast<VkvvSurface*>(surface), reason, reason_size);
     trace_drain_attempt(drain_status);
