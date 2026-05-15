@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <drm/drm_fourcc.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 
@@ -52,6 +53,14 @@ bool vkvv_fd_identity_equal(VkvvFdIdentity lhs, VkvvFdIdentity rhs) {
     return lhs.valid && rhs.valid && lhs.dev == rhs.dev && lhs.ino == rhs.ino;
 }
 
+void vkvv_surface_import_close(VkvvExternalSurfaceImport* import) {
+    if (import == nullptr || import->fd_handle < 0) {
+        return;
+    }
+    close(import->fd_handle);
+    import->fd_handle = -1;
+}
+
 VkvvExternalImageIdentity vkvv_external_image_identity_from_import(const VkvvExternalSurfaceImport& import) {
     VkvvExternalImageIdentity identity{};
     identity.fd                      = import.fd;
@@ -80,6 +89,14 @@ VkvvExternalSurfaceImport vkvv_surface_import_from_attribs(const VASurfaceAttrib
         info.fourcc                                     = descriptor.fourcc;
         info.width                                      = descriptor.width;
         info.height                                     = descriptor.height;
+        info.data_size                                  = descriptor.num_objects > 0 ? descriptor.objects[0].size : 0;
+        if (descriptor.num_layers > 0) {
+            info.num_planes = descriptor.layers[0].num_planes;
+            for (uint32_t i = 0; i < info.num_planes && i < 4; i++) {
+                info.offsets[i] = descriptor.layers[0].offset[i];
+                info.pitches[i] = descriptor.layers[0].pitch[i];
+            }
+        }
         info.has_drm_format_modifier                    = descriptor.num_objects > 0;
         info.drm_format_modifier                        = descriptor.num_objects > 0 ? descriptor.objects[0].drm_format_modifier : 0;
     } else if ((info.memory_type & VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2) != 0) {
@@ -89,6 +106,14 @@ VkvvExternalSurfaceImport vkvv_surface_import_from_attribs(const VASurfaceAttrib
         info.fourcc                                    = descriptor.fourcc;
         info.width                                     = descriptor.width;
         info.height                                    = descriptor.height;
+        info.data_size                                 = descriptor.num_objects > 0 ? descriptor.objects[0].size : 0;
+        if (descriptor.num_layers > 0) {
+            info.num_planes = descriptor.layers[0].num_planes;
+            for (uint32_t i = 0; i < info.num_planes && i < 4; i++) {
+                info.offsets[i] = descriptor.layers[0].offset[i];
+                info.pitches[i] = descriptor.layers[0].pitch[i];
+            }
+        }
         info.has_drm_format_modifier                   = descriptor.num_objects > 0;
         info.drm_format_modifier                       = descriptor.num_objects > 0 ? descriptor.objects[0].drm_format_modifier : 0;
     } else if ((info.memory_type & VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME) != 0) {
@@ -99,6 +124,12 @@ VkvvExternalSurfaceImport vkvv_surface_import_from_attribs(const VASurfaceAttrib
         info.fourcc                                        = descriptor.pixel_format;
         info.width                                         = descriptor.width;
         info.height                                        = descriptor.height;
+        info.data_size                                     = descriptor.data_size;
+        info.num_planes                                    = descriptor.num_planes;
+        for (uint32_t i = 0; i < info.num_planes && i < 4; i++) {
+            info.offsets[i] = descriptor.offsets[i];
+            info.pitches[i] = descriptor.pitches[i];
+        }
         if ((descriptor.flags & VA_SURFACE_EXTBUF_DESC_ENABLE_TILING) == 0) {
             info.has_drm_format_modifier = true;
             info.drm_format_modifier     = DRM_FORMAT_MOD_LINEAR;
@@ -106,5 +137,8 @@ VkvvExternalSurfaceImport vkvv_surface_import_from_attribs(const VASurfaceAttrib
     }
 
     info.fd = vkvv_fd_identity_from_fd(fd);
+    if (info.fd.valid) {
+        info.fd_handle = dup(fd);
+    }
     return info;
 }

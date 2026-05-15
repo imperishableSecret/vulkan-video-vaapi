@@ -27,6 +27,90 @@ namespace {
         return input != nullptr && input->pic != nullptr && input->pic->pic_info_fields.bits.frame_type == STD_VIDEO_AV1_FRAME_TYPE_SWITCH;
     }
 
+    uint32_t av1_order_hint_bits_for_trace(const VkvvAV1SequenceHeader& sequence) {
+        if (!sequence.enable_order_hint || sequence.order_hint_bits_minus_1 < 0) {
+            return 0;
+        }
+        return static_cast<uint32_t>(sequence.order_hint_bits_minus_1) + 1U;
+    }
+
+    uint64_t av1_order_hint_modulus_for_trace(uint32_t order_hint_bits) {
+        if (order_hint_bits == 0 || order_hint_bits >= 32) {
+            return 0;
+        }
+        return 1ULL << order_hint_bits;
+    }
+
+    const char* av1_order_hint_classification(bool order_hint_enabled, bool visible_output, bool has_previous_visible, bool keyframe_reset, bool wrap_candidate,
+                                             bool order_decreased, bool same_order_hint) {
+        if (!order_hint_enabled) {
+            return "order-hint-disabled";
+        }
+        if (!visible_output) {
+            return "non-visible";
+        }
+        if (!has_previous_visible) {
+            return "first-visible";
+        }
+        if (keyframe_reset) {
+            return "keyframe-reset";
+        }
+        if (wrap_candidate) {
+            return "order-wrap";
+        }
+        if (order_decreased) {
+            return "order-decrease";
+        }
+        if (same_order_hint) {
+            return "same-order";
+        }
+        return "forward";
+    }
+
+    void trace_av1_order_hint_state(const VkvvDriver* drv, const VkvvContext* vctx, const AV1VideoSession* session, const VkvvAV1DecodeInput* input,
+                                    VASurfaceID target_surface_id, uint64_t frame_seq, bool refresh_export, uint32_t reference_count, int target_dpb_slot) {
+        if (session == nullptr || input == nullptr || input->pic == nullptr) {
+            return;
+        }
+        const uint32_t order_hint_bits    = av1_order_hint_bits_for_trace(input->sequence);
+        const uint64_t order_hint_modulus = av1_order_hint_modulus_for_trace(order_hint_bits);
+        const bool     order_hint_enabled = order_hint_bits != 0;
+        const bool     visible_output     = refresh_export && (input->header.show_frame || input->header.show_existing_frame);
+        const bool     has_previous       = session->has_last_visible_order_hint;
+        const bool     order_decreased    = has_previous && input->pic->order_hint < session->last_visible_order_hint;
+        const bool     same_order_hint    = has_previous && input->pic->order_hint == session->last_visible_order_hint;
+        const bool     keyframe_reset     = input->pic->pic_info_fields.bits.frame_type == STD_VIDEO_AV1_FRAME_TYPE_KEY && input->header.refresh_frame_flags == 0xff &&
+            reference_count == 0;
+        const bool wrap_candidate = order_decreased && order_hint_enabled && order_hint_modulus != 0 &&
+            session->last_visible_order_hint >= (order_hint_modulus * 3ULL) / 4ULL && input->pic->order_hint <= order_hint_modulus / 4ULL;
+        const char* classification =
+            av1_order_hint_classification(order_hint_enabled, visible_output, has_previous, keyframe_reset, wrap_candidate, order_decreased, same_order_hint);
+        VKVV_TRACE("av1-order-hint-state",
+                   "frame_seq=%llu driver=%llu ctx_stream=%llu target=%u order_hint=%u order_hint_enabled=%u order_hint_bits=%u order_hint_modulus=%llu "
+                   "previous_visible_valid=%u previous_visible_order_hint=%u previous_visible_frame_seq=%llu previous_visible_surface=%u visible_output=%u "
+                   "order_decreased=%u same_order_hint=%u wrap_candidate=%u keyframe_reset=%u classification=%s frame_type=%u show_frame=%u show_existing_frame=%u "
+                   "showable_frame=%u refresh_export=%u refresh=0x%02x refs=%u primary_ref=%u target_slot=%d",
+                   static_cast<unsigned long long>(frame_seq), drv != nullptr ? static_cast<unsigned long long>(drv->driver_instance_id) : 0ULL,
+                   vctx != nullptr ? static_cast<unsigned long long>(vctx->stream_id) : 0ULL, target_surface_id, input->pic->order_hint, order_hint_enabled ? 1U : 0U,
+                   order_hint_bits, static_cast<unsigned long long>(order_hint_modulus), has_previous ? 1U : 0U, session->last_visible_order_hint,
+                   static_cast<unsigned long long>(session->last_visible_order_frame_seq), session->last_visible_order_surface, visible_output ? 1U : 0U,
+                   order_decreased ? 1U : 0U, same_order_hint ? 1U : 0U, wrap_candidate ? 1U : 0U, keyframe_reset ? 1U : 0U, classification,
+                   input->pic->pic_info_fields.bits.frame_type, input->header.show_frame ? 1U : 0U, input->header.show_existing_frame ? 1U : 0U,
+                   input->header.showable_frame ? 1U : 0U, refresh_export ? 1U : 0U, input->header.refresh_frame_flags, reference_count, input->pic->primary_ref_frame,
+                   target_dpb_slot);
+    }
+
+    void remember_av1_visible_order_hint(AV1VideoSession* session, const VkvvAV1DecodeInput* input, VASurfaceID target_surface_id, uint64_t frame_seq,
+                                         bool refresh_export) {
+        if (session == nullptr || input == nullptr || input->pic == nullptr || !refresh_export || !(input->header.show_frame || input->header.show_existing_frame)) {
+            return;
+        }
+        session->has_last_visible_order_hint  = true;
+        session->last_visible_order_hint      = input->pic->order_hint;
+        session->last_visible_order_frame_seq = frame_seq;
+        session->last_visible_order_surface   = target_surface_id;
+    }
+
     uint8_t av1_va_ref_frame_index(const VADecPictureParameterBufferAV1* pic, uint32_t index) {
         if (pic == nullptr || index >= VKVV_AV1_ACTIVE_REFERENCE_COUNT) {
             return max_av1_reference_slots;
@@ -333,6 +417,209 @@ namespace {
             hash *= prime;
         }
         return hash;
+    }
+
+    uint64_t fnv1a64_bytes(uint64_t hash, const uint8_t* bytes, size_t size) {
+        constexpr uint64_t prime = 1099511628211ULL;
+        if (bytes == nullptr) {
+            return hash;
+        }
+        for (size_t i = 0; i < size; i++) {
+            hash ^= bytes[i];
+            hash *= prime;
+        }
+        return hash;
+    }
+
+    uint32_t av1_size_to_u32(size_t size) {
+        return size > std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max() : static_cast<uint32_t>(size);
+    }
+
+    uint32_t av1_tile_sum_size_for_trace(const VkvvAV1DecodeInput* input) {
+        uint64_t sum = 0;
+        if (input == nullptr || input->tiles == nullptr) {
+            return 0;
+        }
+        for (size_t i = 0; i < input->tile_count; i++) {
+            sum += input->tiles[i].size;
+        }
+        return sum > std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max() : static_cast<uint32_t>(sum);
+    }
+
+    uint64_t av1_bitstream_hash_for_trace(const VkvvAV1DecodeInput* input) {
+        if (input == nullptr || input->bitstream == nullptr || input->bitstream_size == 0) {
+            return 0;
+        }
+        uint64_t hash = 1469598103934665603ULL;
+        hash          = fnv1a64(hash, input->bitstream_size);
+        return fnv1a64_bytes(hash, input->bitstream, input->bitstream_size);
+    }
+
+    uint64_t av1_tile_bytes_hash_for_trace(const VkvvAV1DecodeInput* input) {
+        if (input == nullptr || input->tiles == nullptr || input->tile_count == 0 || input->bitstream == nullptr) {
+            return 0;
+        }
+        uint64_t hash = 1469598103934665603ULL;
+        hash          = fnv1a64(hash, input->tile_count);
+        for (size_t i = 0; i < input->tile_count; i++) {
+            const VkvvAV1Tile& tile = input->tiles[i];
+            const uint64_t     end  = static_cast<uint64_t>(tile.offset) + tile.size;
+            hash                    = fnv1a64(hash, tile.tile_index);
+            hash                    = fnv1a64(hash, tile.offset);
+            hash                    = fnv1a64(hash, tile.size);
+            if (tile.size != 0 && tile.offset < input->bitstream_size && end <= input->bitstream_size) {
+                hash = fnv1a64_bytes(hash, input->bitstream + tile.offset, tile.size);
+            }
+        }
+        return hash;
+    }
+
+    uint32_t av1_segmentation_feature_mask_or(const VADecPictureParameterBufferAV1* pic) {
+        uint32_t mask = 0;
+        if (pic == nullptr) {
+            return mask;
+        }
+        for (uint32_t i = 0; i < VKVV_AV1_SEGMENT_COUNT; i++) {
+            mask |= pic->seg_info.feature_mask[i];
+        }
+        return mask;
+    }
+
+    uint64_t av1_segmentation_feature_data_hash(const VADecPictureParameterBufferAV1* pic) {
+        if (pic == nullptr) {
+            return 0;
+        }
+        uint64_t hash = 1469598103934665603ULL;
+        for (uint32_t segment = 0; segment < VKVV_AV1_SEGMENT_COUNT; segment++) {
+            hash = fnv1a64(hash, pic->seg_info.feature_mask[segment]);
+            for (uint32_t feature = 0; feature < VKVV_AV1_SEGMENT_FEATURE_COUNT; feature++) {
+                hash = fnv1a64(hash, static_cast<uint16_t>(pic->seg_info.feature_data[segment][feature]));
+            }
+        }
+        return hash;
+    }
+
+    void fill_av1_pending_parameter_trace(Av1PendingDecodeTrace* trace, const VkvvAV1DecodeInput* input, const AV1PictureStdData* std_data, uint32_t tile_sum_size,
+                                          uint64_t tile_bytes_hash, uint64_t bitstream_hash) {
+        if (trace == nullptr || input == nullptr || input->pic == nullptr || std_data == nullptr) {
+            return;
+        }
+        const VADecPictureParameterBufferAV1* pic = input->pic;
+        trace->current_frame_id                   = input->header.current_frame_id;
+        trace->primary_ref_frame                  = pic->primary_ref_frame;
+        trace->bitstream_size                     = av1_size_to_u32(input->bitstream_size);
+        trace->tile_count                         = av1_size_to_u32(input->tile_count);
+        trace->tile_sum_size                      = tile_sum_size;
+        trace->tile_bytes_hash                    = tile_bytes_hash;
+        trace->bitstream_hash                     = bitstream_hash;
+        trace->tile_source                        = input->tile_source != nullptr ? input->tile_source : "unknown";
+        trace->tile_selection_reason              = input->tile_selection_reason != nullptr ? input->tile_selection_reason : "unknown";
+        trace->parser_used                        = input->parser_used;
+        trace->parser_status                      = input->parser_status;
+        trace->selected_obu_type                  = input->selected_obu_type;
+        trace->tile_group_count                   = input->tile_group_count;
+        trace->va_tile_count                      = av1_size_to_u32(input->va_tile_count);
+        trace->parsed_tile_count                  = av1_size_to_u32(input->parsed_tile_count);
+        trace->tile_ranges_equivalent             = input->tile_ranges_equivalent;
+        trace->base_q_idx                         = pic->base_qindex;
+        trace->delta_q_y_dc                       = pic->y_dc_delta_q;
+        trace->delta_q_u_dc                       = pic->u_dc_delta_q;
+        trace->delta_q_u_ac                       = pic->u_ac_delta_q;
+        trace->delta_q_v_dc                       = pic->v_dc_delta_q;
+        trace->delta_q_v_ac                       = pic->v_ac_delta_q;
+        trace->using_qmatrix                      = pic->qmatrix_fields.bits.using_qmatrix != 0;
+        trace->diff_uv_delta                      = std_data->quantization.flags.diff_uv_delta != 0;
+        trace->qm_y                               = pic->qmatrix_fields.bits.qm_y;
+        trace->qm_u                               = pic->qmatrix_fields.bits.qm_u;
+        trace->qm_v                               = pic->qmatrix_fields.bits.qm_v;
+        trace->error_resilient_mode               = pic->pic_info_fields.bits.error_resilient_mode != 0;
+        trace->disable_cdf_update                 = pic->pic_info_fields.bits.disable_cdf_update != 0;
+        trace->disable_frame_end_update_cdf       = pic->pic_info_fields.bits.disable_frame_end_update_cdf != 0;
+        trace->allow_intrabc                      = pic->pic_info_fields.bits.allow_intrabc != 0;
+        trace->allow_warped_motion                = pic->pic_info_fields.bits.allow_warped_motion != 0;
+        trace->allow_high_precision_mv            = pic->pic_info_fields.bits.allow_high_precision_mv != 0;
+        trace->is_motion_mode_switchable          = pic->pic_info_fields.bits.is_motion_mode_switchable != 0;
+        trace->use_ref_frame_mvs                  = pic->pic_info_fields.bits.use_ref_frame_mvs != 0;
+        trace->reference_select                   = pic->mode_control_fields.bits.reference_select != 0;
+        trace->skip_mode_present                  = pic->mode_control_fields.bits.skip_mode_present != 0;
+        trace->skip_mode_frame[0]                 = input->header.skip_mode_frame[0];
+        trace->skip_mode_frame[1]                 = input->header.skip_mode_frame[1];
+        trace->interpolation_filter               = pic->interp_filter;
+        trace->std_interpolation_filter           = std_data->picture.interpolation_filter;
+        trace->tx_mode                            = pic->mode_control_fields.bits.tx_mode;
+        trace->std_tx_mode                        = std_data->picture.TxMode;
+        trace->segmentation_enabled               = pic->seg_info.segment_info_fields.bits.enabled != 0;
+        trace->segmentation_update_map            = pic->seg_info.segment_info_fields.bits.update_map != 0;
+        trace->segmentation_temporal_update       = pic->seg_info.segment_info_fields.bits.temporal_update != 0;
+        trace->segmentation_update_data           = pic->seg_info.segment_info_fields.bits.update_data != 0;
+        trace->segmentation_feature_mask_or       = av1_segmentation_feature_mask_or(pic);
+        trace->segmentation_feature_data_hash     = av1_segmentation_feature_data_hash(pic);
+        trace->loop_filter_delta_enabled          = pic->loop_filter_info_fields.bits.mode_ref_delta_enabled != 0;
+        trace->loop_filter_delta_update           = pic->loop_filter_info_fields.bits.mode_ref_delta_update != 0;
+        trace->loop_filter_level[0]               = pic->filter_level[0];
+        trace->loop_filter_level[1]               = pic->filter_level[1];
+        trace->loop_filter_level[2]               = pic->filter_level_u;
+        trace->loop_filter_level[3]               = pic->filter_level_v;
+        trace->cdef_enabled                       = input->sequence.enable_cdef;
+        trace->cdef_damping_minus_3               = pic->cdef_damping_minus_3;
+        trace->cdef_bits                          = pic->cdef_bits;
+        trace->restoration_enabled                = input->sequence.enable_restoration;
+        trace->uses_lr                            = std_data->picture.flags.UsesLr != 0;
+        trace->uses_chroma_lr                     = std_data->picture.flags.usesChromaLr != 0;
+        trace->restoration_type[0]                = std_data->restoration.FrameRestorationType[0];
+        trace->restoration_type[1]                = std_data->restoration.FrameRestorationType[1];
+        trace->restoration_type[2]                = std_data->restoration.FrameRestorationType[2];
+        trace->restoration_size[0]                = std_data->restoration.LoopRestorationSize[0];
+        trace->restoration_size[1]                = std_data->restoration.LoopRestorationSize[1];
+        trace->restoration_size[2]                = std_data->restoration.LoopRestorationSize[2];
+    }
+
+    void trace_av1_picture_params(const VkvvDriver* drv, const VkvvContext* vctx, VASurfaceID target_surface_id, uint64_t frame_seq, const VkvvAV1DecodeInput* input,
+                                  const AV1PictureStdData* std_data, uint32_t reference_count, int target_dpb_slot, bool has_setup_slot, bool refresh_export,
+                                  uint32_t tile_sum_size, uint64_t tile_bytes_hash, uint64_t bitstream_hash) {
+        if (!vkvv_trace_enabled() || input == nullptr || input->pic == nullptr || std_data == nullptr) {
+            return;
+        }
+        const VADecPictureParameterBufferAV1* pic = input->pic;
+        VKVV_TRACE("av1-picture-params",
+                   "frame_seq=%llu driver=%llu ctx_stream=%llu target=%u order_hint=%u frame_type=%u current_frame_id=%u show_frame=%u showable_frame=%u "
+                   "show_existing_frame=%u refresh_frame_flags=0x%02x refresh_export=%u primary_ref_frame=%u reference_count=%u target_dpb_slot=%d setup_slot=%d "
+                   "bitstream_size=%zu tile_count=%zu tile_sum_size=%u tile_hash=0x%llx bitstream_hash=0x%llx tile_source=%s selection_reason=%s parser_used=%u "
+                   "parser_status=%d selected_obu_type=%u tile_group_count=%u va_tile_count=%zu parsed_tile_count=%zu tile_ranges_equivalent=%u "
+                   "base_q_idx=%u delta_q_y_dc=%d delta_q_u_dc=%d delta_q_u_ac=%d delta_q_v_dc=%d delta_q_v_ac=%d using_qmatrix=%u diff_uv_delta=%u "
+                   "qm_y=%u qm_u=%u qm_v=%u error_resilient_mode=%u disable_cdf_update=%u disable_frame_end_update_cdf=%u allow_intrabc=%u allow_warped_motion=%u "
+                   "allow_high_precision_mv=%u is_motion_mode_switchable=%u use_ref_frame_mvs=%u reference_select=%u skip_mode_present=%u skip_mode_frame0=%u "
+                   "skip_mode_frame1=%u interpolation_filter=%u std_interpolation_filter=%u tx_mode=%u std_tx_mode=%u segmentation_enabled=%u segmentation_update_map=%u "
+                   "segmentation_temporal_update=%u segmentation_update_data=%u segmentation_feature_mask_or=0x%x segmentation_feature_data_hash=0x%llx "
+                   "loop_filter_delta_enabled=%u loop_filter_delta_update=%u loop_filter_level0=%u loop_filter_level1=%u loop_filter_level2=%u loop_filter_level3=%u "
+                   "cdef_enabled=%u cdef_damping_minus_3=%u cdef_bits=%u restoration_enabled=%u uses_lr=%u uses_chroma_lr=%u restoration_type_y=%u "
+                   "restoration_type_cb=%u restoration_type_cr=%u restoration_size_y=%u restoration_size_cb=%u restoration_size_cr=%u",
+                   static_cast<unsigned long long>(frame_seq), drv != nullptr ? static_cast<unsigned long long>(drv->driver_instance_id) : 0ULL,
+                   vctx != nullptr ? static_cast<unsigned long long>(vctx->stream_id) : 0ULL, target_surface_id, pic->order_hint, pic->pic_info_fields.bits.frame_type,
+                   input->header.current_frame_id, input->header.show_frame ? 1U : 0U, input->header.showable_frame ? 1U : 0U,
+                   input->header.show_existing_frame ? 1U : 0U, input->header.refresh_frame_flags, refresh_export ? 1U : 0U, pic->primary_ref_frame, reference_count,
+                   target_dpb_slot, has_setup_slot ? target_dpb_slot : -1, input->bitstream_size, input->tile_count, tile_sum_size,
+                   static_cast<unsigned long long>(tile_bytes_hash), static_cast<unsigned long long>(bitstream_hash),
+                   input->tile_source != nullptr ? input->tile_source : "unknown", input->tile_selection_reason != nullptr ? input->tile_selection_reason : "unknown",
+                   input->parser_used ? 1U : 0U, input->parser_status, input->selected_obu_type, input->tile_group_count, input->va_tile_count, input->parsed_tile_count,
+                   input->tile_ranges_equivalent ? 1U : 0U, pic->base_qindex, pic->y_dc_delta_q, pic->u_dc_delta_q, pic->u_ac_delta_q, pic->v_dc_delta_q, pic->v_ac_delta_q,
+                   pic->qmatrix_fields.bits.using_qmatrix ? 1U : 0U, std_data->quantization.flags.diff_uv_delta ? 1U : 0U, pic->qmatrix_fields.bits.qm_y,
+                   pic->qmatrix_fields.bits.qm_u, pic->qmatrix_fields.bits.qm_v, pic->pic_info_fields.bits.error_resilient_mode ? 1U : 0U,
+                   pic->pic_info_fields.bits.disable_cdf_update ? 1U : 0U, pic->pic_info_fields.bits.disable_frame_end_update_cdf ? 1U : 0U,
+                   pic->pic_info_fields.bits.allow_intrabc ? 1U : 0U, pic->pic_info_fields.bits.allow_warped_motion ? 1U : 0U,
+                   pic->pic_info_fields.bits.allow_high_precision_mv ? 1U : 0U, pic->pic_info_fields.bits.is_motion_mode_switchable ? 1U : 0U,
+                   pic->pic_info_fields.bits.use_ref_frame_mvs ? 1U : 0U, pic->mode_control_fields.bits.reference_select ? 1U : 0U,
+                   pic->mode_control_fields.bits.skip_mode_present ? 1U : 0U, input->header.skip_mode_frame[0], input->header.skip_mode_frame[1], pic->interp_filter,
+                   std_data->picture.interpolation_filter, pic->mode_control_fields.bits.tx_mode, std_data->picture.TxMode,
+                   pic->seg_info.segment_info_fields.bits.enabled ? 1U : 0U, pic->seg_info.segment_info_fields.bits.update_map ? 1U : 0U,
+                   pic->seg_info.segment_info_fields.bits.temporal_update ? 1U : 0U, pic->seg_info.segment_info_fields.bits.update_data ? 1U : 0U,
+                   av1_segmentation_feature_mask_or(pic), static_cast<unsigned long long>(av1_segmentation_feature_data_hash(pic)),
+                   pic->loop_filter_info_fields.bits.mode_ref_delta_enabled ? 1U : 0U, pic->loop_filter_info_fields.bits.mode_ref_delta_update ? 1U : 0U,
+                   pic->filter_level[0], pic->filter_level[1], pic->filter_level_u, pic->filter_level_v, input->sequence.enable_cdef ? 1U : 0U,
+                   pic->cdef_damping_minus_3, pic->cdef_bits, input->sequence.enable_restoration ? 1U : 0U, std_data->picture.flags.UsesLr ? 1U : 0U,
+                   std_data->picture.flags.usesChromaLr ? 1U : 0U, std_data->restoration.FrameRestorationType[0], std_data->restoration.FrameRestorationType[1],
+                   std_data->restoration.FrameRestorationType[2], std_data->restoration.LoopRestorationSize[0], std_data->restoration.LoopRestorationSize[1],
+                   std_data->restoration.LoopRestorationSize[2]);
     }
 
     uint64_t av1_metadata_fingerprint(const SurfaceResource* resource, const VkvvAV1DecodeInput* input, uint64_t frame_seq, int target_dpb_slot) {
@@ -977,6 +1264,11 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     struct ReferenceRecord {
         VkvvSurface*                   surface  = nullptr;
         SurfaceResource*               resource = nullptr;
+        uint32_t                       reference_name = 0;
+        uint32_t                       ref_frame_map_index = 0;
+        uint32_t                       frame_id = 0;
+        bool                           showable = false;
+        bool                           displayed = false;
         VkVideoPictureResourceInfoKHR  picture{};
         StdVideoDecodeAV1ReferenceInfo std_ref{};
         VkVideoDecodeAV1DpbSlotInfoKHR av1_slot{};
@@ -1076,6 +1368,9 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         target_resource->av1_reference_count    = 1;
         target_resource->av1_decode_fingerprint = show_fingerprint;
         target_resource->av1_tile_source        = "show-existing";
+        if (trace_deep_enabled) {
+            trace_av1_order_hint_state(drv, vctx, session, input, target_surface_id, frame_seq, true, 1, show_slot->slot);
+        }
         if (fingerprint_level > 0) {
             VKVV_TRACE("av1-decode-fingerprint",
                        "frame_seq=%llu surface=%u content_generation=%llu order_hint=%u show_frame=%u refresh_frame_flags=0x%02x decode_image_handle=0x%llx "
@@ -1098,6 +1393,7 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
                    static_cast<unsigned long long>(drv->driver_instance_id), static_cast<unsigned long long>(vctx->stream_id), target_surface_id, show_slot->surface_id,
                    input->header.frame_to_show_map_idx, show_slot->slot, input->header.display_frame_id, static_cast<unsigned long long>(target_resource->content_generation),
                    static_cast<unsigned long long>(ref_resource->content_generation));
+        remember_av1_visible_order_hint(session, input, target_surface_id, frame_seq, true);
         VKVV_SUCCESS_REASON(reason, reason_size, "presented AV1 show-existing frame: target=%u source=%u map_idx=%d slot=%d depth=%u fourcc=0x%x", target_surface_id,
                             show_slot->surface_id, input->header.frame_to_show_map_idx, show_slot->slot, input->bit_depth, input->fourcc);
         return VA_STATUS_SUCCESS;
@@ -1167,6 +1463,11 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
             ReferenceRecord& record            = references[reference_count++];
             record.surface                     = ref_surface;
             record.resource                    = resource;
+            record.reference_name              = i;
+            record.ref_frame_map_index         = reference_index;
+            record.frame_id                    = stored_slot->has_metadata ? stored_slot->metadata.frame_id : 0;
+            record.showable                    = stored_slot->has_metadata && stored_slot->metadata.showable;
+            record.displayed                   = stored_slot->has_metadata && stored_slot->metadata.displayed;
             record.picture                     = make_picture_resource(resource, resource->extent);
             record.std_ref                     = stored_slot->info;
             record.av1_slot.sType              = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_DPB_SLOT_INFO_KHR;
@@ -1221,6 +1522,9 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
             av1_clear_surface_slot(session, target_surface_id);
             av1_release_unreferenced_retained_dpb_resources(runtime, session);
         }
+    }
+    if (trace_deep_enabled) {
+        trace_av1_order_hint_state(drv, vctx, session, input, target_surface_id, frame_seq, refresh_export, reference_count, target_dpb_slot);
     }
     trace_av1_dpb_map("av1-dpb-map-before-submit", drv, vctx, target_surface_id, frame_seq, session, input, reference_name_slot_indices, target_dpb_slot, has_setup_slot,
                       current_updates_reference_map, true, reference_count);
@@ -1341,7 +1645,42 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
         tile_offsets[i] = input->tiles[i].offset;
         tile_sizes[i]   = input->tiles[i].size;
     }
+    const bool     trace_enabled     = vkvv_trace_enabled();
+    const uint32_t tile_sum_size     = av1_tile_sum_size_for_trace(input);
+    const uint64_t tile_bytes_hash   = trace_enabled ? av1_tile_bytes_hash_for_trace(input) : 0;
+    const uint64_t bitstream_hash    = trace_enabled ? av1_bitstream_hash_for_trace(input) : 0;
     trace_av1_tile_submit_map(drv, vctx, target_surface_id, frame_seq, input);
+    trace_av1_picture_params(drv, vctx, target_surface_id, frame_seq, input, &std_data, reference_count, target_dpb_slot, has_setup_slot, refresh_export, tile_sum_size,
+                             tile_bytes_hash, bitstream_hash);
+    if (trace_enabled) {
+        for (uint32_t i = 0; i < VK_MAX_VIDEO_AV1_REFERENCES_PER_FRAME_KHR; i++) {
+            const uint8_t              ref_index      = av1_va_ref_frame_index(input->pic, i);
+            const int32_t              ref_slot       = reference_name_slot_indices[i];
+            const VASurfaceID          ref_surface_id = ref_index < max_av1_reference_slots ? input->pic->ref_frame_map[ref_index] : VA_INVALID_ID;
+            const ReferenceRecord*     record         = nullptr;
+            const AV1ReferenceSlot*    named_slot     = ref_index < max_av1_reference_slots ? av1_reference_slot_for_index(session, ref_index) : nullptr;
+            for (uint32_t j = 0; j < reference_count; j++) {
+                if (references[j].slot.slotIndex == ref_slot) {
+                    record = &references[j];
+                    break;
+                }
+            }
+            const SurfaceResource* resource = record != nullptr ? record->resource : nullptr;
+            VKVV_TRACE("av1-reference-params",
+                       "frame_seq=%llu target=%u reference_name=%u reference_ref_idx=%u reference_slot=%d reference_surface=%u named_surface=%u valid=%u order_hint=%u "
+                       "reference_frame_type=%u reference_frame_id=%u reference_showable=%u reference_displayed=%u reference_content_gen=%llu "
+                       "current_resource_content_gen=%llu matches_target_surface=%u",
+                       static_cast<unsigned long long>(frame_seq), target_surface_id, i, ref_index, ref_slot, ref_surface_id,
+                       named_slot != nullptr ? named_slot->surface_id : VA_INVALID_ID, record != nullptr && resource != nullptr ? 1U : 0U,
+                       record != nullptr ? record->std_ref.OrderHint : named_slot != nullptr ? named_slot->info.OrderHint : 0U,
+                       record != nullptr ? record->std_ref.frame_type : named_slot != nullptr ? named_slot->info.frame_type : 0U,
+                       record != nullptr ? record->frame_id : named_slot != nullptr && named_slot->has_metadata ? named_slot->metadata.frame_id : 0U,
+                       record != nullptr && record->showable ? 1U : named_slot != nullptr && named_slot->has_metadata && named_slot->metadata.showable ? 1U : 0U,
+                       record != nullptr && record->displayed ? 1U : named_slot != nullptr && named_slot->has_metadata && named_slot->metadata.displayed ? 1U : 0U,
+                       record != nullptr && resource != nullptr ? static_cast<unsigned long long>(record->resource->content_generation) : 0ULL,
+                       resource != nullptr ? static_cast<unsigned long long>(resource->content_generation) : 0ULL, ref_surface_id == target_surface_id ? 1U : 0U);
+        }
+    }
 
     VkVideoDecodeAV1PictureInfoKHR av1_picture{};
     av1_picture.sType           = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_PICTURE_INFO_KHR;
@@ -1421,10 +1760,6 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     trace_av1_dpb_map("av1-dpb-map-after-refresh", drv, vctx, target_surface_id, frame_seq, session, input, reference_name_slot_indices, target_dpb_slot, has_setup_slot,
                       current_updates_reference_map, true, reference_count);
 
-    uint32_t tile_sum_size = 0;
-    for (size_t i = 0; i < input->tile_count; i++) {
-        tile_sum_size += input->tiles[i].size;
-    }
     const uint32_t fingerprint_level = av1_fingerprint_level();
     const uint64_t decode_fingerprint = fingerprint_level > 0 ? av1_metadata_fingerprint(target_resource, input, frame_seq, target_dpb_slot) : 0;
     const uint64_t previous_decode_fingerprint = target_resource->av1_decode_fingerprint;
@@ -1440,6 +1775,35 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     target_resource->av1_reference_count      = reference_count;
     target_resource->av1_decode_fingerprint   = decode_fingerprint;
     target_resource->av1_tile_source          = input->tile_source != nullptr ? input->tile_source : "unknown";
+    Av1PendingDecodeTrace av1_pending_trace{};
+    av1_pending_trace.valid                 = true;
+    av1_pending_trace.frame_sequence        = frame_seq;
+    av1_pending_trace.order_hint            = input->pic->order_hint;
+    av1_pending_trace.frame_type            = input->pic->pic_info_fields.bits.frame_type;
+    av1_pending_trace.show_frame            = input->header.show_frame;
+    av1_pending_trace.showable_frame        = input->header.showable_frame;
+    av1_pending_trace.show_existing_frame   = input->header.show_existing_frame;
+    av1_pending_trace.refresh_frame_flags   = input->header.refresh_frame_flags;
+    av1_pending_trace.frame_to_show_map_idx = input->header.frame_to_show_map_idx;
+    av1_pending_trace.target_dpb_slot       = target_dpb_slot;
+    av1_pending_trace.setup_slot            = has_setup_slot ? target_dpb_slot : -1;
+    av1_pending_trace.reference_count       = reference_count;
+    fill_av1_pending_parameter_trace(&av1_pending_trace, input, &std_data, tile_sum_size, tile_bytes_hash, bitstream_hash);
+    const uint32_t traced_reference_count   = std::min<uint32_t>(reference_count, av1_pending_reference_trace_capacity);
+    for (uint32_t i = 0; i < traced_reference_count; i++) {
+        av1_pending_trace.references[i].resource           = references[i].resource;
+        av1_pending_trace.references[i].surface_id         = references[i].surface != nullptr ? references[i].surface->id : VA_INVALID_ID;
+        av1_pending_trace.references[i].dpb_slot           = references[i].slot.slotIndex;
+        av1_pending_trace.references[i].reference_name     = references[i].reference_name;
+        av1_pending_trace.references[i].ref_frame_map_index = references[i].ref_frame_map_index;
+        av1_pending_trace.references[i].order_hint         = references[i].std_ref.OrderHint;
+        av1_pending_trace.references[i].frame_type         = references[i].std_ref.frame_type;
+        av1_pending_trace.references[i].frame_id           = references[i].frame_id;
+        av1_pending_trace.references[i].content_generation = references[i].resource != nullptr ? references[i].resource->content_generation : 0;
+        av1_pending_trace.references[i].showable           = references[i].showable;
+        av1_pending_trace.references[i].displayed          = references[i].displayed;
+        av1_pending_trace.references[i].valid              = references[i].resource != nullptr;
+    }
     if (fingerprint_level > 0) {
         VKVV_TRACE("av1-decode-fingerprint",
                    "frame_seq=%llu surface=%u content_generation=%llu order_hint=%u show_frame=%u refresh_frame_flags=0x%02x decode_image_handle=0x%llx "
@@ -1452,9 +1816,10 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     }
 
     set_av1_visible_output_trace(target_resource, input, refresh_export);
-    track_pending_decode(runtime, target, parameters, upload_allocation_size, refresh_export, "AV1 decode");
+    track_pending_decode(runtime, target, parameters, upload_allocation_size, refresh_export, "AV1 decode", &av1_pending_trace);
     trace_av1_display_decision(drv, vctx, target_surface_id, refresh_export ? target_surface_id : VA_INVALID_ID, input, target_resource, refresh_export,
                                refresh_export ? "decode-display-queued" : "decode-reference-only");
+    remember_av1_visible_order_hint(session, input, target_surface_id, frame_seq, refresh_export);
     VKVV_TRACE("av1-submit",
                "driver=%llu ctx_stream=%llu target=%u slot=%d refresh=0x%02x refresh_export=%u hdr_existing=%u hdr_show=%u hdr_showable=%u depth=%u fourcc=0x%x refs=%u bytes=%zu "
                "upload_mem=%llu session_mem=%llu",

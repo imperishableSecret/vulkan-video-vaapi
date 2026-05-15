@@ -38,6 +38,10 @@ namespace vkvv {
             return count;
         }
 
+        uint64_t monotonic_us() {
+            return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+        }
+
         CommandSlot* find_pending_slot_locked(VulkanRuntime* runtime, const VkvvSurface* surface, size_t* index) {
             for (size_t i = 0; i < command_slot_count; i++) {
                 CommandSlot& slot = runtime->command_slots[i];
@@ -244,11 +248,13 @@ namespace vkvv {
     }
 
     void track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool refresh_export,
-                              const char* operation) {
+                              const char* operation, const Av1PendingDecodeTrace* av1_trace) {
         CommandSlot& slot                   = active_slot(runtime);
         slot.pending.surface                = surface;
         slot.pending.parameters             = parameters;
         slot.pending.upload_allocation_size = upload_allocation_size;
+        slot.pending.submit_monotonic_us    = monotonic_us();
+        slot.pending.av1_trace              = av1_trace != nullptr ? *av1_trace : Av1PendingDecodeTrace{};
         slot.pending.refresh_export         = refresh_export;
         slot.pending.use                    = CommandUse::Decode;
         std::snprintf(slot.pending.operation, sizeof(slot.pending.operation), "%s", operation);
@@ -262,7 +268,7 @@ namespace vkvv {
             vkvv_trace_emit("pending-submit",
                             "slot=%zu use=%s pending=%zu operation=%s surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u decoded=%u content_gen=%llu "
                             "shadow_mem=0x%llx shadow_gen=%llu "
-                            "predecode=%u upload_mem=%llu",
+                            "predecode=%u upload_mem=%llu pending_submit_monotonic_us=%llu",
                             runtime->active_command_slot, command_use_name(slot.pending.use), pending_count, operation != nullptr ? operation : "unknown",
                             surface != nullptr ? surface->id : VA_INVALID_ID, surface != nullptr ? static_cast<unsigned long long>(surface->driver_instance_id) : 0ULL,
                             surface != nullptr ? static_cast<unsigned long long>(surface->stream_id) : 0ULL, surface != nullptr ? surface->codec_operation : 0U,
@@ -270,7 +276,8 @@ namespace vkvv {
                             resource != nullptr ? static_cast<unsigned long long>(resource->content_generation) : 0ULL,
                             resource != nullptr ? vkvv_trace_handle(resource->export_resource.memory) : 0ULL,
                             resource != nullptr ? static_cast<unsigned long long>(resource->export_resource.content_generation) : 0ULL,
-                            resource != nullptr && resource->export_resource.predecode_exported ? 1U : 0U, static_cast<unsigned long long>(upload_allocation_size));
+                            resource != nullptr && resource->export_resource.predecode_exported ? 1U : 0U, static_cast<unsigned long long>(upload_allocation_size),
+                            static_cast<unsigned long long>(slot.pending.submit_monotonic_us));
         }
         if (resource != nullptr && resource->export_resource.image != VK_NULL_HANDLE) {
             if (resource->export_resource.predecode_quarantined) {
@@ -291,6 +298,8 @@ namespace vkvv {
             return VA_STATUS_SUCCESS;
         }
 
+        const uint64_t complete_call_us      = monotonic_us();
+        uint64_t       complete_wait_done_us = complete_call_us;
         PendingWork completed{};
         if (runtime->device_lost) {
             {
@@ -330,12 +339,16 @@ namespace vkvv {
             } else {
                 clear_pending_work_locked(slot, &completed);
             }
+            complete_wait_done_us = monotonic_us();
         }
 
         const auto* completed_resource_before = completed.surface != nullptr ? static_cast<const SurfaceResource*>(completed.surface->vulkan) : nullptr;
+        const uint64_t pending_submit_us = completed.submit_monotonic_us;
+        const uint64_t pending_age_us    = pending_submit_us != 0 && complete_wait_done_us >= pending_submit_us ? complete_wait_done_us - pending_submit_us : 0;
         VKVV_TRACE("pending-complete-before",
                    "use=%s operation=%s surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u "
-                   "exported=%u upload_mem=%llu",
+                   "exported=%u upload_mem=%llu pending_submit_monotonic_us=%llu complete_call_monotonic_us=%llu complete_wait_done_monotonic_us=%llu pending_age_us=%llu "
+                   "complete_wait_us=%llu",
                    command_use_name(completed.use), completed.operation[0] != '\0' ? completed.operation : "Vulkan decode",
                    completed.surface != nullptr ? completed.surface->id : VA_INVALID_ID,
                    completed.surface != nullptr ? static_cast<unsigned long long>(completed.surface->driver_instance_id) : 0ULL,
@@ -347,7 +360,9 @@ namespace vkvv {
                    completed_resource_before != nullptr ? static_cast<unsigned long long>(completed_resource_before->export_resource.content_generation) : 0ULL,
                    completed_resource_before != nullptr && completed_resource_before->export_resource.predecode_exported ? 1U : 0U,
                    completed_resource_before != nullptr && completed_resource_before->export_resource.exported ? 1U : 0U,
-                   static_cast<unsigned long long>(completed.upload_allocation_size));
+                   static_cast<unsigned long long>(completed.upload_allocation_size), static_cast<unsigned long long>(pending_submit_us),
+                   static_cast<unsigned long long>(complete_call_us), static_cast<unsigned long long>(complete_wait_done_us), static_cast<unsigned long long>(pending_age_us),
+                   static_cast<unsigned long long>(complete_wait_done_us >= complete_call_us ? complete_wait_done_us - complete_call_us : 0));
 
         destroy_pending_work_parameters(runtime, &completed);
         if (runtime->device_lost) {
@@ -371,24 +386,30 @@ namespace vkvv {
             trace_export_fd_lifetime(resource, &resource->export_resource, "decode-complete", resource->content_generation,
                                      export_resource_fd_may_be_sampled_by_client(&resource->export_resource));
         }
+        trace_av1_pending_decode_pixel_proof(runtime, &completed);
         const auto* refresh_resource = completed.surface != nullptr ? static_cast<const SurfaceResource*>(completed.surface->vulkan) : nullptr;
+        const uint64_t refresh_start_us = monotonic_us();
         VKVV_TRACE("pending-refresh-decision",
-                   "use=%s operation=%s surface=%u refresh_export=%u exported=%u predecode=%u shadow_mem=0x%llx content_gen=%llu shadow_gen=%llu action=refresh-current",
+                   "use=%s operation=%s surface=%u refresh_export=%u exported=%u predecode=%u shadow_mem=0x%llx content_gen=%llu shadow_gen=%llu action=refresh-current "
+                   "refresh_start_monotonic_us=%llu pending_age_us=%llu",
                    command_use_name(completed.use), completed.operation[0] != '\0' ? completed.operation : "Vulkan decode",
                    completed.surface != nullptr ? completed.surface->id : VA_INVALID_ID, completed.refresh_export ? 1U : 0U,
                    refresh_resource != nullptr && refresh_resource->export_resource.exported ? 1U : 0U,
                    refresh_resource != nullptr && refresh_resource->export_resource.predecode_exported ? 1U : 0U,
                    refresh_resource != nullptr ? vkvv_trace_handle(refresh_resource->export_resource.memory) : 0ULL,
                    refresh_resource != nullptr ? static_cast<unsigned long long>(refresh_resource->content_generation) : 0ULL,
-                   refresh_resource != nullptr ? static_cast<unsigned long long>(refresh_resource->export_resource.content_generation) : 0ULL);
+                   refresh_resource != nullptr ? static_cast<unsigned long long>(refresh_resource->export_resource.content_generation) : 0ULL,
+                   static_cast<unsigned long long>(refresh_start_us), static_cast<unsigned long long>(pending_age_us));
         VAStatus status = ::vkvv_vulkan_refresh_surface_export(runtime, completed.surface, completed.refresh_export, reason, reason_size);
+        const uint64_t refresh_done_us = monotonic_us();
         if (status != VA_STATUS_SUCCESS) {
             complete_surface_status(completed.surface, status);
             return status;
         }
         const auto* completed_resource_after = completed.surface != nullptr ? static_cast<const SurfaceResource*>(completed.surface->vulkan) : nullptr;
         VKVV_TRACE("pending-complete-after",
-                   "use=%s operation=%s surface=%u status=%d refresh_export=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u exported=%u",
+                   "use=%s operation=%s surface=%u status=%d refresh_export=%u decoded=%u content_gen=%llu shadow_mem=0x%llx shadow_gen=%llu predecode=%u exported=%u "
+                   "complete_done_monotonic_us=%llu pending_submit_monotonic_us=%llu pending_total_us=%llu refresh_us=%llu post_wait_us=%llu",
                    command_use_name(completed.use), completed.operation[0] != '\0' ? completed.operation : "Vulkan decode",
                    completed.surface != nullptr ? completed.surface->id : VA_INVALID_ID, status, completed.refresh_export ? 1U : 0U,
                    completed.surface != nullptr && completed.surface->decoded ? 1U : 0U,
@@ -396,7 +417,11 @@ namespace vkvv {
                    completed_resource_after != nullptr ? vkvv_trace_handle(completed_resource_after->export_resource.memory) : 0ULL,
                    completed_resource_after != nullptr ? static_cast<unsigned long long>(completed_resource_after->export_resource.content_generation) : 0ULL,
                    completed_resource_after != nullptr && completed_resource_after->export_resource.predecode_exported ? 1U : 0U,
-                   completed_resource_after != nullptr && completed_resource_after->export_resource.exported ? 1U : 0U);
+                   completed_resource_after != nullptr && completed_resource_after->export_resource.exported ? 1U : 0U, static_cast<unsigned long long>(refresh_done_us),
+                   static_cast<unsigned long long>(pending_submit_us),
+                   static_cast<unsigned long long>(pending_submit_us != 0 && refresh_done_us >= pending_submit_us ? refresh_done_us - pending_submit_us : 0),
+                   static_cast<unsigned long long>(refresh_done_us >= refresh_start_us ? refresh_done_us - refresh_start_us : 0),
+                   static_cast<unsigned long long>(refresh_done_us >= complete_wait_done_us ? refresh_done_us - complete_wait_done_us : 0));
         complete_surface_status(completed.surface, VA_STATUS_SUCCESS);
         if (reason[0] == '\0') {
             VKVV_SUCCESS_REASON(reason, reason_size, "%s completed asynchronously: surface=%u upload_mem=%llu",

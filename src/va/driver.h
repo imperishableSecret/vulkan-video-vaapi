@@ -173,9 +173,14 @@ struct VkvvExternalSurfaceImport {
     bool           external    = false;
     uint32_t       memory_type = 0;
     VkvvFdIdentity fd;
+    int            fd_handle               = -1;
     unsigned int   fourcc                  = 0;
     unsigned int   width                   = 0;
     unsigned int   height                  = 0;
+    unsigned int   data_size               = 0;
+    unsigned int   num_planes              = 0;
+    unsigned int   offsets[4]              = {};
+    unsigned int   pitches[4]              = {};
     bool           has_drm_format_modifier = false;
     uint64_t       drm_format_modifier     = 0;
 };
@@ -253,6 +258,11 @@ typedef struct VkvvContext {
     const VkvvEncodeOps* encode_ops;
     void*                encode_state;
     void*                encode_session;
+    uint64_t             telemetry_current_begin_us       = 0;
+    uint64_t             telemetry_last_begin_us          = 0;
+    uint64_t             telemetry_last_render_us         = 0;
+    uint64_t             telemetry_last_end_enter_us      = 0;
+    uint64_t             telemetry_last_end_submitted_us  = 0;
 } VkvvContext;
 
 typedef struct VkvvObject {
@@ -278,6 +288,10 @@ typedef struct VkvvDriver {
     unsigned int          active_decode_height          = 0;
     unsigned int          active_decode_rt_format       = 0;
     unsigned int          active_decode_fourcc          = 0;
+    uint64_t              telemetry_last_va_call_us      = 0;
+    const char*           telemetry_last_va_call         = nullptr;
+    VAContextID           telemetry_last_va_context      = VA_INVALID_ID;
+    VASurfaceID           telemetry_last_va_surface      = VA_INVALID_SURFACE;
     void*                 vulkan;
 } VkvvDriver;
 

@@ -172,23 +172,55 @@ namespace vkvv {
     }
 
     bool surface_resource_has_exported_shadow_output(const SurfaceResource* resource) {
-        return surface_resource_has_current_export_shadow(resource) && resource->exported && resource->export_resource.exported &&
+        if (resource == nullptr) {
+            return false;
+        }
+
+        const bool exported_shadow = resource->exported && resource->export_resource.exported;
+        return surface_resource_has_current_export_shadow(resource) && exported_shadow &&
             !resource->export_resource.predecode_quarantined && resource->export_resource.presentable && resource->export_resource.present_pinned &&
             resource->export_resource.published_visible && resource->export_resource.present_generation == resource->content_generation &&
             export_visible_release_satisfied(&resource->export_resource) && export_resource_fd_fresh(resource);
     }
 
     bool surface_resource_has_direct_import_output(const SurfaceResource* resource) {
-        if (av1_export_env_flag_enabled("VKVV_AV1_DISABLE_IMPORTED_OUTPUT") || av1_export_env_flag_enabled("VKVV_AV1_FORCE_EXPORTED_SHADOW")) {
+        const bool disabled_imported_output = av1_export_env_flag_enabled("VKVV_AV1_DISABLE_IMPORTED_OUTPUT");
+        const bool forced_exported_shadow   = av1_export_env_flag_enabled("VKVV_AV1_FORCE_EXPORTED_SHADOW");
+        if (disabled_imported_output || forced_exported_shadow) {
             return false;
         }
-        if (resource == nullptr || resource->content_generation == 0 || !resource->import.external || !resource->import.fd.valid || !resource->direct_import_presentable ||
-            !resource->decode_image_is_imported_image || !resource->import_present_barrier_done || !resource->import_fd_stat_valid) {
+        if (resource == nullptr) {
             return false;
         }
-        return resource->import_present_generation == resource->content_generation && resource->import_fd_dev == resource->import.fd.dev &&
-            resource->import_fd_ino == resource->import.fd.ino && resource->import_driver_instance_id == resource->driver_instance_id &&
-            resource->import_stream_id == resource->stream_id && resource->import_codec_operation == resource->codec_operation;
+        const bool content_ok        = resource->content_generation != 0;
+        const bool import_ok         = resource->import.external && resource->import.fd.valid;
+        const bool copy_ok           = resource->decode_image_is_imported_image || resource->import_output_copy_done;
+        const bool base_state_ok     = content_ok && import_ok && resource->direct_import_presentable && copy_ok && resource->import_present_barrier_done && resource->import_fd_stat_valid;
+        const bool generation_match  = resource->import_present_generation == resource->content_generation;
+        const bool fd_match          = resource->import_fd_dev == resource->import.fd.dev && resource->import_fd_ino == resource->import.fd.ino;
+        const bool driver_match      = resource->import_driver_instance_id == resource->driver_instance_id;
+        const bool stream_match      = resource->import_stream_id == resource->stream_id;
+        const bool codec_match       = resource->import_codec_operation == resource->codec_operation;
+        const bool result            = base_state_ok && generation_match && fd_match && driver_match && stream_match && codec_match;
+        if (surface_resource_uses_av1_decode(resource) && resource->import.external && resource->content_generation != 0) {
+            VKVV_TRACE("direct-import-output-gate",
+                       "surface=%u stream=%llu codec=0x%x content_gen=%llu result=%u disabled_imported_output=%u forced_exported_shadow=%u content_ok=%u import_ok=%u "
+                       "direct_presentable=%u copy_ok=%u decode_image_imported=%u import_output_copy_done=%u barrier_done=%u fd_stat_valid=%u generation_match=%u fd_match=%u "
+                       "driver_match=%u stream_match=%u codec_match=%u import_present_generation=%llu import_fd_dev=%llu import_fd_ino=%llu current_fd_dev=%llu current_fd_ino=%llu "
+                       "import_driver=%llu current_driver=%llu import_stream=%llu current_stream=%llu import_codec=0x%x current_codec=0x%x",
+                       resource->surface_id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                       static_cast<unsigned long long>(resource->content_generation), result ? 1U : 0U, disabled_imported_output ? 1U : 0U,
+                       forced_exported_shadow ? 1U : 0U, content_ok ? 1U : 0U, import_ok ? 1U : 0U, resource->direct_import_presentable ? 1U : 0U,
+                       copy_ok ? 1U : 0U, resource->decode_image_is_imported_image ? 1U : 0U, resource->import_output_copy_done ? 1U : 0U,
+                       resource->import_present_barrier_done ? 1U : 0U, resource->import_fd_stat_valid ? 1U : 0U, generation_match ? 1U : 0U, fd_match ? 1U : 0U,
+                       driver_match ? 1U : 0U, stream_match ? 1U : 0U, codec_match ? 1U : 0U,
+                       static_cast<unsigned long long>(resource->import_present_generation), static_cast<unsigned long long>(resource->import_fd_dev),
+                       static_cast<unsigned long long>(resource->import_fd_ino), static_cast<unsigned long long>(resource->import.fd.dev),
+                       static_cast<unsigned long long>(resource->import.fd.ino), static_cast<unsigned long long>(resource->import_driver_instance_id),
+                       static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->import_stream_id),
+                       static_cast<unsigned long long>(resource->stream_id), resource->import_codec_operation, resource->codec_operation);
+        }
+        return result;
     }
 
     bool surface_resource_has_published_visible_output(const SurfaceResource* resource) {
@@ -528,6 +560,8 @@ namespace vkvv {
         }
         resource->export_retained_attached = false;
         resource->export_import_attached   = false;
+        resource->import_output_copy_target = false;
+        resource->import_output_copy_done   = false;
     }
 
     void clear_surface_direct_import_present_state(SurfaceResource* resource) {
@@ -536,6 +570,7 @@ namespace vkvv {
         }
         resource->direct_import_presentable      = false;
         resource->decode_image_is_imported_image = false;
+        resource->import_output_copy_done        = false;
         resource->import_present_barrier_done    = false;
         resource->import_fd_stat_valid           = false;
         resource->import_present_generation      = 0;

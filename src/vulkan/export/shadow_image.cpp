@@ -10,6 +10,7 @@
 #include <mutex>
 #include <new>
 #include <string>
+#include <unistd.h>
 #include <vector>
 #include <drm_fourcc.h>
 
@@ -445,6 +446,175 @@ namespace vkvv {
                                             size_t reason_size) {
         return create_image_resource_with_tiling(runtime, resource, format, extent, tiling, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, true,
                                                  "export shadow image", reason, reason_size);
+    }
+
+    bool ensure_imported_output_resource(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size) {
+        if (runtime == nullptr || source == nullptr) {
+            std::snprintf(reason, reason_size, "missing imported output resource state");
+            return false;
+        }
+        const ExportFormatInfo* format = export_format_for_surface(nullptr, source, reason, reason_size);
+        if (format == nullptr) {
+            return false;
+        }
+        if (!surface_resource_uses_av1_decode(source) || !source->import.external || !source->import.fd.valid || source->import.fd_handle < 0 ||
+            !source->import.has_drm_format_modifier || source->import.num_planes < format->layer_count) {
+            VKVV_TRACE("import-output-resource-skip",
+                       "surface=%u stream=%llu codec=0x%x external=%u fd_valid=%u fd_handle=%d modifier_valid=%u planes=%u required_planes=%u reason=incomplete-import",
+                       source->surface_id, static_cast<unsigned long long>(source->stream_id), source->codec_operation, source->import.external ? 1U : 0U,
+                       source->import.fd.valid ? 1U : 0U, source->import.fd_handle, source->import.has_drm_format_modifier ? 1U : 0U, source->import.num_planes,
+                       format->layer_count);
+            return false;
+        }
+        if (runtime->get_memory_fd_properties == nullptr || !runtime->external_memory_fd || !runtime->external_memory_dma_buf ||
+            !runtime->image_drm_format_modifier) {
+            VKVV_TRACE("import-output-resource-skip",
+                       "surface=%u stream=%llu codec=0x%x fd_props=%u external_fd=%u dma_buf=%u drm_modifier=%u reason=missing-vulkan-import-support",
+                       source->surface_id, static_cast<unsigned long long>(source->stream_id), source->codec_operation,
+                       runtime->get_memory_fd_properties != nullptr ? 1U : 0U, runtime->external_memory_fd ? 1U : 0U, runtime->external_memory_dma_buf ? 1U : 0U,
+                       runtime->image_drm_format_modifier ? 1U : 0U);
+            return false;
+        }
+
+        ExportResource* resource = &source->export_resource;
+        if (resource->image != VK_NULL_HANDLE) {
+            return source->import_output_copy_target && resource->fd_dev == source->import.fd.dev && resource->fd_ino == source->import.fd.ino;
+        }
+
+        VkSubresourceLayout plane_layouts[2]{};
+        for (uint32_t i = 0; i < format->layer_count; i++) {
+            const uint32_t plane_height = std::max<uint32_t>(1, source->coded_extent.height / std::max<uint32_t>(1, format->layers[i].height_divisor));
+            const uint64_t raw_size     = static_cast<uint64_t>(source->import.pitches[i]) * plane_height;
+            uint64_t       plane_size   = raw_size;
+            if (source->import.data_size != 0 && source->import.offsets[i] < source->import.data_size) {
+                plane_size = std::min<uint64_t>(raw_size, source->import.data_size - source->import.offsets[i]);
+            }
+            plane_layouts[i].offset   = source->import.offsets[i];
+            plane_layouts[i].size     = plane_size;
+            plane_layouts[i].rowPitch = source->import.pitches[i];
+        }
+
+        VkImageDrmFormatModifierExplicitCreateInfoEXT modifier_info{};
+        modifier_info.sType                       = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT;
+        modifier_info.drmFormatModifier           = source->import.drm_format_modifier;
+        modifier_info.drmFormatModifierPlaneCount = format->layer_count;
+        modifier_info.pPlaneLayouts               = plane_layouts;
+
+        VkExternalMemoryImageCreateInfo external_image{};
+        external_image.sType       = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
+        external_image.pNext       = &modifier_info;
+        external_image.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+
+        VkImageCreateInfo image_info{};
+        image_info.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        image_info.pNext         = &external_image;
+        image_info.imageType     = VK_IMAGE_TYPE_2D;
+        image_info.format        = format->vk_format;
+        image_info.extent        = {source->coded_extent.width, source->coded_extent.height, 1};
+        image_info.mipLevels     = 1;
+        image_info.arrayLayers   = 1;
+        image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
+        image_info.tiling        = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+        image_info.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+        image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        VkResult result = vkCreateImage(runtime->device, &image_info, nullptr, &resource->image);
+        if (!record_vk_result(runtime, result, "vkCreateImage", "imported output image", reason, reason_size)) {
+            VKVV_TRACE("import-output-resource-failed", "surface=%u stage=create-image result=%d modifier=0x%llx", source->surface_id, result,
+                       static_cast<unsigned long long>(source->import.drm_format_modifier));
+            return false;
+        }
+
+        VkMemoryRequirements requirements{};
+        vkGetImageMemoryRequirements(runtime->device, resource->image, &requirements);
+
+        VkMemoryFdPropertiesKHR fd_properties{};
+        fd_properties.sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR;
+        result              = runtime->get_memory_fd_properties(runtime->device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT, source->import.fd_handle, &fd_properties);
+        if (!record_vk_result(runtime, result, "vkGetMemoryFdPropertiesKHR", "imported output image", reason, reason_size)) {
+            VKVV_TRACE("import-output-resource-failed", "surface=%u stage=fd-properties result=%d", source->surface_id, result);
+            destroy_export_resource(runtime, resource);
+            return false;
+        }
+
+        uint32_t memory_type_index = 0;
+        const uint32_t memory_bits = requirements.memoryTypeBits & fd_properties.memoryTypeBits;
+        if (!find_memory_type(runtime->memory_properties, memory_bits, 0, &memory_type_index)) {
+            VKVV_TRACE("import-output-resource-failed", "surface=%u stage=memory-type requirements=0x%x fd_bits=0x%x", source->surface_id, requirements.memoryTypeBits,
+                       fd_properties.memoryTypeBits);
+            destroy_export_resource(runtime, resource);
+            std::snprintf(reason, reason_size, "no memory type for imported output image");
+            return false;
+        }
+
+        const int import_fd = dup(source->import.fd_handle);
+        if (import_fd < 0) {
+            VKVV_TRACE("import-output-resource-failed", "surface=%u stage=dup-fd fd_handle=%d", source->surface_id, source->import.fd_handle);
+            destroy_export_resource(runtime, resource);
+            std::snprintf(reason, reason_size, "failed to duplicate imported output fd");
+            return false;
+        }
+
+        VkMemoryDedicatedAllocateInfo dedicated_allocate{};
+        dedicated_allocate.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
+        dedicated_allocate.image = resource->image;
+
+        VkImportMemoryFdInfoKHR import_info{};
+        import_info.sType      = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR;
+        import_info.pNext      = &dedicated_allocate;
+        import_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+        import_info.fd         = import_fd;
+
+        VkMemoryAllocateInfo allocate_info{};
+        allocate_info.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate_info.pNext           = &import_info;
+        allocate_info.allocationSize  = requirements.size;
+        allocate_info.memoryTypeIndex = memory_type_index;
+
+        result = vkAllocateMemory(runtime->device, &allocate_info, nullptr, &resource->memory);
+        if (!record_vk_result(runtime, result, "vkAllocateMemory", "imported output image", reason, reason_size)) {
+            close(import_fd);
+            VKVV_TRACE("import-output-resource-failed", "surface=%u stage=allocate result=%d size=%llu memory_type=%u", source->surface_id, result,
+                       static_cast<unsigned long long>(requirements.size), memory_type_index);
+            destroy_export_resource(runtime, resource);
+            return false;
+        }
+
+        result = vkBindImageMemory(runtime->device, resource->image, resource->memory, 0);
+        if (!record_vk_result(runtime, result, "vkBindImageMemory", "imported output image", reason, reason_size)) {
+            VKVV_TRACE("import-output-resource-failed", "surface=%u stage=bind result=%d", source->surface_id, result);
+            destroy_export_resource(runtime, resource);
+            return false;
+        }
+
+        resource->driver_instance_id     = source->driver_instance_id;
+        resource->stream_id              = source->stream_id;
+        resource->codec_operation        = source->codec_operation;
+        resource->owner_surface_id       = source->surface_id;
+        resource->extent                 = source->coded_extent;
+        resource->format                 = format->vk_format;
+        resource->va_fourcc              = format->va_fourcc;
+        resource->allocation_size        = requirements.size;
+        resource->plane_count            = format->layer_count;
+        resource->drm_format_modifier    = source->import.drm_format_modifier;
+        resource->has_drm_format_modifier = true;
+        resource->fd_stat_valid          = true;
+        resource->fd_dev                 = source->import.fd.dev;
+        resource->fd_ino                 = source->import.fd.ino;
+        resource->layout                 = VK_IMAGE_LAYOUT_UNDEFINED;
+        for (uint32_t i = 0; i < format->layer_count; i++) {
+            resource->plane_layouts[i] = plane_layouts[i];
+        }
+        source->import_output_copy_target = true;
+        source->export_import_attached    = true;
+        clear_surface_direct_import_present_state(source);
+        VKVV_TRACE("import-output-resource-create",
+                   "surface=%u stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu format=%d fourcc=0x%x extent=%ux%u modifier=0x%llx planes=%u size=%llu",
+                   source->surface_id, static_cast<unsigned long long>(source->stream_id), source->codec_operation, static_cast<unsigned long long>(source->import.fd.dev),
+                   static_cast<unsigned long long>(source->import.fd.ino), resource->format, resource->va_fourcc, resource->extent.width, resource->extent.height,
+                   static_cast<unsigned long long>(resource->drm_format_modifier), resource->plane_count, static_cast<unsigned long long>(resource->allocation_size));
+        return true;
     }
 
     bool ensure_export_resource(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size) {
@@ -1413,6 +1583,149 @@ namespace vkvv {
         return true;
     }
 
+    struct Av1ReferencePixelProof {
+        bool         valid        = false;
+        uint64_t     crc          = 0;
+        VkDeviceSize sample_bytes = 0;
+        bool         is_black     = false;
+        bool         is_zero      = false;
+        bool         matches      = false;
+    };
+
+    void trace_av1_pending_decode_pixel_proof(VulkanRuntime* runtime, const PendingWork* completed) {
+        if (!vkvv_trace_enabled() || runtime == nullptr || completed == nullptr || !completed->av1_trace.valid || completed->surface == nullptr ||
+            completed->surface->vulkan == nullptr) {
+            return;
+        }
+
+        SurfaceResource*        target = static_cast<SurfaceResource*>(completed->surface->vulkan);
+        char                    proof_reason[256] = {};
+        const ExportFormatInfo* format            = export_format_for_surface(nullptr, target, proof_reason, sizeof(proof_reason));
+        const bool              proof_enabled     = export_pixel_proof_enabled();
+        const uint64_t          black_crc         = pixel_reference_crc(format, target->coded_extent, true);
+        const uint64_t          zero_crc          = pixel_reference_crc(format, target->coded_extent, false);
+        uint64_t                target_crc        = 0;
+        VkDeviceSize            target_bytes      = 0;
+        const bool              target_ok         = proof_enabled && format != nullptr &&
+            readback_image_luma_sample(runtime, target->image, &target->layout, format, target->coded_extent, "AV1 decode target pixel proof", &target_crc, &target_bytes,
+                                       proof_reason, sizeof(proof_reason));
+        const bool target_black = target_ok && black_crc != 0 && target_crc == black_crc;
+        const bool target_zero  = target_ok && zero_crc != 0 && target_crc == zero_crc;
+
+        Av1ReferencePixelProof ref_proofs[av1_pending_reference_trace_capacity]{};
+        const uint32_t         references_traced = std::min<uint32_t>(completed->av1_trace.reference_count, av1_pending_reference_trace_capacity);
+        uint32_t               matching_ref_index = UINT32_MAX;
+        VASurfaceID            matching_ref_surface = VA_INVALID_ID;
+        int32_t                matching_ref_slot    = -1;
+        for (uint32_t i = 0; i < references_traced; i++) {
+            const Av1PendingReferenceTrace& ref = completed->av1_trace.references[i];
+            SurfaceResource*                resource = ref.resource;
+            if (!ref.valid || resource == nullptr) {
+                continue;
+            }
+
+            char                    ref_reason[256] = {};
+            const ExportFormatInfo* ref_format       = export_format_for_surface(nullptr, resource, ref_reason, sizeof(ref_reason));
+            const uint64_t          ref_black_crc    = pixel_reference_crc(ref_format, resource->coded_extent, true);
+            const uint64_t          ref_zero_crc     = pixel_reference_crc(ref_format, resource->coded_extent, false);
+            ref_proofs[i].valid = proof_enabled && ref_format != nullptr &&
+                readback_image_luma_sample(runtime, resource->image, &resource->layout, ref_format, resource->coded_extent, "AV1 reference pixel proof", &ref_proofs[i].crc,
+                                           &ref_proofs[i].sample_bytes, ref_reason, sizeof(ref_reason));
+            ref_proofs[i].is_black = ref_proofs[i].valid && ref_black_crc != 0 && ref_proofs[i].crc == ref_black_crc;
+            ref_proofs[i].is_zero  = ref_proofs[i].valid && ref_zero_crc != 0 && ref_proofs[i].crc == ref_zero_crc;
+            ref_proofs[i].matches  = target_ok && ref_proofs[i].valid && ref_proofs[i].crc == target_crc;
+            if (ref_proofs[i].matches && matching_ref_index == UINT32_MAX) {
+                matching_ref_index   = i;
+                matching_ref_surface = ref.surface_id;
+                matching_ref_slot    = ref.dpb_slot;
+            }
+            VKVV_TRACE("av1-reference-pixel-proof",
+                       "frame_seq=%llu target_surface=%u target_content_gen=%llu order_hint=%u show_frame=%u showable_frame=%u show_existing_frame=%u "
+                       "refresh_frame_flags=0x%02x target_dpb_slot=%d setup_slot=%d reference_index=%u reference_count=%u reference_surface=%u reference_slot=%d "
+                       "reference_name=%u reference_ref_idx=%u reference_order_hint=%u reference_frame_type=%u reference_frame_id=%u reference_showable=%u "
+                       "reference_displayed=%u submitted_reference_content_gen=%llu current_reference_content_gen=%llu ref_crc_valid=%u ref_pixel_crc=0x%llx "
+                       "target_crc_valid=%u target_pixel_crc=0x%llx matches_target=%u ref_is_black=%u ref_is_zero=%u sample_bytes=%llu pixel_proof_enabled=%u",
+                       static_cast<unsigned long long>(completed->av1_trace.frame_sequence), target->surface_id, static_cast<unsigned long long>(target->content_generation),
+                       completed->av1_trace.order_hint, completed->av1_trace.show_frame ? 1U : 0U, completed->av1_trace.showable_frame ? 1U : 0U,
+                       completed->av1_trace.show_existing_frame ? 1U : 0U, completed->av1_trace.refresh_frame_flags, completed->av1_trace.target_dpb_slot,
+                       completed->av1_trace.setup_slot, i, completed->av1_trace.reference_count, ref.surface_id, ref.dpb_slot, ref.reference_name,
+                       ref.ref_frame_map_index, ref.order_hint, ref.frame_type, ref.frame_id, ref.showable ? 1U : 0U, ref.displayed ? 1U : 0U,
+                       static_cast<unsigned long long>(ref.content_generation), static_cast<unsigned long long>(resource->content_generation), ref_proofs[i].valid ? 1U : 0U,
+                       static_cast<unsigned long long>(ref_proofs[i].valid ? ref_proofs[i].crc : 0), target_ok ? 1U : 0U,
+                       static_cast<unsigned long long>(target_ok ? target_crc : 0), ref_proofs[i].matches ? 1U : 0U, ref_proofs[i].is_black ? 1U : 0U,
+                       ref_proofs[i].is_zero ? 1U : 0U, static_cast<unsigned long long>(ref_proofs[i].sample_bytes), proof_enabled ? 1U : 0U);
+        }
+
+        const bool matches_previous_decode = target_ok && target->decode_pixel_proof_valid && target->decode_pixel_crc == target_crc;
+        VKVV_TRACE("av1-decode-pixel-proof",
+                   "frame_seq=%llu surface=%u stream=%llu codec=0x%x content_gen=%llu order_hint=%u frame_type=%u show_frame=%u showable_frame=%u show_existing_frame=%u "
+                   "refresh_frame_flags=0x%02x frame_to_show_map_idx=%d target_dpb_slot=%d setup_slot=%d reference_count=%u references_traced=%u decode_crc_valid=%u "
+                   "decode_pixel_crc=0x%llx black_crc=0x%llx zero_crc=0x%llx is_black=%u is_zero=%u matches_previous_decode_pixel=%u matches_any_reference=%u "
+                   "matching_reference_index=%u matching_reference_surface=%u matching_reference_slot=%d sample_bytes=%llu pixel_proof_enabled=%u reason=\"%s\"",
+                   static_cast<unsigned long long>(completed->av1_trace.frame_sequence), target->surface_id, static_cast<unsigned long long>(target->stream_id),
+                   target->codec_operation, static_cast<unsigned long long>(target->content_generation), completed->av1_trace.order_hint, completed->av1_trace.frame_type,
+                   completed->av1_trace.show_frame ? 1U : 0U, completed->av1_trace.showable_frame ? 1U : 0U, completed->av1_trace.show_existing_frame ? 1U : 0U,
+                   completed->av1_trace.refresh_frame_flags, completed->av1_trace.frame_to_show_map_idx, completed->av1_trace.target_dpb_slot,
+                   completed->av1_trace.setup_slot, completed->av1_trace.reference_count, references_traced, target_ok ? 1U : 0U,
+                   static_cast<unsigned long long>(target_ok ? target_crc : 0), static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc),
+                   target_black ? 1U : 0U, target_zero ? 1U : 0U, matches_previous_decode ? 1U : 0U, matching_ref_index != UINT32_MAX ? 1U : 0U,
+                   matching_ref_index != UINT32_MAX ? matching_ref_index : 0U, matching_ref_surface, matching_ref_slot, static_cast<unsigned long long>(target_bytes),
+                   proof_enabled ? 1U : 0U, proof_reason);
+        if (target_ok && matching_ref_index != UINT32_MAX && matching_ref_index < references_traced) {
+            const Av1PendingReferenceTrace& ref       = completed->av1_trace.references[matching_ref_index];
+            const Av1ReferencePixelProof&   ref_proof = ref_proofs[matching_ref_index];
+            VKVV_TRACE("av1-noop-candidate",
+                       "frame_seq=%llu surface=%u content_gen=%llu order_hint=%u frame_type=%u current_frame_id=%u show_frame=%u showable_frame=%u show_existing_frame=%u "
+                       "refresh_frame_flags=0x%02x primary_ref_frame=%u target_dpb_slot=%d setup_slot=%d reference_count=%u bitstream_size=%u tile_count=%u "
+                       "tile_sum_size=%u tile_hash=0x%llx bitstream_hash=0x%llx tile_source=%s selection_reason=%s parser_used=%u parser_status=%d selected_obu_type=%u "
+                       "tile_group_count=%u va_tile_count=%u parsed_tile_count=%u tile_ranges_equivalent=%u base_q_idx=%u delta_q_y_dc=%d delta_q_u_dc=%d "
+                       "delta_q_u_ac=%d delta_q_v_dc=%d delta_q_v_ac=%d using_qmatrix=%u diff_uv_delta=%u qm_y=%u qm_u=%u qm_v=%u error_resilient_mode=%u "
+                       "disable_cdf_update=%u disable_frame_end_update_cdf=%u allow_intrabc=%u allow_warped_motion=%u allow_high_precision_mv=%u "
+                       "is_motion_mode_switchable=%u use_ref_frame_mvs=%u reference_select=%u skip_mode_present=%u skip_mode_frame0=%u skip_mode_frame1=%u "
+                       "interpolation_filter=%u std_interpolation_filter=%u tx_mode=%u std_tx_mode=%u segmentation_enabled=%u segmentation_update_map=%u "
+                       "segmentation_temporal_update=%u segmentation_update_data=%u segmentation_feature_mask_or=0x%x segmentation_feature_data_hash=0x%llx "
+                       "loop_filter_delta_enabled=%u loop_filter_delta_update=%u loop_filter_level0=%u loop_filter_level1=%u loop_filter_level2=%u loop_filter_level3=%u "
+                       "cdef_enabled=%u cdef_damping_minus_3=%u cdef_bits=%u restoration_enabled=%u uses_lr=%u uses_chroma_lr=%u restoration_type_y=%u "
+                       "restoration_type_cb=%u restoration_type_cr=%u restoration_size_y=%u restoration_size_cb=%u restoration_size_cr=%u matching_reference_index=%u "
+                       "matching_reference_surface=%u matching_reference_slot=%d matching_reference_name=%u matching_reference_ref_idx=%u matching_reference_order_hint=%u "
+                       "matching_reference_frame_type=%u matching_reference_frame_id=%u matching_reference_showable=%u matching_reference_displayed=%u "
+                       "matching_reference_content_gen=%llu target_pixel_crc=0x%llx reference_pixel_crc=0x%llx sample_bytes=%llu pixel_proof_enabled=%u",
+                       static_cast<unsigned long long>(completed->av1_trace.frame_sequence), target->surface_id, static_cast<unsigned long long>(target->content_generation),
+                       completed->av1_trace.order_hint, completed->av1_trace.frame_type, completed->av1_trace.current_frame_id, completed->av1_trace.show_frame ? 1U : 0U,
+                       completed->av1_trace.showable_frame ? 1U : 0U, completed->av1_trace.show_existing_frame ? 1U : 0U, completed->av1_trace.refresh_frame_flags,
+                       completed->av1_trace.primary_ref_frame, completed->av1_trace.target_dpb_slot, completed->av1_trace.setup_slot, completed->av1_trace.reference_count,
+                       completed->av1_trace.bitstream_size, completed->av1_trace.tile_count, completed->av1_trace.tile_sum_size,
+                       static_cast<unsigned long long>(completed->av1_trace.tile_bytes_hash), static_cast<unsigned long long>(completed->av1_trace.bitstream_hash),
+                       completed->av1_trace.tile_source != nullptr ? completed->av1_trace.tile_source : "unknown",
+                       completed->av1_trace.tile_selection_reason != nullptr ? completed->av1_trace.tile_selection_reason : "unknown",
+                       completed->av1_trace.parser_used ? 1U : 0U, completed->av1_trace.parser_status, completed->av1_trace.selected_obu_type,
+                       completed->av1_trace.tile_group_count, completed->av1_trace.va_tile_count, completed->av1_trace.parsed_tile_count,
+                       completed->av1_trace.tile_ranges_equivalent ? 1U : 0U, completed->av1_trace.base_q_idx, completed->av1_trace.delta_q_y_dc,
+                       completed->av1_trace.delta_q_u_dc, completed->av1_trace.delta_q_u_ac, completed->av1_trace.delta_q_v_dc, completed->av1_trace.delta_q_v_ac,
+                       completed->av1_trace.using_qmatrix ? 1U : 0U, completed->av1_trace.diff_uv_delta ? 1U : 0U, completed->av1_trace.qm_y, completed->av1_trace.qm_u,
+                       completed->av1_trace.qm_v, completed->av1_trace.error_resilient_mode ? 1U : 0U, completed->av1_trace.disable_cdf_update ? 1U : 0U,
+                       completed->av1_trace.disable_frame_end_update_cdf ? 1U : 0U, completed->av1_trace.allow_intrabc ? 1U : 0U,
+                       completed->av1_trace.allow_warped_motion ? 1U : 0U, completed->av1_trace.allow_high_precision_mv ? 1U : 0U,
+                       completed->av1_trace.is_motion_mode_switchable ? 1U : 0U, completed->av1_trace.use_ref_frame_mvs ? 1U : 0U,
+                       completed->av1_trace.reference_select ? 1U : 0U, completed->av1_trace.skip_mode_present ? 1U : 0U, completed->av1_trace.skip_mode_frame[0],
+                       completed->av1_trace.skip_mode_frame[1], completed->av1_trace.interpolation_filter, completed->av1_trace.std_interpolation_filter,
+                       completed->av1_trace.tx_mode, completed->av1_trace.std_tx_mode, completed->av1_trace.segmentation_enabled ? 1U : 0U,
+                       completed->av1_trace.segmentation_update_map ? 1U : 0U, completed->av1_trace.segmentation_temporal_update ? 1U : 0U,
+                       completed->av1_trace.segmentation_update_data ? 1U : 0U, completed->av1_trace.segmentation_feature_mask_or,
+                       static_cast<unsigned long long>(completed->av1_trace.segmentation_feature_data_hash),
+                       completed->av1_trace.loop_filter_delta_enabled ? 1U : 0U, completed->av1_trace.loop_filter_delta_update ? 1U : 0U,
+                       completed->av1_trace.loop_filter_level[0], completed->av1_trace.loop_filter_level[1], completed->av1_trace.loop_filter_level[2],
+                       completed->av1_trace.loop_filter_level[3], completed->av1_trace.cdef_enabled ? 1U : 0U, completed->av1_trace.cdef_damping_minus_3,
+                       completed->av1_trace.cdef_bits, completed->av1_trace.restoration_enabled ? 1U : 0U, completed->av1_trace.uses_lr ? 1U : 0U,
+                       completed->av1_trace.uses_chroma_lr ? 1U : 0U, completed->av1_trace.restoration_type[0], completed->av1_trace.restoration_type[1],
+                       completed->av1_trace.restoration_type[2], completed->av1_trace.restoration_size[0], completed->av1_trace.restoration_size[1],
+                       completed->av1_trace.restoration_size[2], matching_ref_index, ref.surface_id, ref.dpb_slot, ref.reference_name, ref.ref_frame_map_index, ref.order_hint,
+                       ref.frame_type, ref.frame_id, ref.showable ? 1U : 0U, ref.displayed ? 1U : 0U, static_cast<unsigned long long>(ref.content_generation),
+                       static_cast<unsigned long long>(target_crc), static_cast<unsigned long long>(ref_proof.valid ? ref_proof.crc : 0),
+                       static_cast<unsigned long long>(target_bytes), proof_enabled ? 1U : 0U);
+        }
+    }
+
     void trace_predecode_keep_placeholder(const ExportResource* target, const SurfaceResource* source) {
         if (target == nullptr || source == nullptr) {
             return;
@@ -1878,6 +2191,24 @@ namespace vkvv {
             if (owner_refresh_export || export_resource_fd_may_be_sampled_by_client(owner_export)) {
                 mark_export_visible_release(source, owner_export, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
             }
+            if (source->import_output_copy_target && owner_export == &source->export_resource) {
+                source->direct_import_presentable      = true;
+                source->decode_image_is_imported_image = false;
+                source->import_output_copy_done        = true;
+                source->import_present_barrier_done    = true;
+                source->import_fd_stat_valid           = source->import.fd.valid;
+                source->import_present_generation      = source->content_generation;
+                source->import_fd_dev                  = source->import.fd.dev;
+                source->import_fd_ino                  = source->import.fd.ino;
+                source->import_driver_instance_id      = source->driver_instance_id;
+                source->import_stream_id               = source->stream_id;
+                source->import_codec_operation         = source->codec_operation;
+                VKVV_TRACE("import-output-copy-mark",
+                           "surface=%u stream=%llu codec=0x%x content_gen=%llu import_present_generation=%llu fd_dev=%llu fd_ino=%llu copy_target=1",
+                           source->surface_id, static_cast<unsigned long long>(source->stream_id), source->codec_operation,
+                           static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(source->import_present_generation),
+                           static_cast<unsigned long long>(source->import_fd_dev), static_cast<unsigned long long>(source->import_fd_ino));
+            }
             if (owner_export->predecode_quarantined && owner_export->content_generation != 0) {
                 exit_predecode_quarantine(source, owner_export, export_visible_release_satisfied(owner_export));
             }
@@ -2039,7 +2370,14 @@ namespace vkvv {
         }
         unregister_predecode_export_resource_locked(runtime, export_resource);
         if (copy_owner) {
+            const bool keep_import_output_copy = source->import.external && source->import_output_copy_target && source->import_output_copy_done &&
+                source->import_present_generation == source->content_generation && source->import_fd_dev == source->import.fd.dev &&
+                source->import_fd_ino == source->import.fd.ino;
             clear_surface_export_attach_state(source);
+            if (keep_import_output_copy) {
+                source->import_output_copy_target = true;
+                source->import_output_copy_done   = true;
+            }
         }
         source->export_seed_generation = source->content_generation;
         remember_export_seed_resource_locked(runtime, source);

@@ -906,3 +906,13 @@ void vkvv_vulkan_surface_destroy(void* runtime_ptr, VkvvSurface* surface) {
     }
     destroy_surface_resource(runtime, surface);
 }
+
+size_t vkvv_vulkan_retained_export_count(void* runtime_ptr) {
+    auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
+    return runtime_retained_export_count(runtime);
+}
+
+uint64_t vkvv_vulkan_retained_export_memory_bytes(void* runtime_ptr) {
+    auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
+    return static_cast<uint64_t>(runtime_retained_export_memory_bytes(runtime));
+}

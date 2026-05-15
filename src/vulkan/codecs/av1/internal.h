@@ -71,6 +71,10 @@ namespace vkvv {
         uint32_t                                                  max_dpb_slots                 = 0;
         uint32_t                                                  max_active_reference_pictures = 0;
         uint64_t                                                  frame_sequence                = 0;
+        bool                                                      has_last_visible_order_hint   = false;
+        uint32_t                                                  last_visible_order_hint       = 0;
+        uint64_t                                                  last_visible_order_frame_seq  = 0;
+        VASurfaceID                                               last_visible_order_surface    = VA_INVALID_ID;
         bool                                                      has_sequence_key              = false;
         VkvvAV1SequenceHeader                                     sequence_key{};
         std::array<int8_t, STD_VIDEO_AV1_TOTAL_REFS_PER_FRAME>    loop_filter_ref_deltas{1, 0, 0, 0, -1, 0, -1, -1};
