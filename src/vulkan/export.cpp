@@ -677,7 +677,7 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
     const uint64_t refresh_start_us = monotonic_us();
     if (resource->export_resource.image == VK_NULL_HANDLE && resource->import.external && resource->import.fd.valid) {
         (void)attach_imported_export_resource_by_fd(runtime, resource);
-        if (resource->export_resource.image == VK_NULL_HANDLE && surface_resource_uses_av1_decode(resource) && refresh_export && resource->content_generation != 0) {
+        if (resource->export_resource.image == VK_NULL_HANDLE && surface_resource_uses_av1_decode(resource) && resource->content_generation != 0) {
             (void)ensure_imported_output_resource(runtime, resource, reason, reason_size);
         }
     }
@@ -768,12 +768,15 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
         } else {
             clear_nondisplay_predecode_presentation_state(resource);
         }
-        const bool has_exported_backing = resource->export_resource.exported && resource->export_resource.image != VK_NULL_HANDLE;
+        const bool has_exported_backing =
+            resource->export_resource.image != VK_NULL_HANDLE && (resource->export_resource.exported || resource->import_output_copy_target);
         const bool fd_may_be_sampled    = export_resource_fd_may_be_sampled_by_client(&resource->export_resource);
         const bool already_current      = resource->content_generation != 0 && surface_resource_has_current_decode_shadow(resource);
         const bool exported_fd_stale    = fd_may_be_sampled && resource->content_generation != 0 && !export_resource_fd_fresh(resource);
+        const bool av1_imported_output_refresh = surface_resource_uses_av1_decode(resource) && resource->import_output_copy_target;
         const bool present_pinned_private_refresh =
-            has_exported_backing && !already_current && !fd_may_be_sampled && resource->export_resource.present_pinned && resource->export_resource.client_visible_shadow;
+            has_exported_backing && !already_current && !fd_may_be_sampled && !av1_imported_output_refresh && resource->export_resource.present_pinned &&
+            resource->export_resource.client_visible_shadow;
         const bool  predecode_quarantine_private_refresh = has_exported_backing && !already_current && !fd_may_be_sampled && predecode_quarantined;
         const char* action                               = "no-backing";
         bool        attempted_copy                       = false;
