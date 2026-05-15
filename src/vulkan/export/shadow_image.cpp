@@ -976,8 +976,10 @@ namespace vkvv {
         const bool target_matches  = source_ok && target_ok && source_crc == target_crc;
         const bool target_valid    = source_valid && target_ok && target_bytes > 0 && target_matches && !target_black && !target_zero;
         const VkvvPixelProofState source_state = pixel_proof_state_from_sample(source_ok, source_crc, black_crc, zero_crc, source_black, source_zero);
-        const VkvvPixelProofState target_state = target_matches ? pixel_proof_state_from_sample(target_ok, target_crc, black_crc, zero_crc, target_black, target_zero) :
-                                                                  VkvvPixelProofState::Mismatch;
+        const VkvvPixelProofState target_sample_state = pixel_proof_state_from_sample(target_ok, target_crc, black_crc, zero_crc, target_black, target_zero);
+        const VkvvPixelProofState target_state        = !target_ok || target_bytes == 0 ? VkvvPixelProofState::Unavailable :
+            !target_matches                                                           ? VkvvPixelProofState::Mismatch :
+                                                                                         target_sample_state;
         target->seed_pixel_proof_valid = target_valid;
         trace_pixel_proof_computed(source->surface_id, source->export_resource.fd_dev, source->export_resource.fd_ino, source->export_resource.present_generation,
                                    VkvvExportPixelSource::DecodedContent, source_ok ? source_crc : 0, black_crc, zero_crc, source_black, source_zero, source_bytes, source_state);
@@ -993,17 +995,18 @@ namespace vkvv {
                    source_ok ? 1U : 0U, source_valid ? 1U : 0U, static_cast<unsigned long long>(source_bytes), export_pixel_proof_enabled() ? 1U : 0U);
         VKVV_TRACE("seed-target-pixel-proof",
                    "target_surface=%u source_surface=%u target_fd_dev=%llu target_fd_ino=%llu target_crc_after_copy=0x%llx source_crc=0x%llx matches_source=%u "
-                   "target_is_black=%u target_is_zero=%u pixel_proof_valid=%u reject_reason=%s copy_status=%s target_sample_bytes=%llu",
+                   "target_is_black=%u target_is_zero=%u pixel_proof_valid=%u pixel_proof_state=%s reject_reason=%s copy_status=%s source_sample_bytes=%llu "
+                   "target_sample_bytes=%llu sample_bytes=%llu",
                    target->owner_surface_id, source->surface_id, static_cast<unsigned long long>(target->fd_dev), static_cast<unsigned long long>(target->fd_ino),
                    static_cast<unsigned long long>(target_ok ? target_crc : 0), static_cast<unsigned long long>(source_ok ? source_crc : 0), target_matches ? 1U : 0U,
-                   target_black ? 1U : 0U, target_zero ? 1U : 0U, target_valid ? 1U : 0U,
+                   target_black ? 1U : 0U, target_zero ? 1U : 0U, target_valid ? 1U : 0U, vkvv_pixel_proof_state_name(target_state),
                    target_valid ? "none" : (!source_valid ? "source-proof-invalid" : !target_ok || target_bytes == 0 ? "target-proof-unavailable" :
                                                                                  !target_matches             ? "target-does-not-match-source" :
                                                                                  target_black                ? "target-black" :
                                                                                  target_zero                 ? "target-zero" :
                                                                                                                "target-invalid"),
                    copy_status != nullptr ? copy_status : "unknown",
-                   static_cast<unsigned long long>(target_bytes));
+                   static_cast<unsigned long long>(source_bytes), static_cast<unsigned long long>(target_bytes), static_cast<unsigned long long>(target_bytes));
     }
 
     bool attach_imported_export_resource_by_fd(VulkanRuntime* runtime, SurfaceResource* source) {

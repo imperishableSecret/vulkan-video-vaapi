@@ -316,6 +316,8 @@ def main() -> int:
         "source_crc=",
         "target_crc_after_copy=",
         "target_sample_bytes=",
+        "source_sample_bytes=",
+        "pixel_proof_state=",
         "target-does-not-match-source",
         "returned_crc=",
         "black_crc=",
