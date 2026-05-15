@@ -850,6 +850,18 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
     if (format == nullptr) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
+    const uint32_t export_access_flags     = flags & VA_EXPORT_SURFACE_READ_WRITE;
+    const bool     export_request_readable = (export_access_flags & VA_EXPORT_SURFACE_READ_ONLY) != 0;
+    const bool     export_request_writable = (export_access_flags & VA_EXPORT_SURFACE_WRITE_ONLY) != 0;
+    const bool     export_request_read_only = export_access_flags == VA_EXPORT_SURFACE_READ_ONLY;
+    const bool     export_request_read_write = export_access_flags == VA_EXPORT_SURFACE_READ_WRITE;
+    const bool     export_request_separate_layers = (flags & VA_EXPORT_SURFACE_SEPARATE_LAYERS) != 0;
+    const bool     export_request_composed_layers = (flags & VA_EXPORT_SURFACE_COMPOSED_LAYERS) != 0;
+    VKVV_TRACE("export-request-flags",
+               "surface=%u export_flags=0x%x access_flags=0x%x readable=%u writable=%u read_only=%u read_write=%u separate_layers=%u composed_layers=%u sampleable_export=%u",
+               surface->id, flags, export_access_flags, export_request_readable ? 1U : 0U, export_request_writable ? 1U : 0U,
+               export_request_read_only ? 1U : 0U, export_request_read_write ? 1U : 0U, export_request_separate_layers ? 1U : 0U,
+               export_request_composed_layers ? 1U : 0U, export_request_readable ? 1U : 0U);
     const VAStatus flag_status = validate_export_flags(flags, reason, reason_size);
     if (flag_status != VA_STATUS_SUCCESS) {
         return flag_status;
@@ -897,11 +909,13 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
             returned_resource != nullptr && returned_resource->seed_pixel_proof_valid && (proof == nullptr || proof->seed_pixels_valid);
         VKVV_TRACE("export-validity-gate",
                    "surface=%u driver=%llu stream=%llu codec=0x%x profile=0 width=%u height=%u fourcc=0x%x content_gen=%llu decoded=%u pending_decode=%u refresh_export=%u "
-                   "display_visible=%u fd_already_exported=%u fd_dev=%llu fd_ino=%llu fd_content_gen=%llu may_be_sampled_by_client=%u valid_decoded_pixels_available=%u "
+                   "display_visible=%u export_flags=0x%x access_flags=0x%x sampleable_export=%u fd_already_exported=%u fd_dev=%llu fd_ino=%llu fd_content_gen=%llu "
+                   "may_be_sampled_by_client=%u valid_decoded_pixels_available=%u "
                    "valid_seed_available=%u placeholder_available=%u retained_candidate_available=%u decision=%s reason=%s returned_fd=%u status=%d",
                    surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, surface->width,
                    surface->height, resource->va_fourcc, static_cast<unsigned long long>(resource->content_generation), surface->decoded ? 1U : 0U,
-                   pending_before_export.found ? 1U : 0U, surface->decoded ? 1U : 0U, surface->decoded ? 1U : 0U, fd_already_exported_before ? 1U : 0U,
+                   pending_before_export.found ? 1U : 0U, surface->decoded ? 1U : 0U, surface->decoded ? 1U : 0U, flags, export_access_flags,
+                   export_request_readable ? 1U : 0U, fd_already_exported_before ? 1U : 0U,
                    static_cast<unsigned long long>(fd_stat.valid ? fd_stat.dev : (returned_resource != nullptr ? returned_resource->exported_fd.fd_dev : 0)),
                    static_cast<unsigned long long>(fd_stat.valid ? fd_stat.ino : (returned_resource != nullptr ? returned_resource->exported_fd.fd_ino : 0)),
                    static_cast<unsigned long long>(fd_content_gen), may_sample ? 1U : 0U, valid_decoded_pixels_available ? 1U : 0U, valid_seed_available ? 1U : 0U,
@@ -910,14 +924,15 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         VKVV_TRACE("generic-export-summary",
                    "surface=%u stream=%llu codec=0x%x width=%u height=%u fourcc=0x%x content_gen=%llu fd_content_gen=%llu returned_fd=%u decision=%s pixel_source=%s "
                    "pixel_proof_valid=%u is_black=%u is_zero=%u pending_decode=%u valid_seed_available=%u quarantine_outcome=%s external_release_mode=%s status=%d "
-                   "may_be_sampled_by_client=%u",
+                   "may_be_sampled_by_client=%u export_flags=0x%x access_flags=0x%x sampleable_export=%u",
                    surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, surface->width, surface->height, resource->va_fourcc,
                    static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(fd_content_gen), returned_fd ? 1U : 0U,
                    decision != nullptr ? decision : "fail", vkvv_export_pixel_source_name(pixel_source), proof != nullptr && proof->pixel_proof_valid ? 1U : 0U,
                    proof_black || pixel_source == VkvvExportPixelSource::Placeholder ? 1U : 0U, proof_zero ? 1U : 0U, pending_before_export.found ? 1U : 0U,
                    valid_seed_available ? 1U : 0U,
                    returned_resource != nullptr && returned_resource->predecode_quarantined ? "pending" : "none",
-                   returned_resource != nullptr ? vkvv_external_release_mode_name(returned_resource->external_sync.release_mode) : "none", status, may_sample ? 1U : 0U);
+                   returned_resource != nullptr ? vkvv_external_release_mode_name(returned_resource->external_sync.release_mode) : "none", status, may_sample ? 1U : 0U,
+                   flags, export_access_flags, export_request_readable ? 1U : 0U);
     };
     VAStatus drain_status = drain_pending_surface_work_before_sync_command(runtime, const_cast<VkvvSurface*>(surface), reason, reason_size);
     trace_drain_attempt(drain_status);

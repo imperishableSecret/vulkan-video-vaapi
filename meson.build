@@ -228,6 +228,18 @@ capability_smoke = executable(
   install: false,
 )
 
+domain_smoke = executable(
+  'vkvv-domain-smoke',
+  files(
+    'tests/smoke/generic/domain_smoke.cpp',
+    'src/telemetry.cpp',
+    'src/va/domain.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [libva_dep, vulkan_dep],
+  install: false,
+)
+
 surface_import_smoke = executable(
   'vkvv-surface-import-smoke',
   files(
@@ -311,6 +323,7 @@ test('smoke-lifetime', lifetime_smoke, env: driver_test_env, is_parallel: false,
 test('smoke-multi-context', multi_context_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-sync', sync_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-capability', capability_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
+test('smoke-domain', domain_smoke, is_parallel: false, timeout: 30)
 test('smoke-surface-import', surface_import_smoke, is_parallel: false, timeout: 30)
 test('smoke-retained-export', retained_export_smoke, is_parallel: false, timeout: 30)
 test('smoke-telemetry-off', telemetry_smoke, env: telemetry_trace_off_env, is_parallel: false, timeout: 30)

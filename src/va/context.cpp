@@ -125,6 +125,10 @@ VAStatus vkvvCreateContext(VADriverContextP ctx, VAConfigID config_id, int pictu
     vkvv_trace("va-context-create", "driver=%llu ctx=%u mode=%u profile=%d entrypoint=%d stream=%llu codec=0x%x size=%ux%u targets=%d", (unsigned long long)drv->driver_instance_id,
                *context, vctx->mode, vctx->profile, vctx->entrypoint, (unsigned long long)vctx->stream_id, vctx->codec_operation, vctx->width, vctx->height, num_render_targets);
     if (vctx->mode == VKVV_CONTEXT_MODE_DECODE) {
+        if (num_render_targets == 0) {
+            VkvvLockGuard state_lock(&drv->state_mutex);
+            vkvv_driver_note_decode_domain_locked(drv, vctx, NULL);
+        }
         for (int i = 0; i < num_render_targets; i++) {
             tag_surface_for_context(drv, vctx, render_targets != NULL ? render_targets[i] : VA_INVALID_ID);
         }

@@ -79,6 +79,36 @@ namespace {
         return false;
     }
 
+    bool check_context_only_active_decode_domain_tags_pool_surface() {
+        VkvvDriver driver{};
+        driver.driver_instance_id = 1;
+
+        VkvvContext context{};
+        context.mode            = VKVV_CONTEXT_MODE_DECODE;
+        context.stream_id       = h264_stream_id + 20;
+        context.codec_operation = VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR;
+        context.width           = non_thumbnail_seed_width;
+        context.height          = non_thumbnail_seed_height;
+
+        VkvvSurface pool_surface{};
+        init_nv12_surface_sized(&pool_surface, 881, 0, 0, non_thumbnail_seed_width, non_thumbnail_seed_height);
+
+        VkvvSurface mismatched_surface{};
+        init_nv12_surface_sized(&mismatched_surface, 882, 0, 0, non_thumbnail_seed_width / 2, non_thumbnail_seed_height);
+
+        vkvv_driver_note_decode_domain(&driver, &context, nullptr);
+        if (!vkvv_driver_apply_active_decode_domain(&driver, &pool_surface) || pool_surface.stream_id != context.stream_id ||
+            pool_surface.codec_operation != context.codec_operation) {
+            std::fprintf(stderr, "context-only active decode domain did not tag the matching pool surface\n");
+            return false;
+        }
+        if (vkvv_driver_apply_active_decode_domain(&driver, &mismatched_surface) || mismatched_surface.stream_id != 0 || mismatched_surface.codec_operation != 0) {
+            std::fprintf(stderr, "context-only active decode domain tagged a mismatched pool surface\n");
+            return false;
+        }
+        return true;
+    }
+
     bool submit_empty_pending(vkvv::VulkanRuntime* runtime, VkvvSurface* surface, const char* operation) {
         char reason[512] = {};
         {
@@ -1233,6 +1263,10 @@ int main(void) {
 
     auto* typed_runtime = static_cast<vkvv::VulkanRuntime*>(runtime);
     std::printf("surface_export=%d\n", typed_runtime->surface_export);
+    if (!check_context_only_active_decode_domain_tags_pool_surface()) {
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
     if (!check_export_preparation_leaves_unrelated_pending_work(typed_runtime)) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;

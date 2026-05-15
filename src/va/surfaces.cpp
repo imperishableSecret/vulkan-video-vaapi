@@ -410,6 +410,8 @@ VAStatus vkvvQuerySurfaceAttributes(VADriverContextP ctx, VAConfigID config, VAS
 VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, uint32_t mem_type, uint32_t flags, void* descriptor) {
     VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
     if ((mem_type & VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2) == 0) {
+        vkvv_trace("va-export-unsupported-memory", "driver=%llu surface=%u mem_type=0x%x flags=0x%x",
+                   (unsigned long long)(drv != NULL ? drv->driver_instance_id : 0), surface_id, mem_type, flags);
         return VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE;
     }
     VkvvLockGuard driver_state_lock(&drv->state_mutex);
@@ -422,9 +424,11 @@ VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, u
     if (surface->destroying) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
-    vkvv_trace("va-export-enter", "driver=%llu surface=%u active_stream=%llu active_codec=0x%x surface_stream=%llu surface_codec=0x%x decoded=%u pending=%u",
-               (unsigned long long)drv->driver_instance_id, surface->id, (unsigned long long)drv->active_decode_stream_id, drv->active_decode_codec_operation,
-               (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U, vkvv_surface_has_pending_work(surface) ? 1U : 0U);
+    vkvv_trace("va-export-enter",
+               "driver=%llu surface=%u mem_type=0x%x flags=0x%x active_stream=%llu active_codec=0x%x surface_stream=%llu surface_codec=0x%x decoded=%u pending=%u",
+               (unsigned long long)drv->driver_instance_id, surface->id, mem_type, flags, (unsigned long long)drv->active_decode_stream_id, drv->active_decode_codec_operation,
+               (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U,
+               vkvv_surface_has_pending_work(surface) ? 1U : 0U);
     const bool applied_active_domain = vkvv_driver_apply_active_decode_domain_locked(drv, surface);
     if (applied_active_domain) {
         vkvv_log("tagged export surface %u from active decode domain: driver=%llu stream=%llu codec=0x%x %ux%u fourcc=0x%x rt=0x%x", surface->id,
@@ -434,8 +438,8 @@ VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, u
     vkvv_trace("va-export-domain", "driver=%llu surface=%u applied=%u stream=%llu codec=0x%x decoded=%u", (unsigned long long)drv->driver_instance_id, surface->id,
                applied_active_domain ? 1U : 0U, (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U);
     if (vkvv_surface_has_pending_work(surface)) {
-        vkvv_trace("va-export-drain", "driver=%llu surface=%u stream=%llu codec=0x%x", (unsigned long long)drv->driver_instance_id, surface->id,
-                   (unsigned long long)surface->stream_id, surface->codec_operation);
+        vkvv_trace("va-export-drain", "driver=%llu surface=%u mem_type=0x%x flags=0x%x stream=%llu codec=0x%x",
+                   (unsigned long long)drv->driver_instance_id, surface->id, mem_type, flags, (unsigned long long)surface->stream_id, surface->codec_operation);
         VAStatus status = complete_vulkan_surface_work(drv, surface, VA_TIMEOUT_INFINITE);
         if (status != VA_STATUS_SUCCESS) {
             return status;
@@ -462,8 +466,9 @@ VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, u
 
     status = vkvv_vulkan_export_surface(drv->vulkan, surface, flags, static_cast<VADRMPRIMESurfaceDescriptor*>(descriptor), reason, sizeof(reason));
     vkvv_log("%s", reason);
-    vkvv_trace("va-export-return", "driver=%llu surface=%u status=%d stream=%llu codec=0x%x decoded=%u", (unsigned long long)drv->driver_instance_id, surface->id, status,
-               (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U);
+    vkvv_trace("va-export-return", "driver=%llu surface=%u status=%d mem_type=0x%x flags=0x%x stream=%llu codec=0x%x decoded=%u",
+               (unsigned long long)drv->driver_instance_id, surface->id, status, mem_type, flags, (unsigned long long)surface->stream_id, surface->codec_operation,
+               surface->decoded ? 1U : 0U);
     return status;
 }
 
