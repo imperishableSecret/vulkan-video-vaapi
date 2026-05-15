@@ -2258,11 +2258,11 @@ namespace vkvv {
             }
             target->black_placeholder = false;
             if (target->predecode_exported) {
-                const uint64_t source_present_generation = source->export_resource.present_generation != 0 ? source->export_resource.present_generation : source->content_generation;
-                uint64_t       seed_fd_content_generation = export_resource_fd_content_generation(&source->export_resource);
-                if (seed_fd_content_generation == 0) {
-                    seed_fd_content_generation = source_present_generation;
-                }
+                const uint64_t source_present_generation     = source->export_resource.present_generation;
+                const uint64_t source_fd_content_generation  = export_resource_fd_content_generation(&source->export_resource);
+                const uint64_t seed_fd_content_generation    = source_present_generation;
+                const bool     source_fd_matches_present     = source_fd_content_generation == source_present_generation;
+                const bool     target_content_gen_preserved  = target->content_generation == snapshot.content_generation;
                 target->predecode_exported                                  = true;
                 target->predecode_seeded                                    = true;
                 target->predecode_quarantined                               = true;
@@ -2284,11 +2284,14 @@ namespace vkvv {
                 mark_export_predecode_nonpresentable(target);
                 VKVV_TRACE("predecode-target-seed-state",
                            "surface=%u target_surface=%u source_surface=%u driver=%llu stream=%llu codec=0x%x source_present_gen=%llu source_fd_content_gen=%llu "
-                           "target_content_gen=%llu target_fd_content_gen_after=%llu target_last_written_content_gen_after=%llu target_pixel_source=seed "
-                           "target_presentable=0 target_published_visible=0 target_predecode_quarantined=%u target_predecode_exported=%u",
+                           "source_fd_matches_present=%u target_content_gen_before=%llu target_content_gen=%llu target_content_preserved=%u target_fd_content_gen_after=%llu "
+                           "target_last_written_content_gen_after=%llu target_pixel_source=seed seed_generation_basis=source-present target_presentable=0 target_published_visible=0 "
+                           "target_predecode_quarantined=%u target_predecode_exported=%u",
                            target->owner_surface_id, target->owner_surface_id, source->surface_id, static_cast<unsigned long long>(target->driver_instance_id),
                            static_cast<unsigned long long>(target->stream_id), target->codec_operation, static_cast<unsigned long long>(source_present_generation),
-                           static_cast<unsigned long long>(seed_fd_content_generation), static_cast<unsigned long long>(target->content_generation),
+                           static_cast<unsigned long long>(source_fd_content_generation), source_fd_matches_present ? 1U : 0U,
+                           static_cast<unsigned long long>(snapshot.content_generation), static_cast<unsigned long long>(target->content_generation),
+                           target_content_gen_preserved ? 1U : 0U,
                            static_cast<unsigned long long>(target->exported_fd.fd_content_generation),
                            static_cast<unsigned long long>(target->exported_fd.last_written_content_generation), target->predecode_quarantined ? 1U : 0U,
                            target->predecode_exported ? 1U : 0U);

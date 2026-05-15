@@ -1054,8 +1054,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
             (returned_fd && (export_intent == VkvvExportIntent::ReadOnly || export_intent == VkvvExportIntent::ReadWrite));
         const bool     proof_black    = proof != nullptr && proof->pixel_crc != 0 && proof->black_crc != 0 && proof->pixel_crc == proof->black_crc;
         const bool     proof_zero     = proof != nullptr && proof->pixel_crc != 0 && proof->zero_crc != 0 && proof->pixel_crc == proof->zero_crc;
-        const bool     placeholder =
-            pixel_source == VkvvExportPixelSource::Placeholder || (returned_resource != nullptr && returned_resource->black_placeholder) || proof_black || proof_zero;
+        const bool placeholder = pixel_source == VkvvExportPixelSource::Placeholder || (returned_resource != nullptr && returned_resource->black_placeholder);
         const bool  actual_mem_type_supported = true;
         const char* policy_status             = export_policy_status_name(status, actual_mem_type_supported);
         const bool valid_decoded_pixels_available = surface->decoded && resource->content_generation != 0 &&
