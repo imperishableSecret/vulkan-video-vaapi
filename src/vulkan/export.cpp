@@ -197,11 +197,21 @@ namespace {
         return export_env_flag_enabled("VKVV_ALLOW_PLACEHOLDER_EXPORT");
     }
 
-    VAStatus export_status_to_client_status(VkvvExportRole role, VAStatus status) {
-        if ((role == VkvvExportRole::Bootstrap || role == VkvvExportRole::PredecodeTarget) && status == VA_STATUS_ERROR_OPERATION_FAILED) {
+    enum class VkvvExportDecision {
+        ReturnedFd,
+        PolicyFailure,
+        UnsupportedMemoryType,
+    };
+
+    VAStatus map_export_decision_to_va_status(VkvvExportRole role, VkvvExportDecision decision, bool actual_mem_type_supported) {
+        (void)role;
+        if (!actual_mem_type_supported || decision == VkvvExportDecision::UnsupportedMemoryType) {
             return VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE;
         }
-        return status;
+        if (decision == VkvvExportDecision::ReturnedFd) {
+            return VA_STATUS_SUCCESS;
+        }
+        return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
     bool export_source_has_decoded_pixels(const SurfaceResource* owner, const ExportResource* resource, VkvvExportPixelSource pixel_source) {
@@ -1106,7 +1116,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                        static_cast<unsigned long long>(resource->last_nondisplay_skip_shadow_generation), skip_shadow_was_stale ? 1U : 0U, seeded_predecode_exports);
         } else if (!ensure_export_resource(runtime, resource, reason, reason_size)) {
             VkvvFdIdentity no_fd{};
-            const VAStatus client_status = export_status_to_client_status(export_role, VA_STATUS_ERROR_OPERATION_FAILED);
+            const VAStatus client_status = map_export_decision_to_va_status(export_role, VkvvExportDecision::PolicyFailure, true);
             if (export_role == VkvvExportRole::Bootstrap) {
                 VKVV_TRACE("bootstrap-export-unavailable", "surface=%u driver=%llu stream=%llu codec=0x%x reason=ensure-export-resource-failed status=%d", surface->id,
                            static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
@@ -1176,7 +1186,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
     if (!valid_decoded_pixels_available && !valid_seed_available && !bootstrap_placeholder_allowed && !predecode_target_placeholder_allowed &&
         !(placeholder_available && allow_placeholder_export())) {
         VkvvFdIdentity no_fd{};
-        const VAStatus client_status = export_status_to_client_status(export_role, VA_STATUS_ERROR_OPERATION_FAILED);
+        const VAStatus client_status = map_export_decision_to_va_status(export_role, VkvvExportDecision::PolicyFailure, true);
         if (placeholder_available && exported_shadow != nullptr) {
             const bool predecode_target = export_role == VkvvExportRole::PredecodeTarget;
             trace_predecode_quarantine_outcome(resource, exported_shadow, predecode_target ? "predecode-target-failed-no-valid-seed" : "sampleable-failed-no-valid-pixels",

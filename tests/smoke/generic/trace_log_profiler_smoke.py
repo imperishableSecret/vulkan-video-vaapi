@@ -210,6 +210,8 @@ def main() -> int:
     check("event=predecode-target-export-return" in FIXTURE and "seed_used=0" in FIXTURE and "may_be_sampled_by_client=0" in FIXTURE,
           "predecode target quarantined return fixture missing")
     check(data["events"].get("predecode-target-export-return") == 1, "predecode target return telemetry count mismatch")
+    check("export_role=predecode-target" in FIXTURE and "status=0" in FIXTURE and "predecode-target-needs-proven-seed returned_fd=0" not in FIXTURE,
+          "predecode target status mapping regressed")
     check("export_role=sampleable-presentation" in FIXTURE and "decision=fail reason=no-valid-decoded-or-seed-pixels returned_fd=0 status=18" in FIXTURE,
           "sampleable presentation failure fixture missing")
     check(
