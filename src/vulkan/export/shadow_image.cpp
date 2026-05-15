@@ -2139,15 +2139,17 @@ namespace vkvv {
                 exit_predecode_quarantine(source, owner_export, export_visible_release_satisfied(owner_export));
             }
             if (export_resource_fd_observable(owner_export)) {
+                const bool presentation_separate =
+                    !owner_refresh_export && source->content_generation != 0 && owner_export->present_generation != source->content_generation;
                 VKVV_TRACE("observable-fd-decode-refresh",
                            "surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u display_visible=%u content_gen=%llu fd_content_gen_before=%llu "
-                           "fd_content_gen_after=%llu present_gen=%llu display_published=%u presentable=%u present_pinned=%u",
+                           "fd_content_gen_after=%llu present_gen=%llu display_published=%u presentable=%u present_pinned=%u presentation_separate=%u",
                            source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id),
                            source->codec_operation, owner_refresh_export ? 1U : 0U, owner_refresh_export ? 1U : 0U,
                            static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(owner_snapshot.fd_content_generation),
                            static_cast<unsigned long long>(export_resource_fd_content_generation(owner_export)),
                            static_cast<unsigned long long>(owner_export->present_generation), owner_export->published_visible ? 1U : 0U,
-                           owner_export->presentable ? 1U : 0U, owner_export->present_pinned ? 1U : 0U);
+                           owner_export->presentable ? 1U : 0U, owner_export->present_pinned ? 1U : 0U, presentation_separate ? 1U : 0U);
             }
             if (was_bootstrap_export) {
 	                VKVV_TRACE("bootstrap-export-upgrade",

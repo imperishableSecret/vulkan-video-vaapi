@@ -285,6 +285,7 @@ def main() -> int:
         "private_only=1",
         "nondisplay-private-refresh",
         "display_visible=",
+        "presentation_separate=",
         "mutation_action=skipped-client-shadow",
         "predecode-target-seed",
         "visible-refresh",
