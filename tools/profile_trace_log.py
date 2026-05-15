@@ -474,7 +474,8 @@ class TraceProfile:
             proof_valid = (parse_int(fields.get("pixel_proof_valid")) or 0) != 0
             is_black = (parse_int(fields.get("is_black")) or 0) != 0
             may_sample = (parse_int(fields.get("may_be_sampled_by_client")) or 0) != 0
-            if returned and pixel_source == "placeholder" and is_black and may_sample:
+            export_role = fields.get("export_role")
+            if returned and pixel_source == "placeholder" and is_black and may_sample and export_role != "bootstrap":
                 stream.generic_export_placeholder_black_sampled += 1
             if returned and pixel_source == "seed" and not proof_valid:
                 stream.generic_export_seed_invalid += 1
@@ -673,7 +674,8 @@ class TraceProfile:
             proof_valid = (parse_int(fields.get("pixel_proof_valid")) or 0) != 0
             is_black = (parse_int(fields.get("is_black")) or 0) != 0
             may_sample = (parse_int(fields.get("may_be_sampled_by_client")) or 0) != 0
-            if returned and pixel_source == "placeholder" and is_black and may_sample:
+            export_role = fields.get("export_role")
+            if returned and pixel_source == "placeholder" and is_black and may_sample and export_role != "bootstrap":
                 self.generic_export_placeholder_black_sampled += 1
             if returned and pixel_source == "seed" and not proof_valid:
                 self.generic_export_seed_invalid += 1

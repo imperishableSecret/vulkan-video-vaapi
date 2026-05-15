@@ -74,6 +74,8 @@ nvidia-vulkan-vaapi: trace seq=63 event=external-sync-proof surface=7 fd_dev=11 
 nvidia-vulkan-vaapi: trace seq=64 event=decode-pixel-proof surface=7 codec=0x8 stream=1 content_gen=2 order_hint_or_frame_num=2 decode_crc_valid=1 decode_crc=0x10 black_crc=0x10 zero_crc=0x0 is_black=1 is_zero=0 pixel_proof_valid=0 sample_bytes=4096
 nvidia-vulkan-vaapi: trace seq=65 event=va-export-call driver=2 surface=7 flags=0x5 mem_type=0x40000000 composed_layers=0 separate_layers=1 active_stream=1 active_codec=0x8 surface_stream=1 surface_codec=0x8 decoded=0 content_gen=0 pending_decode=0 had_va_begin=0 had_decode_submit=0 export_intent=read-only
 nvidia-vulkan-vaapi: trace seq=66 event=export-role-decision surface=7 driver=2 active_stream=1 active_codec=0x8 surface_stream=1 surface_codec=0x8 content_gen=0 decoded=0 pending_decode=0 had_va_begin=0 had_decode_submit=0 export_flags=0x5 mem_type=0x40000000 export_intent=read-only export_role=sampleable-presentation reason=undecoded-sampleable
+nvidia-vulkan-vaapi: trace seq=67 event=bootstrap-export-return surface=8 driver=2 fd_dev=33 fd_ino=44 stream=0 codec=0x0 content_gen=0 fd_content_gen=0 presentable=0 published_visible=0 predecode_quarantined=1 export_role=bootstrap status=0
+nvidia-vulkan-vaapi: trace seq=68 event=generic-export-summary surface=8 stream=0 codec=0x0 width=3840 height=2160 fourcc=0x30313050 content_gen=0 fd_content_gen=0 returned_fd=1 decision=return-bootstrap pixel_source=placeholder pixel_proof_valid=0 is_black=1 is_zero=0 pending_decode=0 valid_seed_available=0 quarantine_outcome=pending external_release_mode=none status=0 may_be_sampled_by_client=1 export_role=bootstrap export_intent=read-only raw_export_flags=0x5 mem_type=0x40000000 had_va_begin=0 had_decode_submit=0
 [1:2:0512/000000.000000:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:3552] vaEndPicture failed, VA error: operation failed
 nvidia-vulkan-vaapi: device-lost call=vkWaitForFences operation=AV1 decode result=-4 decode_submitted=1 decode_completed=0
 """
@@ -126,7 +128,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 65, "trace record count mismatch")
+    check(data["trace_records"] == 67, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -163,7 +165,7 @@ def main() -> int:
     check(totals["nondisplay_exported_fd_refreshes"] == 1, "nondisplay exported fd refresh aggregate mismatch")
     check(totals["predecode_export_policy_events"] == 2, "predecode export policy aggregate mismatch")
     check(totals["predecode_stream_local_seeds"] == 1 and totals["predecode_neutral_placeholders"] == 1, "predecode policy action aggregate mismatch")
-    check(totals["export_validity_gates"] == 2 and totals["generic_export_summaries"] == 2, "generic export telemetry aggregate mismatch")
+    check(totals["export_validity_gates"] == 2 and totals["generic_export_summaries"] == 3, "generic export telemetry aggregate mismatch")
     check(totals["generic_export_placeholder_black_sampled"] == 0, "generic export placeholder aggregate mismatch")
     check(totals["generic_export_seed_invalid"] == 0 and totals["generic_export_decoded_invalid"] == 0, "generic export invalid proof aggregate mismatch")
     check(totals["returned_fd_pixel_proofs"] == 1 and totals["returned_fd_placeholder_black"] == 0, "returned fd pixel proof aggregate mismatch")
@@ -190,7 +192,10 @@ def main() -> int:
     check(totals["av1_visible_audits"] == 1 and totals["av1_publish_failures"] == 0, "AV1 audit aggregate mismatch")
     check(data["events"].get("av1-submit") == 1, "AV1 submit event count mismatch")
     check(data["events"].get("av1-show-existing") == 1, "AV1 show-existing event count mismatch")
-    check(data["events"].get("va-export-call") == 1 and data["events"].get("export-role-decision") == 1, "export role telemetry count mismatch")
+    check(
+        data["events"].get("va-export-call") == 1 and data["events"].get("export-role-decision") == 1 and data["events"].get("bootstrap-export-return") == 1,
+        "export role telemetry count mismatch",
+    )
     check(data["browser_dropped_frames_observed"] is False, "browser dropped-frame observation mismatch")
     check(totals["device_lost"] == 1, "device-lost aggregate mismatch")
     check(totals["va_end_failed"] == 1, "VA end failure aggregate mismatch")
