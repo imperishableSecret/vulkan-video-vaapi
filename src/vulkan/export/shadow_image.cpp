@@ -2394,7 +2394,7 @@ namespace vkvv {
 
     bool refresh_nondisplay_export_resource(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size) {
         if (runtime == nullptr || source == nullptr || source->image == VK_NULL_HANDLE || source->export_resource.image == VK_NULL_HANDLE ||
-            source->export_resource.memory == VK_NULL_HANDLE || !source->export_resource.exported) {
+            source->export_resource.memory == VK_NULL_HANDLE || (!source->export_resource.exported && !source->import_output_copy_target)) {
             std::snprintf(reason, reason_size, "missing non-display export refresh backing");
             return false;
         }
@@ -2405,7 +2405,13 @@ namespace vkvv {
             return false;
         }
         unregister_predecode_export_resource_locked(runtime, &source->export_resource);
+        const bool keep_import_output_copy = source->import.external && source->import_output_copy_target && source->import_output_copy_done &&
+            source->import_present_generation == source->content_generation && source->import_fd_dev == source->import.fd.dev && source->import_fd_ino == source->import.fd.ino;
         clear_surface_export_attach_state(source);
+        if (keep_import_output_copy) {
+            source->import_output_copy_target = true;
+            source->import_output_copy_done   = true;
+        }
         source->export_seed_generation                 = 0;
         source->last_nondisplay_skip_generation        = source->content_generation;
         source->last_nondisplay_skip_shadow_generation = source->export_resource.content_generation;
