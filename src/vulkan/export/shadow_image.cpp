@@ -2,6 +2,7 @@
 #include "telemetry.h"
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -124,6 +125,8 @@ namespace vkvv {
         }
         const bool fd_observable = export_resource_fd_observable(resource);
         const bool stale         = fd_observable && owner->content_generation > resource->exported_fd.fd_content_generation;
+        const bool invalid_observable_stale =
+            fd_observable && owner->content_generation != 0 && resource->exported_fd.fd_content_generation != owner->content_generation;
         VKVV_TRACE("exported-fd-freshness-check",
                    "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu fd_content_gen=%llu last_written_content_gen=%llu "
                    "may_be_sampled_by_client=%u fd_observable=%u detached_from_surface=%u refresh_export=%u display_visible=%u action=%s",
@@ -138,6 +141,17 @@ namespace vkvv {
                        static_cast<unsigned long long>(owner->driver_instance_id), static_cast<unsigned long long>(owner->stream_id), owner->codec_operation,
                        static_cast<unsigned long long>(owner->content_generation), static_cast<unsigned long long>(resource->exported_fd.fd_content_generation),
                        action != nullptr ? action : "unknown");
+        }
+        if (invalid_observable_stale) {
+            VKVV_TRACE("invalid-observable-fd-stale",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu fd_content_gen=%llu last_written_content_gen=%llu "
+                       "refresh_export=%u display_visible=%u action=%s",
+                       owner->surface_id, static_cast<unsigned long long>(owner->driver_instance_id), static_cast<unsigned long long>(owner->stream_id),
+                       owner->codec_operation, static_cast<unsigned long long>(resource->exported_fd.fd_dev), static_cast<unsigned long long>(resource->exported_fd.fd_ino),
+                       static_cast<unsigned long long>(owner->content_generation), static_cast<unsigned long long>(resource->exported_fd.fd_content_generation),
+                       static_cast<unsigned long long>(resource->exported_fd.last_written_content_generation), refresh_export ? 1U : 0U, display_visible ? 1U : 0U,
+                       action != nullptr ? action : "unknown");
+            assert(!invalid_observable_stale && "observable exported fd must match decoded content generation");
         }
     }
 

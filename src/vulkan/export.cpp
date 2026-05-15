@@ -3,6 +3,7 @@
 #include "telemetry.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -320,14 +321,32 @@ namespace {
 
         const bool needs_decode_shadow = resource->content_generation != 0 && resource->export_resource.exported;
         const bool coherent            = !needs_decode_shadow || surface_resource_has_current_decode_shadow(resource);
+        const bool fd_observable       = export_resource_fd_observable(&resource->export_resource);
+        const bool private_shadow_only_for_observable_fd = fd_observable && resource->content_generation != 0 &&
+            resource->private_decode_shadow.content_generation == resource->content_generation &&
+            export_resource_fd_content_generation(&resource->export_resource) != resource->content_generation;
         VKVV_TRACE("decode-shadow-coherence-check",
                    "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu refresh_export=%u display_visible=%u present_pinned=%u present_shadow_gen=%llu "
-                   "private_shadow_gen=%llu decode_shadow_gen=%llu coherent=%u action=%s",
+                   "private_shadow_gen=%llu decode_shadow_gen=%llu fd_content_gen=%llu fd_observable=%u coherent=%u action=%s",
                    resource->surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
                    resource->codec_operation, static_cast<unsigned long long>(resource->content_generation), refresh_export ? 1U : 0U, display_visible ? 1U : 0U,
                    resource->export_resource.present_pinned ? 1U : 0U, static_cast<unsigned long long>(resource->export_resource.content_generation),
                    static_cast<unsigned long long>(resource->private_decode_shadow.content_generation),
-                   static_cast<unsigned long long>(resource->export_resource.decode_shadow_generation), coherent ? 1U : 0U, action != nullptr ? action : "unknown");
+                   static_cast<unsigned long long>(resource->export_resource.decode_shadow_generation),
+                   static_cast<unsigned long long>(export_resource_fd_content_generation(&resource->export_resource)), fd_observable ? 1U : 0U, coherent ? 1U : 0U,
+                   action != nullptr ? action : "unknown");
+        if (private_shadow_only_for_observable_fd) {
+            VKVV_TRACE("invalid-private-shadow-only-for-observable-fd",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu present_shadow_gen=%llu private_shadow_gen=%llu "
+                       "decode_shadow_gen=%llu fd_observable=1 action=%s",
+                       resource->surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                       resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                       static_cast<unsigned long long>(export_resource_fd_content_generation(&resource->export_resource)),
+                       static_cast<unsigned long long>(resource->export_resource.content_generation),
+                       static_cast<unsigned long long>(resource->private_decode_shadow.content_generation),
+                       static_cast<unsigned long long>(resource->export_resource.decode_shadow_generation), action != nullptr ? action : "unknown");
+            assert(!private_shadow_only_for_observable_fd && "observable fd cannot be stale while only private shadow is current");
+        }
         if (!coherent) {
             VKVV_TRACE("invalid-stale-private-decode-shadow",
                        "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu present_shadow_gen=%llu private_shadow_gen=%llu decode_shadow_gen=%llu exported=%u "

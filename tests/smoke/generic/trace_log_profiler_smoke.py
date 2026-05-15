@@ -51,8 +51,8 @@ nvidia-vulkan-vaapi: trace seq=39 event=export-seed-register codec=0x8 stream=1 
 nvidia-vulkan-vaapi: trace seq=39 event=stream-seed-update surface=7 driver=2 stream=1 codec=0x8 fourcc=0x30313050 visible_width=3840 visible_height=2160 coded_width=3840 coded_height=2160 session_generation=1 present_gen=1 fd_content_gen=1 pixel_crc=0x20 pixel_identity_valid=1 pixel_content_valid=1 valid=1 source_safe=1
 nvidia-vulkan-vaapi: trace seq=39 event=stream-seed-invalidated surface=7 driver=2 stream=1 codec=0x8 present_gen=1 fd_content_gen=1 reason=source-detached
 nvidia-vulkan-vaapi: trace seq=40 event=export-present-state action=nondisplay-private-shadow-refresh surface=7 codec=0x8 stream=1 fd_dev=11 fd_ino=22 content_gen=3 present_shadow_gen=2 private_shadow_gen=3 decode_shadow_gen=3 present_gen=2 presentable=1 present_pinned=1 published_visible=1 decode_shadow_private_active=1 predecode=0 seeded=0 placeholder=0 refresh_export=0 display_visible=0 present_source=visible-refresh mutation_action=none client_visible_shadow_mutated=0 client_visible_shadow=1 private_only=0
-nvidia-vulkan-vaapi: trace seq=41 event=decode-shadow-coherence-check surface=7 driver=2 stream=1 codec=0x8 content_gen=3 refresh_export=0 display_visible=0 present_pinned=1 present_shadow_gen=2 private_shadow_gen=3 decode_shadow_gen=3 coherent=1 action=private-shadow-refresh
-nvidia-vulkan-vaapi: trace seq=42 event=decode-shadow-coherence-check surface=7 driver=2 stream=1 codec=0x8 content_gen=1 refresh_export=1 display_visible=1 present_pinned=1 present_shadow_gen=1 private_shadow_gen=0 decode_shadow_gen=1 coherent=1 action=visible-refresh
+nvidia-vulkan-vaapi: trace seq=41 event=decode-shadow-coherence-check surface=7 driver=2 stream=1 codec=0x8 content_gen=3 refresh_export=0 display_visible=0 present_pinned=1 present_shadow_gen=2 private_shadow_gen=3 decode_shadow_gen=3 fd_content_gen=3 fd_observable=1 coherent=1 action=private-shadow-refresh
+nvidia-vulkan-vaapi: trace seq=42 event=decode-shadow-coherence-check surface=7 driver=2 stream=1 codec=0x8 content_gen=1 refresh_export=1 display_visible=1 present_pinned=1 present_shadow_gen=1 private_shadow_gen=0 decode_shadow_gen=1 fd_content_gen=1 fd_observable=1 coherent=1 action=visible-refresh
 nvidia-vulkan-vaapi: trace seq=43 event=predecode-quarantine-enter surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 content_gen=0 presentable=0 published_visible=0 predecode_exported=1 predecode_quarantined=1
 nvidia-vulkan-vaapi: trace seq=44 event=predecode-quarantine-exit surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 content_gen=1 present_gen=1 release_done=1 predecode_quarantined=0
 nvidia-vulkan-vaapi: trace seq=45 event=export-visible-acquire surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 acquired_generation=0 acquire_required=0 acquire_done=1 acquire_mode=implicit-sync-only src_queue_family=4294967295 dst_queue_family=4294967295
@@ -63,6 +63,9 @@ nvidia-vulkan-vaapi: trace seq=49 event=private-shadow-pixel-proof surface=7 cod
 nvidia-vulkan-vaapi: trace seq=50 event=visible-publish-gate surface=7 codec=0x8 stream=1 content_gen=1 display_visible=1 copy_done=1 present_shadow_gen=1 external_release_ok=1 pixel_match_ok=1 pixel_proof_required=0 pixel_proof_mode=seed seed_proof_required=1 visible_proof_required=0 publish_ok=1
 nvidia-vulkan-vaapi: trace seq=51 event=visible-publish-blocked surface=7 codec=0x8 stream=1 content_gen=2 display_visible=1 copy_done=1 present_shadow_gen=2 external_release_ok=1 pixel_match_ok=0 pixel_proof_required=1 pixel_proof_mode=all visible_proof_required=1 reason=pixel-mismatch
 nvidia-vulkan-vaapi: trace seq=52 event=exported-fd-freshness-check surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 content_gen=2 fd_content_gen=2 last_written_content_gen=2 may_be_sampled_by_client=1 detached_from_surface=0 refresh_export=0 display_visible=0 action=copied-to-export-fd
+nvidia-vulkan-vaapi: trace seq=52 event=invalid-readable-fd-marked-unsampled surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 export_intent=read-only returned_fd=1 fd_observable=0 may_be_sampled_by_client=0 reason=mark-returned
+nvidia-vulkan-vaapi: trace seq=52 event=invalid-observable-fd-stale surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 content_gen=3 fd_content_gen=2 last_written_content_gen=2 refresh_export=0 display_visible=0 action=post-decode-check
+nvidia-vulkan-vaapi: trace seq=52 event=invalid-private-shadow-only-for-observable-fd surface=7 driver=2 stream=1 codec=0x8 content_gen=3 fd_content_gen=2 present_shadow_gen=2 private_shadow_gen=3 decode_shadow_gen=3 fd_observable=1 action=private-shadow-refresh
 nvidia-vulkan-vaapi: trace seq=53 event=nondisplay-exported-fd-refresh surface=7 driver=2 stream=1 codec=0x8 content_gen=2 fd_content_gen_before=1 fd_content_gen_after=2 refresh_export=0 display_published=0 may_be_sampled_by_client=1 present_gen=1
 nvidia-vulkan-vaapi: trace seq=54 event=predecode-export-policy surface=7 codec=0x8 stream=1 content_gen=0 pending_decode=0 policy=stream-local-last-visible action=stream-local-seed source_surface=6 source_present_gen=1 source_external_release_ok=1
 nvidia-vulkan-vaapi: trace seq=55 event=predecode-export-policy surface=7 codec=0x8 stream=1 content_gen=0 pending_decode=0 policy=stream-local-last-visible action=neutral-placeholder source_surface=4294967295 source_present_gen=0 source_external_release_ok=0
@@ -151,7 +154,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 90, "trace record count mismatch")
+    check(data["trace_records"] == 93, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -184,6 +187,18 @@ def main() -> int:
     check(totals["export_visible_acquires"] == 1, "export visible acquire aggregate mismatch")
     check(totals["export_visible_release_missing"] == 0, "export visible release missing aggregate mismatch")
     check(totals["exported_fd_freshness_checks"] == 1 and totals["exported_fd_refreshes"] == 1, "exported fd freshness aggregate mismatch")
+    check(
+        data["events"].get("invalid-readable-fd-marked-unsampled") == 1
+        and data["events"].get("invalid-observable-fd-stale") == 1
+        and data["events"].get("invalid-private-shadow-only-for-observable-fd") == 1,
+        "export invariant telemetry count mismatch",
+    )
+    check("event=invalid-readable-fd-marked-unsampled" in FIXTURE and "returned_fd=1 fd_observable=0" in FIXTURE,
+          "readable fd invariant fixture missing")
+    check("event=invalid-observable-fd-stale" in FIXTURE and "content_gen=3 fd_content_gen=2" in FIXTURE,
+          "observable fd stale invariant fixture missing")
+    check("event=invalid-private-shadow-only-for-observable-fd" in FIXTURE and "private_shadow_gen=3" in FIXTURE and "fd_observable=1 action=private-shadow-refresh" in FIXTURE,
+          "private shadow invariant fixture missing")
     check(totals["invalid_stale_exported_fds"] == 0, "invalid stale exported fd aggregate mismatch")
     check(totals["nondisplay_exported_fd_refreshes"] == 1, "nondisplay exported fd refresh aggregate mismatch")
     check("event=observable-fd-decode-refresh" in FIXTURE and "refresh_export=0 display_visible=0" in FIXTURE and "fd_content_gen_after=2" in FIXTURE

@@ -1,6 +1,7 @@
 #include "vulkan/runtime_internal.h"
 #include "telemetry.h"
 
+#include <cassert>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -326,15 +327,27 @@ namespace vkvv {
         if (resource == nullptr) {
             return;
         }
-        const bool readable = resource->export_intent == VkvvExportIntent::ReadOnly || resource->export_intent == VkvvExportIntent::ReadWrite;
+        const bool readable      = resource->export_intent == VkvvExportIntent::ReadOnly || resource->export_intent == VkvvExportIntent::ReadWrite;
+        const bool fd_observable = export_resource_fd_observable(resource);
         VKVV_TRACE("fd-observability",
                    "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu export_intent=%s fd_exported=%u fd_observable=%u readable_intent=%u "
                    "detached_from_surface=%u may_be_sampled_by_client=%u reason=%s",
                    resource->owner_surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
                    resource->codec_operation, static_cast<unsigned long long>(resource->exported_fd.fd_dev), static_cast<unsigned long long>(resource->exported_fd.fd_ino),
-                   vkvv_export_intent_name(resource->export_intent), resource->exported_fd.fd_exported ? 1U : 0U, export_resource_fd_observable(resource) ? 1U : 0U,
+                   vkvv_export_intent_name(resource->export_intent), resource->exported_fd.fd_exported ? 1U : 0U, fd_observable ? 1U : 0U,
                    readable ? 1U : 0U, resource->exported_fd.detached_from_surface ? 1U : 0U,
                    export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U, reason != nullptr ? reason : "unknown");
+        const bool invalid_readable_unsampled = resource->exported_fd.fd_exported && readable && !resource->exported_fd.detached_from_surface && !fd_observable;
+        if (invalid_readable_unsampled) {
+            VKVV_TRACE("invalid-readable-fd-marked-unsampled",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu export_intent=%s returned_fd=1 fd_observable=0 "
+                       "may_be_sampled_by_client=%u reason=%s",
+                       resource->owner_surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                       resource->codec_operation, static_cast<unsigned long long>(resource->exported_fd.fd_dev), static_cast<unsigned long long>(resource->exported_fd.fd_ino),
+                       vkvv_export_intent_name(resource->export_intent), export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U,
+                       reason != nullptr ? reason : "unknown");
+            assert(!invalid_readable_unsampled && "readable exported fd must be observable");
+        }
     }
 
     void trace_export_fd_lifetime(const SurfaceResource* owner, const ExportResource* resource, const char* action, uint64_t generation_at_action, bool may_be_sampled_by_client) {
