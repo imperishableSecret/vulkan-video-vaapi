@@ -353,6 +353,7 @@ namespace {
         if (status != VA_STATUS_SUCCESS) {
             return finish_surface(status);
         }
+        target->had_decode_submit = true;
 
         const bool pending_export_refresh = vkvv_vulkan_surface_has_pending_export_refresh_work(drv->vulkan, target);
         const bool externally_visible     = vkvv_vulkan_surface_has_exported_backing(target) || target->import.external;

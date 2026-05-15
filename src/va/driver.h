@@ -206,6 +206,8 @@ typedef struct VkvvSurface {
     VAStatus                  sync_status;
     bool                      destroying;
     bool                      decoded;
+    bool                      had_va_begin;
+    bool                      had_decode_submit;
 } VkvvSurface;
 
 typedef struct VkvvBuffer {

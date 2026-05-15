@@ -35,6 +35,20 @@ namespace {
         attrib->value.value.i = value;
     }
 
+    const char* export_intent_name(uint32_t flags) {
+        const uint32_t access = flags & VA_EXPORT_SURFACE_READ_WRITE;
+        if (access == VA_EXPORT_SURFACE_READ_ONLY) {
+            return "read-only";
+        }
+        if (access == VA_EXPORT_SURFACE_WRITE_ONLY) {
+            return "write-only";
+        }
+        if (access == VA_EXPORT_SURFACE_READ_WRITE) {
+            return "read-write";
+        }
+        return "unknown";
+    }
+
     const char* surface_attrib_name(VASurfaceAttribType type) {
         switch (type) {
             case VASurfaceAttribNone: return "None";
@@ -217,9 +231,11 @@ void vkvv_surface_begin_work(VkvvSurface* surface) {
     if (surface->destroying) {
         return;
     }
-    surface->work_state  = VKVV_SURFACE_WORK_RENDERING;
-    surface->sync_status = VA_STATUS_ERROR_TIMEDOUT;
-    surface->decoded     = false;
+    surface->work_state         = VKVV_SURFACE_WORK_RENDERING;
+    surface->sync_status        = VA_STATUS_ERROR_TIMEDOUT;
+    surface->decoded            = false;
+    surface->had_va_begin       = true;
+    surface->had_decode_submit  = false;
 }
 
 void vkvv_surface_complete_work(VkvvSurface* surface, VAStatus status) {
@@ -264,6 +280,8 @@ VAStatus vkvvCreateSurfaces2(VADriverContextP ctx, unsigned int format, unsigned
         surface->import             = import_info;
         surface->work_state         = VKVV_SURFACE_WORK_READY;
         surface->sync_status        = VA_STATUS_SUCCESS;
+        surface->had_va_begin       = false;
+        surface->had_decode_submit  = false;
         surfaces[i]                 = vkvv_object_add(drv, VKVV_OBJECT_SURFACE, surface);
         if (surfaces[i] == VA_INVALID_ID) {
             delete surface;
@@ -425,6 +443,13 @@ VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, u
     vkvv_trace("va-export-enter", "driver=%llu surface=%u active_stream=%llu active_codec=0x%x surface_stream=%llu surface_codec=0x%x decoded=%u pending=%u",
                (unsigned long long)drv->driver_instance_id, surface->id, (unsigned long long)drv->active_decode_stream_id, drv->active_decode_codec_operation,
                (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U, vkvv_surface_has_pending_work(surface) ? 1U : 0U);
+    vkvv_trace("va-export-call",
+               "driver=%llu surface=%u flags=0x%x mem_type=0x%x composed_layers=%u separate_layers=%u active_stream=%llu active_codec=0x%x surface_stream=%llu "
+               "surface_codec=0x%x decoded=%u content_gen=0 pending_decode=%u had_va_begin=%u had_decode_submit=%u export_intent=%s",
+               (unsigned long long)drv->driver_instance_id, surface->id, flags, mem_type, (flags & VA_EXPORT_SURFACE_COMPOSED_LAYERS) != 0 ? 1U : 0U,
+               (flags & VA_EXPORT_SURFACE_SEPARATE_LAYERS) != 0 ? 1U : 0U, (unsigned long long)drv->active_decode_stream_id, drv->active_decode_codec_operation,
+               (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U, vkvv_surface_has_pending_work(surface) ? 1U : 0U,
+               surface->had_va_begin ? 1U : 0U, surface->had_decode_submit ? 1U : 0U, export_intent_name(flags));
     const bool applied_active_domain = vkvv_driver_apply_active_decode_domain_locked(drv, surface);
     if (applied_active_domain) {
         vkvv_log("tagged export surface %u from active decode domain: driver=%llu stream=%llu codec=0x%x %ux%u fourcc=0x%x rt=0x%x", surface->id,

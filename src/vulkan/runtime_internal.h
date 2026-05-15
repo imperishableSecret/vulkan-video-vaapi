@@ -49,6 +49,25 @@ namespace vkvv {
 
     const char* vkvv_export_pixel_source_name(VkvvExportPixelSource source);
 
+    enum class VkvvExportIntent {
+        Unknown = 0,
+        ReadOnly,
+        WriteOnly,
+        ReadWrite,
+    };
+
+    const char* vkvv_export_intent_name(VkvvExportIntent intent);
+
+    enum class VkvvExportRole {
+        Unknown = 0,
+        SampleablePresentation,
+        Bootstrap,
+        DecodedPresentation,
+        SeededPresentation,
+    };
+
+    const char* vkvv_export_role_name(VkvvExportRole role);
+
     struct VkvvReturnedFdProof {
         bool                          returned_fd              = false;
         int                           fd                       = -1;
@@ -120,7 +139,12 @@ namespace vkvv {
         bool                          predecode_had_va_begin       = false;
         bool                          predecode_had_decode_submit  = false;
         bool                          predecode_had_visible_decode = false;
+        bool                          bootstrap_export             = false;
         bool                          black_placeholder            = false;
+        VkvvExportRole                export_role                  = VkvvExportRole::Unknown;
+        VkvvExportIntent              export_intent                = VkvvExportIntent::Unknown;
+        uint32_t                      raw_export_flags             = 0;
+        uint32_t                      export_mem_type              = 0;
         VASurfaceID                   seed_source_surface_id       = VA_INVALID_ID;
         uint64_t                      seed_source_generation       = 0;
         bool                          seed_pixel_proof_valid       = false;

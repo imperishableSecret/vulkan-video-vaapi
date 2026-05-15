@@ -41,7 +41,8 @@ namespace vkvv {
                    "action=%s surface=%u codec=0x%x stream=%llu fd_dev=%llu fd_ino=%llu content_gen=%llu present_shadow_gen=%llu private_shadow_gen=%llu "
                    "decode_shadow_gen=%llu fd_exported=%u fd_content_gen=%llu may_be_sampled_by_client=%u detached_from_surface=%u present_gen=%llu presentable=%u "
                    "present_pinned=%u published_visible=%u decode_shadow_private_active=%u predecode=%u seeded=%u "
-                   "predecode_quarantined=%u predecode_generation=%llu placeholder=%u refresh_export=%u display_visible=%u present_source=%s mutation_action=%s "
+                   "predecode_quarantined=%u predecode_generation=%llu placeholder=%u export_role=%s export_intent=%s raw_export_flags=0x%x mem_type=0x%x had_va_begin=%u "
+                   "had_decode_submit=%u refresh_export=%u display_visible=%u present_source=%s mutation_action=%s "
                    "client_visible_shadow_mutated=0 client_visible_shadow=%u private_only=%u external_release_required=%u external_release_done=%u external_release_mode=%s "
                    "external_released_generation=%llu",
                    action != nullptr ? action : "unknown", owner->surface_id, owner->codec_operation, static_cast<unsigned long long>(owner->stream_id),
@@ -52,8 +53,10 @@ namespace vkvv {
                    resource->exported_fd.detached_from_surface ? 1U : 0U, static_cast<unsigned long long>(resource->present_generation), resource->presentable ? 1U : 0U,
                    resource->present_pinned ? 1U : 0U, resource->published_visible ? 1U : 0U, resource->decode_shadow_private_active ? 1U : 0U,
                    resource->predecode_exported ? 1U : 0U, resource->predecode_seeded ? 1U : 0U, resource->predecode_quarantined ? 1U : 0U,
-                   static_cast<unsigned long long>(resource->predecode_generation), resource->black_placeholder ? 1U : 0U, refresh_export ? 1U : 0U, display_visible ? 1U : 0U,
-                   vkvv_export_present_source_name(resource->present_source), mutation_action, resource->client_visible_shadow ? 1U : 0U,
+                   static_cast<unsigned long long>(resource->predecode_generation), resource->black_placeholder ? 1U : 0U, vkvv_export_role_name(resource->export_role),
+                   vkvv_export_intent_name(resource->export_intent), resource->raw_export_flags, resource->export_mem_type, resource->predecode_had_va_begin ? 1U : 0U,
+                   resource->predecode_had_decode_submit ? 1U : 0U, refresh_export ? 1U : 0U, display_visible ? 1U : 0U, vkvv_export_present_source_name(resource->present_source),
+                   mutation_action, resource->client_visible_shadow ? 1U : 0U,
                    resource->private_nondisplay_shadow ? 1U : 0U, resource->external_sync.external_release_required ? 1U : 0U,
                    resource->external_sync.external_release_done ? 1U : 0U, vkvv_external_release_mode_name(resource->external_sync.release_mode),
                    static_cast<unsigned long long>(resource->external_sync.released_generation));

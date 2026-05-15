@@ -103,7 +103,8 @@ def main() -> int:
     export_state_text = (root / "src" / "vulkan" / "export" / "state.cpp").read_text(encoding="utf-8")
     export_retained_text = (root / "src" / "vulkan" / "export" / "retained.cpp").read_text(encoding="utf-8")
     resource_text = (root / "src" / "vulkan" / "resources" / "surface.cpp").read_text(encoding="utf-8")
-    export_combined_text = export_text + "\n" + shadow_text + "\n" + export_state_text + "\n" + export_retained_text + "\n" + resource_text
+    va_surface_text = (root / "src" / "va" / "surfaces.cpp").read_text(encoding="utf-8")
+    export_combined_text = export_text + "\n" + shadow_text + "\n" + export_state_text + "\n" + export_retained_text + "\n" + resource_text + "\n" + va_surface_text
     if '"av1-visible-output-check"' not in export_text:
         fail("AV1 visible output check trace is missing")
     for event in (
@@ -147,6 +148,8 @@ def main() -> int:
         '"export-fd-lifetime"',
         '"predecode-quarantine-outcome"',
         '"generic-export-summary"',
+        '"va-export-call"',
+        '"export-role-decision"',
         '"debug-placeholder-export"',
         '"external-sync-proof"',
         '"predecode-quarantine-enter"',
@@ -306,6 +309,11 @@ def main() -> int:
         "had_va_begin=",
         "had_decode_submit=",
         "had_visible_decode=",
+        "export_role=",
+        "export_intent=",
+        "raw_export_flags=",
+        "mem_type=",
+        "export_flags=",
         "outcome=",
         "present_crc_after_release=",
         "decoded=0",

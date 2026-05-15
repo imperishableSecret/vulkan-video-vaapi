@@ -116,7 +116,12 @@ namespace vkvv {
         resource->predecode_had_va_begin       = false;
         resource->predecode_had_decode_submit  = false;
         resource->predecode_had_visible_decode = false;
+        resource->bootstrap_export             = false;
         resource->black_placeholder            = false;
+        resource->export_role                  = VkvvExportRole::Unknown;
+        resource->export_intent                = VkvvExportIntent::Unknown;
+        resource->raw_export_flags             = 0;
+        resource->export_mem_type              = 0;
         resource->seed_source_surface_id       = VA_INVALID_ID;
         resource->seed_source_generation       = 0;
         resource->seed_pixel_proof_valid       = false;

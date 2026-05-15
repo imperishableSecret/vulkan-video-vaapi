@@ -37,6 +37,27 @@ namespace vkvv {
         }
     }
 
+    const char* vkvv_export_intent_name(VkvvExportIntent intent) {
+        switch (intent) {
+            case VkvvExportIntent::ReadOnly: return "read-only";
+            case VkvvExportIntent::WriteOnly: return "write-only";
+            case VkvvExportIntent::ReadWrite: return "read-write";
+            case VkvvExportIntent::Unknown: return "unknown";
+            default: return "unknown";
+        }
+    }
+
+    const char* vkvv_export_role_name(VkvvExportRole role) {
+        switch (role) {
+            case VkvvExportRole::SampleablePresentation: return "sampleable-presentation";
+            case VkvvExportRole::Bootstrap: return "bootstrap";
+            case VkvvExportRole::DecodedPresentation: return "decoded-presentation";
+            case VkvvExportRole::SeededPresentation: return "seeded-presentation";
+            case VkvvExportRole::Unknown: return "unknown";
+            default: return "unknown";
+        }
+    }
+
     const char* vkvv_export_present_source_name(VkvvExportPresentSource source) {
         switch (source) {
             case VkvvExportPresentSource::None: return "none";
@@ -392,7 +413,12 @@ namespace vkvv {
         }
         resource->predecode_exported     = false;
         resource->predecode_seeded       = false;
+        resource->bootstrap_export       = false;
         resource->black_placeholder      = false;
+        resource->export_role            = VkvvExportRole::Unknown;
+        resource->export_intent          = VkvvExportIntent::Unknown;
+        resource->raw_export_flags       = 0;
+        resource->export_mem_type        = 0;
         resource->seed_source_surface_id = VA_INVALID_ID;
         resource->seed_source_generation = 0;
         resource->seed_pixel_proof_valid = false;
@@ -421,15 +447,14 @@ namespace vkvv {
         resource->predecode_fd_ino      = resource->fd_ino;
         resource->predecode_generation  = resource->content_generation;
         resource->predecode_quarantine_enter_ms = monotonic_ms();
-        resource->predecode_had_va_begin        = false;
-        resource->predecode_had_decode_submit   = false;
-        resource->predecode_had_visible_decode  = false;
         VKVV_TRACE("predecode-quarantine-enter",
                    "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu presentable=0 published_visible=0 predecode_exported=%u "
-                   "predecode_quarantined=1",
+                   "predecode_quarantined=1 export_role=%s export_intent=%s raw_export_flags=0x%x mem_type=0x%x had_va_begin=%u had_decode_submit=%u",
                    owner->surface_id, static_cast<unsigned long long>(owner->driver_instance_id), static_cast<unsigned long long>(owner->stream_id), owner->codec_operation,
                    static_cast<unsigned long long>(resource->predecode_fd_dev), static_cast<unsigned long long>(resource->predecode_fd_ino),
-                   static_cast<unsigned long long>(resource->predecode_generation), resource->predecode_exported ? 1U : 0U);
+                   static_cast<unsigned long long>(resource->predecode_generation), resource->predecode_exported ? 1U : 0U, vkvv_export_role_name(resource->export_role),
+                   vkvv_export_intent_name(resource->export_intent), resource->raw_export_flags, resource->export_mem_type, resource->predecode_had_va_begin ? 1U : 0U,
+                   resource->predecode_had_decode_submit ? 1U : 0U);
         trace_export_fd_lifetime(owner, resource, "quarantine-enter", resource->predecode_generation, export_resource_fd_may_be_sampled_by_client(resource));
     }
 

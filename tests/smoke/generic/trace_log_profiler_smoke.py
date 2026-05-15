@@ -72,6 +72,8 @@ nvidia-vulkan-vaapi: trace seq=61 event=returned-fd-pixel-proof surface=7 fd_dev
 nvidia-vulkan-vaapi: trace seq=62 event=generic-export-summary surface=7 stream=1 codec=0x8 width=3840 height=2160 fourcc=0x30313050 content_gen=1 fd_content_gen=1 returned_fd=1 decision=return-decoded pixel_source=decoded pixel_proof_valid=1 is_black=0 is_zero=0 pending_decode=0 valid_seed_available=0 quarantine_outcome=none external_release_mode=implicit-sync-only status=0 may_be_sampled_by_client=1
 nvidia-vulkan-vaapi: trace seq=63 event=external-sync-proof surface=7 fd_dev=11 fd_ino=22 stream=1 codec=0x8 content_gen=1 copy_done=1 fence_waited=1 release_mode=implicit-sync-only release_required=0 release_done=1 acquire_required=0 acquire_done=0 old_layout=7 new_layout=1 src_queue_family=4294967295 dst_queue_family=4294967295 sync_fd=-1 semaphore_exported=0 present_crc_after_release=0xabc
 nvidia-vulkan-vaapi: trace seq=64 event=decode-pixel-proof surface=7 codec=0x8 stream=1 content_gen=2 order_hint_or_frame_num=2 decode_crc_valid=1 decode_crc=0x10 black_crc=0x10 zero_crc=0x0 is_black=1 is_zero=0 pixel_proof_valid=0 sample_bytes=4096
+nvidia-vulkan-vaapi: trace seq=65 event=va-export-call driver=2 surface=7 flags=0x5 mem_type=0x40000000 composed_layers=0 separate_layers=1 active_stream=1 active_codec=0x8 surface_stream=1 surface_codec=0x8 decoded=0 content_gen=0 pending_decode=0 had_va_begin=0 had_decode_submit=0 export_intent=read-only
+nvidia-vulkan-vaapi: trace seq=66 event=export-role-decision surface=7 driver=2 active_stream=1 active_codec=0x8 surface_stream=1 surface_codec=0x8 content_gen=0 decoded=0 pending_decode=0 had_va_begin=0 had_decode_submit=0 export_flags=0x5 mem_type=0x40000000 export_intent=read-only export_role=sampleable-presentation reason=undecoded-sampleable
 [1:2:0512/000000.000000:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:3552] vaEndPicture failed, VA error: operation failed
 nvidia-vulkan-vaapi: device-lost call=vkWaitForFences operation=AV1 decode result=-4 decode_submitted=1 decode_completed=0
 """
@@ -124,7 +126,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 63, "trace record count mismatch")
+    check(data["trace_records"] == 65, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -188,6 +190,7 @@ def main() -> int:
     check(totals["av1_visible_audits"] == 1 and totals["av1_publish_failures"] == 0, "AV1 audit aggregate mismatch")
     check(data["events"].get("av1-submit") == 1, "AV1 submit event count mismatch")
     check(data["events"].get("av1-show-existing") == 1, "AV1 show-existing event count mismatch")
+    check(data["events"].get("va-export-call") == 1 and data["events"].get("export-role-decision") == 1, "export role telemetry count mismatch")
     check(data["browser_dropped_frames_observed"] is False, "browser dropped-frame observation mismatch")
     check(totals["device_lost"] == 1, "device-lost aggregate mismatch")
     check(totals["va_end_failed"] == 1, "VA end failure aggregate mismatch")
