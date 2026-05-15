@@ -71,6 +71,16 @@ namespace vkvv {
         }
     }
 
+    const char* vkvv_pixel_color_state_name(VkvvPixelColorState state) {
+        switch (state) {
+            case VkvvPixelColorState::Nonzero: return "nonzero";
+            case VkvvPixelColorState::Black: return "black";
+            case VkvvPixelColorState::Zero: return "zero";
+            case VkvvPixelColorState::Unknown: return "unknown";
+            default: return "unknown";
+        }
+    }
+
     const char* vkvv_pixel_proof_mode_name(VkvvPixelProofMode mode) {
         switch (mode) {
             case VkvvPixelProofMode::Off: return "off";
@@ -189,8 +199,8 @@ namespace vkvv {
         if (resource == nullptr) {
             return VkvvExportPixelSource::None;
         }
-        if (resource->black_placeholder || (resource->predecode_exported && !resource->predecode_seeded && resource->content_generation == 0 &&
-                                                resource->seed_source_generation == 0)) {
+        if (resource->black_placeholder ||
+            (resource->predecode_exported && !resource->predecode_seeded && resource->content_generation == 0 && resource->seed_source_generation == 0)) {
             return VkvvExportPixelSource::Placeholder;
         }
         if (resource->predecode_seeded || resource->seed_source_generation != 0) {
@@ -301,8 +311,7 @@ namespace vkvv {
         resource->exported_fd.may_be_sampled_by_client = false;
     }
 
-    void trace_export_fd_lifetime(const SurfaceResource* owner, const ExportResource* resource, const char* action, uint64_t generation_at_action,
-                                  bool may_be_sampled_by_client) {
+    void trace_export_fd_lifetime(const SurfaceResource* owner, const ExportResource* resource, const char* action, uint64_t generation_at_action, bool may_be_sampled_by_client) {
         if (resource == nullptr) {
             return;
         }
@@ -326,10 +335,9 @@ namespace vkvv {
         if (resource == nullptr) {
             return;
         }
-        const uint64_t now_ms  = monotonic_ms();
-        const uint64_t age_ms  = resource->predecode_quarantine_enter_ms != 0 && now_ms >= resource->predecode_quarantine_enter_ms ?
-             now_ms - resource->predecode_quarantine_enter_ms :
-             0;
+        const uint64_t now_ms = monotonic_ms();
+        const uint64_t age_ms =
+            resource->predecode_quarantine_enter_ms != 0 && now_ms >= resource->predecode_quarantine_enter_ms ? now_ms - resource->predecode_quarantine_enter_ms : 0;
         const VASurfaceID surface_id = owner != nullptr ? owner->surface_id : resource->owner_surface_id;
         const uint64_t    stream     = owner != nullptr ? owner->stream_id : resource->stream_id;
         const auto        codec      = owner != nullptr ? owner->codec_operation : resource->codec_operation;
@@ -450,10 +458,10 @@ namespace vkvv {
         if (resource == nullptr) {
             return;
         }
-        resource->predecode_quarantined = false;
-        resource->predecode_fd_dev      = 0;
-        resource->predecode_fd_ino      = 0;
-        resource->predecode_generation  = 0;
+        resource->predecode_quarantined         = false;
+        resource->predecode_fd_dev              = 0;
+        resource->predecode_fd_ino              = 0;
+        resource->predecode_generation          = 0;
         resource->predecode_quarantine_enter_ms = 0;
         resource->predecode_had_va_begin        = false;
         resource->predecode_had_decode_submit   = false;
@@ -464,10 +472,10 @@ namespace vkvv {
         if (owner == nullptr || resource == nullptr) {
             return;
         }
-        resource->predecode_quarantined = true;
-        resource->predecode_fd_dev      = resource->fd_dev;
-        resource->predecode_fd_ino      = resource->fd_ino;
-        resource->predecode_generation  = resource->content_generation;
+        resource->predecode_quarantined         = true;
+        resource->predecode_fd_dev              = resource->fd_dev;
+        resource->predecode_fd_ino              = resource->fd_ino;
+        resource->predecode_generation          = resource->content_generation;
         resource->predecode_quarantine_enter_ms = monotonic_ms();
         VKVV_TRACE("predecode-quarantine-enter",
                    "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu presentable=0 published_visible=0 predecode_exported=%u "
@@ -484,9 +492,9 @@ namespace vkvv {
         if (owner == nullptr || resource == nullptr || !resource->predecode_quarantined) {
             return;
         }
-        const uint64_t fd_dev = resource->predecode_fd_dev;
-        const uint64_t fd_ino = resource->predecode_fd_ino;
-        const char* outcome = resource->bootstrap_export ? "bootstrap-upgraded" : (resource->predecode_seeded ? "sampleable-seed-exit" : "sampleable-decoded-exit");
+        const uint64_t fd_dev  = resource->predecode_fd_dev;
+        const uint64_t fd_ino  = resource->predecode_fd_ino;
+        const char*    outcome = resource->bootstrap_export ? "bootstrap-upgraded" : (resource->predecode_seeded ? "sampleable-seed-exit" : "sampleable-decoded-exit");
         trace_predecode_quarantine_outcome(owner, resource, outcome, "valid-pixels", true);
         trace_export_fd_lifetime(owner, resource, "quarantine-exit", resource->content_generation, export_resource_fd_may_be_sampled_by_client(resource));
         clear_predecode_quarantine_state(resource);
@@ -540,12 +548,13 @@ namespace vkvv {
                    sync.external_release_required ? 1U : 0U, sync.external_release_done ? 1U : 0U, vkvv_external_release_mode_name(sync.release_mode));
         VKVV_TRACE("external-sync-proof",
                    "surface=%u fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu copy_done=%u fence_waited=1 release_mode=%s release_required=%u release_done=%u "
-                   "acquire_required=%u acquire_done=%u old_layout=%d new_layout=%d src_queue_family=%u dst_queue_family=%u sync_fd=-1 semaphore_exported=0 present_crc_after_release=0x%llx",
+                   "acquire_required=%u acquire_done=%u old_layout=%d new_layout=%d src_queue_family=%u dst_queue_family=%u sync_fd=-1 semaphore_exported=0 "
+                   "present_crc_after_release=0x%llx",
                    owner->surface_id, static_cast<unsigned long long>(resource->fd_dev), static_cast<unsigned long long>(resource->fd_ino),
                    static_cast<unsigned long long>(owner->stream_id), owner->codec_operation, static_cast<unsigned long long>(owner->content_generation),
                    resource->content_generation == owner->content_generation ? 1U : 0U, vkvv_external_release_mode_name(sync.release_mode),
-                   sync.external_release_required ? 1U : 0U, sync.external_release_done ? 1U : 0U, sync.external_acquire_required ? 1U : 0U,
-                   sync.external_acquire_done ? 1U : 0U, old_layout, new_layout, sync.src_queue_family, sync.dst_queue_family,
+                   sync.external_release_required ? 1U : 0U, sync.external_release_done ? 1U : 0U, sync.external_acquire_required ? 1U : 0U, sync.external_acquire_done ? 1U : 0U,
+                   old_layout, new_layout, sync.src_queue_family, sync.dst_queue_family,
                    static_cast<unsigned long long>(owner->present_pixel_proof_valid ? owner->present_pixel_crc : 0));
     }
 

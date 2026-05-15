@@ -23,25 +23,31 @@ namespace vkvv {
     bool               export_seed_pixel_proof_required();
     bool               export_visible_pixel_proof_required();
 
-    bool readback_image_luma_sample(VulkanRuntime* runtime, VkImage image, VkImageLayout* layout, const ExportFormatInfo* format, VkExtent2D extent, const char* label,
-                                    uint64_t* crc, VkDeviceSize* sample_bytes, char* reason, size_t reason_size);
+    bool     readback_image_luma_sample(VulkanRuntime* runtime, VkImage image, VkImageLayout* layout, const ExportFormatInfo* format, VkExtent2D extent, const char* label,
+                                        uint64_t* crc, VkDeviceSize* sample_bytes, char* reason, size_t reason_size);
     uint64_t pixel_reference_crc(const ExportFormatInfo* format, VkExtent2D extent, bool black);
     bool     pixel_proof_valid_for_source(VkvvExportPixelSource source, bool crc_valid, bool is_black, bool is_zero);
     VkvvPixelProofState pixel_proof_state_from_sample(bool sample_ok, uint64_t crc, uint64_t black_crc, uint64_t zero_crc, bool is_black, bool is_zero);
-    void trace_pixel_proof_computed(VASurfaceID surface_id, uint64_t fd_dev, uint64_t fd_ino, uint64_t generation, VkvvExportPixelSource pixel_source, uint64_t crc,
-                                    uint64_t black_crc, uint64_t zero_crc, bool is_black, bool is_zero, VkDeviceSize sample_bytes, VkvvPixelProofState state);
+    bool                pixel_identity_valid_from_state(VkvvPixelProofState state);
+    VkvvPixelColorState pixel_color_state_from_sample(bool sample_ok, bool is_black, bool is_zero);
+    void                trace_pixel_proof_computed(VASurfaceID surface_id, uint64_t fd_dev, uint64_t fd_ino, uint64_t generation, VkvvExportPixelSource pixel_source, uint64_t crc,
+                                                   uint64_t black_crc, uint64_t zero_crc, bool is_black, bool is_zero, VkDeviceSize sample_bytes, VkvvPixelProofState state);
 
     struct SeedPixelProofState {
-        bool                valid        = false;
-        bool                is_black     = false;
-        bool                is_zero      = false;
-        uint64_t            crc          = 0;
-        VkDeviceSize        sample_bytes = 0;
-        VkvvPixelProofState state        = VkvvPixelProofState::Unknown;
+        bool                valid                 = false;
+        bool                identity_valid        = false;
+        bool                content_valid         = false;
+        bool                source_is_placeholder = false;
+        bool                is_black              = false;
+        bool                is_zero               = false;
+        uint64_t            crc                   = 0;
+        VkDeviceSize        sample_bytes          = 0;
+        VkvvPixelProofState state                 = VkvvPixelProofState::Unknown;
+        VkvvPixelColorState color_state           = VkvvPixelColorState::Unknown;
     };
     SeedPixelProofState predecode_seed_source_pixel_proof_state(const SurfaceResource* source);
 
-    void trace_export_present_state(const SurfaceResource* owner, const ExportResource* resource, const char* action, bool refresh_export, bool display_visible) {
+    void                trace_export_present_state(const SurfaceResource* owner, const ExportResource* resource, const char* action, bool refresh_export, bool display_visible) {
         if (owner == nullptr || resource == nullptr) {
             return;
         }
@@ -65,10 +71,9 @@ namespace vkvv {
                    static_cast<unsigned long long>(resource->predecode_generation), resource->black_placeholder ? 1U : 0U, vkvv_export_role_name(resource->export_role),
                    vkvv_export_intent_name(resource->export_intent), resource->raw_export_flags, resource->export_mem_type, resource->predecode_had_va_begin ? 1U : 0U,
                    resource->predecode_had_decode_submit ? 1U : 0U, refresh_export ? 1U : 0U, display_visible ? 1U : 0U, vkvv_export_present_source_name(resource->present_source),
-                   mutation_action, resource->client_visible_shadow ? 1U : 0U,
-                   resource->private_nondisplay_shadow ? 1U : 0U, resource->external_sync.external_release_required ? 1U : 0U,
-                   resource->external_sync.external_release_done ? 1U : 0U, vkvv_external_release_mode_name(resource->external_sync.release_mode),
-                   static_cast<unsigned long long>(resource->external_sync.released_generation));
+                   mutation_action, resource->client_visible_shadow ? 1U : 0U, resource->private_nondisplay_shadow ? 1U : 0U,
+                   resource->external_sync.external_release_required ? 1U : 0U, resource->external_sync.external_release_done ? 1U : 0U,
+                   vkvv_external_release_mode_name(resource->external_sync.release_mode), static_cast<unsigned long long>(resource->external_sync.released_generation));
         if (resource->content_generation == 0 && resource->presentable) {
             VKVV_TRACE("invalid-presentable-undecoded-surface",
                        "surface=%u codec=0x%x stream=%llu content_gen=%llu shadow_gen=%llu present_gen=%llu presentable=1 present_pinned=%u action=%s", owner->surface_id,
@@ -790,18 +795,20 @@ namespace vkvv {
         source->present_pixel_matches_decode   = decode_ok && present_ok && decode_crc == present_crc;
         source->present_pixel_matches_previous = present_ok && source->previous_present_pixel_crc != 0 && source->previous_present_pixel_crc == source->present_pixel_crc;
 
-        const uint64_t order_hint_or_frame_num = surface_resource_uses_av1_decode(source) ? source->av1_order_hint : source->content_generation;
-        const uint64_t black_crc               = pixel_reference_crc(format, source->coded_extent, true);
-        const uint64_t zero_crc                = pixel_reference_crc(format, source->coded_extent, false);
-        const bool     decode_black            = decode_ok && black_crc != 0 && source->decode_pixel_crc == black_crc;
-        const bool     decode_zero             = decode_ok && zero_crc != 0 && source->decode_pixel_crc == zero_crc;
-        const bool     present_black           = present_ok && black_crc != 0 && source->present_pixel_crc == black_crc;
-        const bool     present_zero            = present_ok && zero_crc != 0 && source->present_pixel_crc == zero_crc;
-        const VkvvPixelProofState decode_state  = pixel_proof_state_from_sample(decode_ok, source->decode_pixel_crc, black_crc, zero_crc, decode_black, decode_zero);
-        const VkvvPixelProofState present_state = pixel_proof_state_from_sample(present_ok, source->present_pixel_crc, black_crc, zero_crc, present_black, present_zero);
+        const uint64_t            order_hint_or_frame_num = surface_resource_uses_av1_decode(source) ? source->av1_order_hint : source->content_generation;
+        const uint64_t            black_crc               = pixel_reference_crc(format, source->coded_extent, true);
+        const uint64_t            zero_crc                = pixel_reference_crc(format, source->coded_extent, false);
+        const bool                decode_black            = decode_ok && black_crc != 0 && source->decode_pixel_crc == black_crc;
+        const bool                decode_zero             = decode_ok && zero_crc != 0 && source->decode_pixel_crc == zero_crc;
+        const bool                present_black           = present_ok && black_crc != 0 && source->present_pixel_crc == black_crc;
+        const bool                present_zero            = present_ok && zero_crc != 0 && source->present_pixel_crc == zero_crc;
+        const VkvvPixelProofState decode_state            = pixel_proof_state_from_sample(decode_ok, source->decode_pixel_crc, black_crc, zero_crc, decode_black, decode_zero);
+        const VkvvPixelProofState present_state           = pixel_proof_state_from_sample(present_ok, source->present_pixel_crc, black_crc, zero_crc, present_black, present_zero);
+        const bool                decode_identity_valid   = pixel_identity_valid_from_state(decode_state);
+        const bool                present_identity_valid  = pixel_identity_valid_from_state(present_state);
         trace_pixel_proof_computed(source->surface_id, source->export_resource.fd_dev, source->export_resource.fd_ino, source->content_generation,
-                                   VkvvExportPixelSource::DecodedContent, decode_ok ? source->decode_pixel_crc : 0, black_crc, zero_crc, decode_black, decode_zero,
-                                   decode_bytes, decode_state);
+                                   VkvvExportPixelSource::DecodedContent, decode_ok ? source->decode_pixel_crc : 0, black_crc, zero_crc, decode_black, decode_zero, decode_bytes,
+                                   decode_state);
         trace_pixel_proof_computed(source->surface_id, source->export_resource.fd_dev, source->export_resource.fd_ino, source->export_resource.present_generation,
                                    VkvvExportPixelSource::DecodedContent, present_ok ? source->present_pixel_crc : 0, black_crc, zero_crc, present_black, present_zero,
                                    present_bytes, present_state);
@@ -811,7 +818,7 @@ namespace vkvv {
                    source->surface_id, source->codec_operation, static_cast<unsigned long long>(source->stream_id), static_cast<unsigned long long>(source->content_generation),
                    static_cast<unsigned long long>(order_hint_or_frame_num), decode_ok ? 1U : 0U, static_cast<unsigned long long>(source->decode_pixel_crc),
                    static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc), decode_black ? 1U : 0U, decode_zero ? 1U : 0U,
-                   decode_ok && !decode_black && !decode_zero ? 1U : 0U, static_cast<unsigned long long>(decode_bytes));
+                   decode_identity_valid ? 1U : 0U, static_cast<unsigned long long>(decode_bytes));
         VKVV_TRACE("present-pixel-proof",
                    "surface=%u codec=0x%x stream=%llu content_gen=%llu fd_dev=%llu fd_ino=%llu fd_content_gen=%llu present_gen=%llu present_shadow_crc_valid=%u "
                    "present_shadow_crc=0x%llx present_crc=0x%llx decode_crc=0x%llx black_crc=0x%llx zero_crc=0x%llx previous_present_crc=0x%llx matches_decode=%u "
@@ -819,12 +826,11 @@ namespace vkvv {
                    source->surface_id, source->codec_operation, static_cast<unsigned long long>(source->stream_id), static_cast<unsigned long long>(source->content_generation),
                    static_cast<unsigned long long>(source->export_resource.fd_dev), static_cast<unsigned long long>(source->export_resource.fd_ino),
                    static_cast<unsigned long long>(export_resource_fd_content_generation(&source->export_resource)),
-                   static_cast<unsigned long long>(source->export_resource.present_generation), present_ok ? 1U : 0U,
-                   static_cast<unsigned long long>(source->present_pixel_crc), static_cast<unsigned long long>(source->present_pixel_crc),
-                   static_cast<unsigned long long>(source->decode_pixel_crc), static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc),
-                   static_cast<unsigned long long>(source->previous_present_pixel_crc), source->present_pixel_matches_decode ? 1U : 0U,
-                   source->present_pixel_matches_previous ? 1U : 0U, source->present_pixel_matches_previous ? 1U : 0U, present_black ? 1U : 0U, present_zero ? 1U : 0U,
-                   present_ok && !present_black && !present_zero ? 1U : 0U, static_cast<unsigned long long>(present_bytes));
+                   static_cast<unsigned long long>(source->export_resource.present_generation), present_ok ? 1U : 0U, static_cast<unsigned long long>(source->present_pixel_crc),
+                   static_cast<unsigned long long>(source->present_pixel_crc), static_cast<unsigned long long>(source->decode_pixel_crc),
+                   static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc), static_cast<unsigned long long>(source->previous_present_pixel_crc),
+                   source->present_pixel_matches_decode ? 1U : 0U, source->present_pixel_matches_previous ? 1U : 0U, source->present_pixel_matches_previous ? 1U : 0U,
+                   present_black ? 1U : 0U, present_zero ? 1U : 0U, present_identity_valid ? 1U : 0U, static_cast<unsigned long long>(present_bytes));
         if (present_ok) {
             source->previous_present_pixel_crc = source->present_pixel_crc;
         }
@@ -858,11 +864,11 @@ namespace vkvv {
         source->decode_pixel_crc                    = decode_ok ? decode_crc : 0;
         source->private_shadow_pixel_crc            = private_ok ? private_crc : 0;
         source->private_shadow_pixel_matches_decode = decode_ok && private_ok && decode_crc == private_crc;
-        const uint64_t          black_crc           = pixel_reference_crc(format, source->coded_extent, true);
-        const uint64_t          zero_crc            = pixel_reference_crc(format, source->coded_extent, false);
-        const bool              private_black       = private_ok && black_crc != 0 && source->private_shadow_pixel_crc == black_crc;
-        const bool              private_zero        = private_ok && zero_crc != 0 && source->private_shadow_pixel_crc == zero_crc;
-        const VkvvPixelProofState private_state = pixel_proof_state_from_sample(private_ok, source->private_shadow_pixel_crc, black_crc, zero_crc, private_black, private_zero);
+        const uint64_t            black_crc         = pixel_reference_crc(format, source->coded_extent, true);
+        const uint64_t            zero_crc          = pixel_reference_crc(format, source->coded_extent, false);
+        const bool                private_black     = private_ok && black_crc != 0 && source->private_shadow_pixel_crc == black_crc;
+        const bool                private_zero      = private_ok && zero_crc != 0 && source->private_shadow_pixel_crc == zero_crc;
+        const VkvvPixelProofState private_state     = pixel_proof_state_from_sample(private_ok, source->private_shadow_pixel_crc, black_crc, zero_crc, private_black, private_zero);
         trace_pixel_proof_computed(source->surface_id, source->private_decode_shadow.fd_dev, source->private_decode_shadow.fd_ino, source->private_decode_shadow.content_generation,
                                    VkvvExportPixelSource::RetainedUnknown, private_ok ? source->private_shadow_pixel_crc : 0, black_crc, zero_crc, private_black, private_zero,
                                    private_bytes, private_state);
@@ -881,25 +887,28 @@ namespace vkvv {
         return true;
     }
 
-    bool trace_returned_fd_pixel_proof(VulkanRuntime* runtime, const SurfaceResource* owner, ExportResource* resource, const VkvvFdIdentity& fd,
-                                       VkvvExportPixelSource pixel_source, VkvvReturnedFdProof* proof, char*, size_t) {
+    bool trace_returned_fd_pixel_proof(VulkanRuntime* runtime, const SurfaceResource* owner, ExportResource* resource, const VkvvFdIdentity& fd, VkvvExportPixelSource pixel_source,
+                                       VkvvReturnedFdProof* proof, char*, size_t) {
         if (proof != nullptr) {
-            *proof = {};
-            proof->returned_fd              = fd.valid;
-            proof->fd                       = -1;
-            proof->fd_dev                   = fd.dev;
-            proof->fd_ino                   = fd.ino;
-            proof->may_be_sampled_by_client = export_resource_fd_may_be_sampled_by_client(resource);
-            proof->surface_id               = owner != nullptr ? owner->surface_id : VA_INVALID_ID;
-            proof->stream_id                = owner != nullptr ? owner->stream_id : (resource != nullptr ? resource->stream_id : 0);
-            proof->codec_operation          = owner != nullptr ? owner->codec_operation : (resource != nullptr ? resource->codec_operation : 0);
-            proof->content_generation       = owner != nullptr ? owner->content_generation : (resource != nullptr ? resource->content_generation : 0);
-            proof->fd_content_generation    = export_resource_fd_content_generation(resource);
-            proof->pixel_source             = pixel_source;
-            proof->decoded_pixels_valid     = pixel_source == VkvvExportPixelSource::DecodedContent && proof->fd_content_generation != 0;
-            proof->seed_pixels_valid        = pixel_source == VkvvExportPixelSource::StreamLocalSeed && proof->fd_content_generation != 0 && resource != nullptr &&
-                resource->seed_pixel_proof_valid;
-            proof->placeholder_pixels       = pixel_source == VkvvExportPixelSource::Placeholder;
+            *proof                             = {};
+            proof->returned_fd                 = fd.valid;
+            proof->fd                          = -1;
+            proof->fd_dev                      = fd.dev;
+            proof->fd_ino                      = fd.ino;
+            proof->may_be_sampled_by_client    = export_resource_fd_may_be_sampled_by_client(resource);
+            proof->surface_id                  = owner != nullptr ? owner->surface_id : VA_INVALID_ID;
+            proof->stream_id                   = owner != nullptr ? owner->stream_id : (resource != nullptr ? resource->stream_id : 0);
+            proof->codec_operation             = owner != nullptr ? owner->codec_operation : (resource != nullptr ? resource->codec_operation : 0);
+            proof->content_generation          = owner != nullptr ? owner->content_generation : (resource != nullptr ? resource->content_generation : 0);
+            proof->fd_content_generation       = export_resource_fd_content_generation(resource);
+            proof->pixel_source                = pixel_source;
+            proof->pixel_source_is_placeholder = pixel_source == VkvvExportPixelSource::Placeholder;
+            proof->decoded_pixels_valid        = pixel_source == VkvvExportPixelSource::DecodedContent && proof->fd_content_generation != 0;
+            proof->seed_pixels_valid =
+                pixel_source == VkvvExportPixelSource::StreamLocalSeed && proof->fd_content_generation != 0 && resource != nullptr && resource->seed_pixel_proof_valid;
+            proof->placeholder_pixels  = proof->pixel_source_is_placeholder;
+            proof->pixel_content_valid = !proof->pixel_source_is_placeholder && proof->fd_content_generation != 0 &&
+                (pixel_source == VkvvExportPixelSource::DecodedContent || pixel_source == VkvvExportPixelSource::StreamLocalSeed);
         }
         if (owner == nullptr || resource == nullptr || resource->image == VK_NULL_HANDLE) {
             return true;
@@ -916,20 +925,28 @@ namespace vkvv {
             crc_valid = readback_image_luma_sample(runtime, resource->image, &resource->layout, format, resource->extent, "returned fd pixel proof", &returned_crc, &sample_bytes,
                                                    proof_reason, sizeof(proof_reason));
         }
-        const bool is_black          = crc_valid && black_crc != 0 && returned_crc == black_crc;
-        const bool is_zero           = crc_valid && zero_crc != 0 && returned_crc == zero_crc;
-        const bool pixel_proof_valid = pixel_proof_valid_for_source(pixel_source, crc_valid, is_black, is_zero);
-        const VkvvPixelProofState returned_state = pixel_proof_state_from_sample(crc_valid, returned_crc, black_crc, zero_crc, is_black, is_zero);
+        const bool                is_black              = crc_valid && black_crc != 0 && returned_crc == black_crc;
+        const bool                is_zero               = crc_valid && zero_crc != 0 && returned_crc == zero_crc;
+        const bool                pixel_proof_valid     = pixel_proof_valid_for_source(pixel_source, crc_valid, is_black, is_zero);
+        const VkvvPixelProofState returned_state        = pixel_proof_state_from_sample(crc_valid, returned_crc, black_crc, zero_crc, is_black, is_zero);
+        const VkvvPixelColorState color_state           = pixel_color_state_from_sample(crc_valid, is_black, is_zero);
+        const bool                source_is_placeholder = pixel_source == VkvvExportPixelSource::Placeholder;
+        const bool                content_valid         = !source_is_placeholder && export_resource_fd_content_generation(resource) != 0 &&
+            (pixel_source == VkvvExportPixelSource::DecodedContent || pixel_source == VkvvExportPixelSource::StreamLocalSeed);
         if (proof != nullptr) {
-            proof->pixel_proof_valid = pixel_proof_valid;
-            proof->pixel_crc         = crc_valid ? returned_crc : 0;
-            proof->black_crc         = black_crc;
-            proof->zero_crc          = zero_crc;
+            proof->pixel_proof_valid           = pixel_proof_valid;
+            proof->pixel_identity_valid        = pixel_proof_valid;
+            proof->pixel_content_valid         = content_valid;
+            proof->pixel_source_is_placeholder = source_is_placeholder;
+            proof->pixel_color_state           = color_state;
+            proof->pixel_crc                   = crc_valid ? returned_crc : 0;
+            proof->black_crc                   = black_crc;
+            proof->zero_crc                    = zero_crc;
             proof->decoded_pixels_valid =
                 pixel_source == VkvvExportPixelSource::DecodedContent && proof->fd_content_generation != 0 && (!export_pixel_proof_enabled() || pixel_proof_valid);
-            proof->seed_pixels_valid = pixel_source == VkvvExportPixelSource::StreamLocalSeed && proof->fd_content_generation != 0 && resource->seed_pixel_proof_valid &&
-                pixel_proof_valid;
-            proof->placeholder_pixels = pixel_source == VkvvExportPixelSource::Placeholder || is_black || is_zero;
+            proof->seed_pixels_valid =
+                pixel_source == VkvvExportPixelSource::StreamLocalSeed && proof->fd_content_generation != 0 && resource->seed_pixel_proof_valid && pixel_proof_valid;
+            proof->placeholder_pixels = source_is_placeholder;
         }
         VKVV_TRACE("returned-fd-pixel-proof",
                    "surface=%u fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu pixel_source=%s returned_crc=0x%llx black_crc=0x%llx "
@@ -940,8 +957,8 @@ namespace vkvv {
                    static_cast<unsigned long long>(crc_valid ? returned_crc : 0), static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc),
                    is_black ? 1U : 0U, is_zero ? 1U : 0U, pixel_proof_valid ? 1U : 0U, export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U,
                    static_cast<unsigned long long>(sample_bytes), export_pixel_proof_enabled() ? 1U : 0U);
-        trace_pixel_proof_computed(owner->surface_id, fd.dev, fd.ino, export_resource_fd_content_generation(resource), pixel_source, crc_valid ? returned_crc : 0, black_crc, zero_crc,
-                                   is_black, is_zero, sample_bytes, returned_state);
+        trace_pixel_proof_computed(owner->surface_id, fd.dev, fd.ino, export_resource_fd_content_generation(resource), pixel_source, crc_valid ? returned_crc : 0, black_crc,
+                                   zero_crc, is_black, is_zero, sample_bytes, returned_state);
         return true;
     }
 
@@ -968,31 +985,31 @@ namespace vkvv {
             target_ok = readback_image_luma_sample(runtime, target->image, &target->layout, format, target->extent, "seed target pixel proof", &target_crc, &target_bytes,
                                                    proof_reason, sizeof(proof_reason));
         }
-        const bool source_black    = source_ok && black_crc != 0 && source_crc == black_crc;
-        const bool source_zero     = source_ok && zero_crc != 0 && source_crc == zero_crc;
-        const bool target_black    = target_ok && black_crc != 0 && target_crc == black_crc;
-        const bool target_zero     = target_ok && zero_crc != 0 && target_crc == zero_crc;
-        const bool source_valid    = predecode_seed_source_safe_for_client(source) && source_ok && source_bytes > 0 && !source_black && !source_zero;
-        const bool target_matches  = source_ok && target_ok && source_crc == target_crc;
-        const bool target_valid    = source_valid && target_ok && target_bytes > 0 && target_matches && !target_black && !target_zero;
-        const VkvvPixelProofState source_state = pixel_proof_state_from_sample(source_ok, source_crc, black_crc, zero_crc, source_black, source_zero);
+        const bool                source_black        = source_ok && black_crc != 0 && source_crc == black_crc;
+        const bool                source_zero         = source_ok && zero_crc != 0 && source_crc == zero_crc;
+        const bool                target_black        = target_ok && black_crc != 0 && target_crc == black_crc;
+        const bool                target_zero         = target_ok && zero_crc != 0 && target_crc == zero_crc;
+        const VkvvPixelProofState source_state        = pixel_proof_state_from_sample(source_ok, source_crc, black_crc, zero_crc, source_black, source_zero);
         const VkvvPixelProofState target_sample_state = pixel_proof_state_from_sample(target_ok, target_crc, black_crc, zero_crc, target_black, target_zero);
+        const bool                target_matches      = source_ok && target_ok && source_crc == target_crc;
         const VkvvPixelProofState target_state        = !target_ok || target_bytes == 0 ? VkvvPixelProofState::Unavailable :
-            !target_matches                                                           ? VkvvPixelProofState::Mismatch :
-                                                                                         target_sample_state;
-        target->seed_pixel_proof_valid = target_valid;
+            !target_matches                                                             ? VkvvPixelProofState::Mismatch :
+                                                                                          target_sample_state;
+        const bool                source_valid        = predecode_seed_source_safe_for_client(source) && source_bytes > 0 && pixel_identity_valid_from_state(source_state);
+        const bool                target_valid        = source_valid && target_ok && target_bytes > 0 && target_matches;
+        target->seed_pixel_proof_valid                = target_valid;
         trace_pixel_proof_computed(source->surface_id, source->export_resource.fd_dev, source->export_resource.fd_ino, source->export_resource.present_generation,
                                    VkvvExportPixelSource::DecodedContent, source_ok ? source_crc : 0, black_crc, zero_crc, source_black, source_zero, source_bytes, source_state);
-        trace_pixel_proof_computed(target->owner_surface_id, target->fd_dev, target->fd_ino, export_resource_fd_content_generation(target),
-                                   VkvvExportPixelSource::StreamLocalSeed, target_ok ? target_crc : 0, black_crc, zero_crc, target_black, target_zero, target_bytes, target_state);
+        trace_pixel_proof_computed(target->owner_surface_id, target->fd_dev, target->fd_ino, export_resource_fd_content_generation(target), VkvvExportPixelSource::StreamLocalSeed,
+                                   target_ok ? target_crc : 0, black_crc, zero_crc, target_black, target_zero, target_bytes, target_state);
         VKVV_TRACE("seed-source-pixel-proof",
                    "source_surface=%u source_stream=%llu source_codec=0x%x source_present_gen=%llu source_fd_content_gen=%llu source_crc=0x%llx black_crc=0x%llx "
                    "zero_crc=0x%llx is_black=%u is_zero=%u pixel_proof_valid=%u valid_for_seed=%u sample_bytes=%llu proof_enabled=%u",
                    source->surface_id, static_cast<unsigned long long>(source->stream_id), source->codec_operation,
                    static_cast<unsigned long long>(source->export_resource.present_generation),
                    static_cast<unsigned long long>(export_resource_fd_content_generation(&source->export_resource)), static_cast<unsigned long long>(source_ok ? source_crc : 0),
-                   static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc), source_black ? 1U : 0U, source_zero ? 1U : 0U,
-                   source_ok ? 1U : 0U, source_valid ? 1U : 0U, static_cast<unsigned long long>(source_bytes), export_pixel_proof_enabled() ? 1U : 0U);
+                   static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc), source_black ? 1U : 0U, source_zero ? 1U : 0U, source_ok ? 1U : 0U,
+                   source_valid ? 1U : 0U, static_cast<unsigned long long>(source_bytes), export_pixel_proof_enabled() ? 1U : 0U);
         VKVV_TRACE("seed-target-pixel-proof",
                    "target_surface=%u source_surface=%u target_fd_dev=%llu target_fd_ino=%llu target_crc_after_copy=0x%llx source_crc=0x%llx matches_source=%u "
                    "target_is_black=%u target_is_zero=%u pixel_proof_valid=%u pixel_proof_state=%s reject_reason=%s copy_status=%s source_sample_bytes=%llu "
@@ -1000,13 +1017,13 @@ namespace vkvv {
                    target->owner_surface_id, source->surface_id, static_cast<unsigned long long>(target->fd_dev), static_cast<unsigned long long>(target->fd_ino),
                    static_cast<unsigned long long>(target_ok ? target_crc : 0), static_cast<unsigned long long>(source_ok ? source_crc : 0), target_matches ? 1U : 0U,
                    target_black ? 1U : 0U, target_zero ? 1U : 0U, target_valid ? 1U : 0U, vkvv_pixel_proof_state_name(target_state),
-                   target_valid ? "none" : (!source_valid ? "source-proof-invalid" : !target_ok || target_bytes == 0 ? "target-proof-unavailable" :
-                                                                                 !target_matches             ? "target-does-not-match-source" :
-                                                                                 target_black                ? "target-black" :
-                                                                                 target_zero                 ? "target-zero" :
-                                                                                                               "target-invalid"),
-                   copy_status != nullptr ? copy_status : "unknown",
-                   static_cast<unsigned long long>(source_bytes), static_cast<unsigned long long>(target_bytes), static_cast<unsigned long long>(target_bytes));
+                   target_valid ? "none" :
+                                  (!source_valid                       ? "source-proof-invalid" :
+                                       !target_ok || target_bytes == 0 ? "target-proof-unavailable" :
+                                       !target_matches                 ? "target-does-not-match-source" :
+                                                                         "target-invalid"),
+                   copy_status != nullptr ? copy_status : "unknown", static_cast<unsigned long long>(source_bytes), static_cast<unsigned long long>(target_bytes),
+                   static_cast<unsigned long long>(target_bytes));
     }
 
     bool attach_imported_export_resource_by_fd(VulkanRuntime* runtime, SurfaceResource* source) {
@@ -1170,8 +1187,7 @@ namespace vkvv {
     }
 
     bool predecode_seed_policy_keeps_placeholder(const ExportResource* target, const SurfaceResource* source) {
-        return predecode_seed_target_matches(target, source) &&
-            (!predecode_seed_source_safe_for_client(source) || !predecode_seed_source_pixel_proof_state(source).valid);
+        return predecode_seed_target_matches(target, source) && (!predecode_seed_source_safe_for_client(source) || !predecode_seed_source_pixel_proof_state(source).valid);
     }
 
     bool can_seed_predecode_target(const ExportResource* target, const SurfaceResource* source) {
@@ -1334,14 +1350,33 @@ namespace vkvv {
         return hash;
     }
 
+    bool pixel_identity_valid_from_state(VkvvPixelProofState state) {
+        return state == VkvvPixelProofState::ValidNonBlack || state == VkvvPixelProofState::Black || state == VkvvPixelProofState::Zero;
+    }
+
+    VkvvPixelColorState pixel_color_state_from_sample(bool sample_ok, bool is_black, bool is_zero) {
+        if (!sample_ok) {
+            return VkvvPixelColorState::Unknown;
+        }
+        if (is_zero) {
+            return VkvvPixelColorState::Zero;
+        }
+        if (is_black) {
+            return VkvvPixelColorState::Black;
+        }
+        return VkvvPixelColorState::Nonzero;
+    }
+
     bool pixel_proof_valid_for_source(VkvvExportPixelSource source, bool crc_valid, bool is_black, bool is_zero) {
+        (void)is_black;
+        (void)is_zero;
         if (!crc_valid) {
             return false;
         }
         switch (source) {
             case VkvvExportPixelSource::DecodedContent:
             case VkvvExportPixelSource::StreamLocalSeed:
-            case VkvvExportPixelSource::RetainedUnknown: return !is_black && !is_zero;
+            case VkvvExportPixelSource::RetainedUnknown: return true;
             default: return false;
         }
     }
@@ -1386,9 +1421,13 @@ namespace vkvv {
         state.is_zero                             = zero_crc != 0 && source->present_pixel_crc == zero_crc;
         state.crc                                 = source->present_pixel_crc;
         state.sample_bytes                        = source->present_pixel_proof_valid ? 1 : 0;
-        state.state                               = pixel_proof_state_from_sample(source->present_pixel_proof_valid, source->present_pixel_crc, black_crc, zero_crc, state.is_black,
-                                                           state.is_zero);
-        state.valid                               = state.state == VkvvPixelProofState::ValidNonBlack;
+        state.state          = pixel_proof_state_from_sample(source->present_pixel_proof_valid, source->present_pixel_crc, black_crc, zero_crc, state.is_black, state.is_zero);
+        state.color_state    = pixel_color_state_from_sample(source->present_pixel_proof_valid, state.is_black, state.is_zero);
+        state.identity_valid = pixel_identity_valid_from_state(state.state);
+        state.source_is_placeholder = source->export_resource.bootstrap_export || source->export_resource.black_placeholder ||
+            (source->export_resource.predecode_quarantined && source->export_resource.content_generation == 0);
+        state.content_valid = !state.source_is_placeholder && source->content_generation != 0 && export_resource_fd_content_generation(&source->export_resource) != 0;
+        state.valid         = state.identity_valid && state.content_valid;
         return state;
     }
 
@@ -1478,8 +1517,7 @@ namespace vkvv {
         }
         *layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 
-        vkCmdCopyImageToBuffer(runtime->command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer.buffer, static_cast<uint32_t>(regions.size()),
-                               regions.data());
+        vkCmdCopyImageToBuffer(runtime->command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer.buffer, static_cast<uint32_t>(regions.size()), regions.data());
 
         barriers.clear();
         add_raw_image_barrier(&barriers, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, old_layout, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
@@ -1528,9 +1566,9 @@ namespace vkvv {
         if (target == nullptr || source == nullptr) {
             return;
         }
-        const bool thumbnail_like        = predecode_seed_target_thumbnail_like(target);
-        const bool bootstrap_placeholder = source->export_resource.bootstrap_export || source->export_resource.black_placeholder || source->export_resource.predecode_quarantined;
-        const char* reject_reason        = bootstrap_placeholder ? "bootstrap-placeholder" : (predecode_seed_source_safe_for_client(source) ? "no-pixel-proof" : "source-not-client-safe");
+        const bool  thumbnail_like        = predecode_seed_target_thumbnail_like(target);
+        const bool  bootstrap_placeholder = source->export_resource.bootstrap_export || source->export_resource.black_placeholder || source->export_resource.predecode_quarantined;
+        const char* reject_reason = bootstrap_placeholder ? "bootstrap-placeholder" : (predecode_seed_source_safe_for_client(source) ? "no-pixel-proof" : "source-not-client-safe");
         VKVV_TRACE("predecode-seed-policy",
                    "surface=%u source_surface=%u action=neutral-placeholder reason=%s presentable=0 present_pinned=0 decoded=0 thumbnail_like=%u "
                    "content_gen=%llu target_mem=0x%llx source_external_release_ok=%u source_present_gen=%llu source_fd_content_gen=%llu",
@@ -1648,39 +1686,38 @@ namespace vkvv {
                 continue;
             }
             candidate_count++;
-            SurfaceResource* source       = record.resource;
-            const bool       same_driver  = source != nullptr && source->driver_instance_id == target->driver_instance_id;
-            const bool       same_stream  = source != nullptr && source->stream_id == target->stream_id;
-            const bool       same_codec   = source != nullptr && source->codec_operation == target->codec_operation;
-            const bool       same_fourcc  = source != nullptr && source->va_fourcc == target->va_fourcc;
-            const bool       same_visible = source != nullptr && source->visible_extent.width == target->visible_extent.width &&
-                source->visible_extent.height == target->visible_extent.height;
-            const bool same_coded = source != nullptr && source->coded_extent.width == target->coded_extent.width &&
-                source->coded_extent.height == target->coded_extent.height;
+            SurfaceResource* source      = record.resource;
+            const bool       same_driver = source != nullptr && source->driver_instance_id == target->driver_instance_id;
+            const bool       same_stream = source != nullptr && source->stream_id == target->stream_id;
+            const bool       same_codec  = source != nullptr && source->codec_operation == target->codec_operation;
+            const bool       same_fourcc = source != nullptr && source->va_fourcc == target->va_fourcc;
+            const bool       same_visible =
+                source != nullptr && source->visible_extent.width == target->visible_extent.width && source->visible_extent.height == target->visible_extent.height;
+            const bool same_coded  = source != nullptr && source->coded_extent.width == target->coded_extent.width && source->coded_extent.height == target->coded_extent.height;
             const bool same_domain = export_seed_record_matches(record, target) && source != target;
-            const bool bootstrap_placeholder = source != nullptr &&
-                (source->export_resource.bootstrap_export || source->export_resource.black_placeholder || source->export_resource.predecode_quarantined);
-            const bool source_safe = source != nullptr && !bootstrap_placeholder && predecode_seed_source_safe_for_client(source);
+            const bool bootstrap_placeholder =
+                source != nullptr && (source->export_resource.bootstrap_export || source->export_resource.black_placeholder || source->export_resource.predecode_quarantined);
+            const bool                source_safe        = source != nullptr && !bootstrap_placeholder && predecode_seed_source_safe_for_client(source);
             const SeedPixelProofState source_pixel_proof = predecode_seed_source_pixel_proof_state(source);
-            const bool valid       = same_domain && source_safe && source_pixel_proof.valid;
+            const bool                valid              = same_domain && source_safe && source_pixel_proof.valid;
             if (valid) {
                 valid_candidate_count++;
             }
             const char* proof_reject_reason = source_pixel_proof.state == VkvvPixelProofState::Black ? "black-source" :
-                source_pixel_proof.state == VkvvPixelProofState::Zero                                  ? "zero-source" :
-                source_pixel_proof.state == VkvvPixelProofState::Mismatch                              ? "pixel-proof-mismatch" :
-                                                                                                         "no-pixel-proof";
-            const char* reject_reason = valid                ? "none" :
-                source == target                              ? "self" :
-                !same_driver                                  ? "driver-mismatch" :
-                !same_stream                                  ? "stream-mismatch" :
-                !same_codec                                   ? "codec-mismatch" :
-                !same_fourcc                                  ? "fourcc-mismatch" :
-                !same_coded                                   ? "coded-extent-mismatch" :
-                bootstrap_placeholder                         ? "bootstrap-placeholder" :
-                !source_safe                                  ? "source-not-client-safe" :
-                !source_pixel_proof.valid                     ? proof_reject_reason :
-                                                                 "domain-mismatch";
+                source_pixel_proof.state == VkvvPixelProofState::Zero                                ? "zero-source" :
+                source_pixel_proof.state == VkvvPixelProofState::Mismatch                            ? "pixel-proof-mismatch" :
+                                                                                                       "no-pixel-proof";
+            const char* reject_reason       = valid ? "none" :
+                source == target                    ? "self" :
+                !same_driver                        ? "driver-mismatch" :
+                !same_stream                        ? "stream-mismatch" :
+                !same_codec                         ? "codec-mismatch" :
+                !same_fourcc                        ? "fourcc-mismatch" :
+                !same_coded                         ? "coded-extent-mismatch" :
+                bootstrap_placeholder               ? "bootstrap-placeholder" :
+                !source_safe                        ? "source-not-client-safe" :
+                !source_pixel_proof.valid           ? proof_reject_reason :
+                                                      "domain-mismatch";
             if (!valid && reject_summary[0] == 'n' && std::strcmp(reject_summary, "none") == 0) {
                 reject_summary = reject_reason;
             }
@@ -1693,9 +1730,8 @@ namespace vkvv {
                        source != nullptr && source->export_seed_generation == target->export_seed_generation ? 1U : 0U, same_stream ? 1U : 0U,
                        source != nullptr ? static_cast<unsigned long long>(source->export_resource.present_generation) : 0ULL,
                        source != nullptr ? static_cast<unsigned long long>(export_resource_fd_content_generation(&source->export_resource)) : 0ULL,
-                       source != nullptr && export_visible_release_satisfied(&source->export_resource) ? 1U : 0U,
-                       vkvv_pixel_proof_state_name(source_pixel_proof.state), source_pixel_proof.valid ? 1U : 0U, source_pixel_proof.is_black ? 1U : 0U,
-                       source_pixel_proof.is_zero ? 1U : 0U, valid ? 1U : 0U, reject_reason);
+                       source != nullptr && export_visible_release_satisfied(&source->export_resource) ? 1U : 0U, vkvv_pixel_proof_state_name(source_pixel_proof.state),
+                       source_pixel_proof.valid ? 1U : 0U, source_pixel_proof.is_black ? 1U : 0U, source_pixel_proof.is_zero ? 1U : 0U, valid ? 1U : 0U, reject_reason);
             if (same_domain && selected == nullptr) {
                 selected = source;
                 if (valid) {
@@ -1974,7 +2010,7 @@ namespace vkvv {
                            vkvv_trace_handle(owner_snapshot.memory));
                 return false;
             }
-            const bool                  was_bootstrap_export        = owner_export->bootstrap_export;
+            const bool                    was_bootstrap_export        = owner_export->bootstrap_export;
             const uint64_t                previous_present_generation = owner_export->present_generation;
             const VkvvExportPresentSource previous_present_source     = owner_export->present_source;
             owner_export->content_generation                          = source->content_generation;
