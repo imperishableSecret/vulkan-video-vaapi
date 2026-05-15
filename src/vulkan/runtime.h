@@ -15,6 +15,8 @@ bool     vkvv_vulkan_supports_surface_export(void* runtime);
 bool     vkvv_vulkan_surface_has_exported_backing(const VkvvSurface* surface);
 bool     vkvv_vulkan_surface_has_predecode_export(const VkvvSurface* surface);
 bool     vkvv_vulkan_surface_has_pending_export_refresh_work(void* runtime, const VkvvSurface* surface);
+size_t   vkvv_vulkan_retained_export_count(void* runtime);
+uint64_t vkvv_vulkan_retained_export_memory_bytes(void* runtime);
 VAStatus vkvv_vulkan_prepare_surface_export(void* runtime, VkvvSurface* surface, char* reason, size_t reason_size);
 VAStatus vkvv_vulkan_refresh_surface_export(void* runtime, VkvvSurface* surface, bool refresh_export, char* reason, size_t reason_size);
 VAStatus vkvv_vulkan_complete_surface_work(void* runtime, VkvvSurface* surface, uint64_t timeout_ns, char* reason, size_t reason_size);

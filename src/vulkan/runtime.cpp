@@ -347,6 +347,7 @@ namespace vkvv {
         runtime->cmd_control_video_coding = reinterpret_cast<PFN_vkCmdControlVideoCodingKHR>(vkGetDeviceProcAddr(runtime->device, "vkCmdControlVideoCodingKHR"));
         runtime->cmd_decode_video         = reinterpret_cast<PFN_vkCmdDecodeVideoKHR>(vkGetDeviceProcAddr(runtime->device, "vkCmdDecodeVideoKHR"));
         runtime->get_memory_fd            = reinterpret_cast<PFN_vkGetMemoryFdKHR>(vkGetDeviceProcAddr(runtime->device, "vkGetMemoryFdKHR"));
+        runtime->get_memory_fd_properties = reinterpret_cast<PFN_vkGetMemoryFdPropertiesKHR>(vkGetDeviceProcAddr(runtime->device, "vkGetMemoryFdPropertiesKHR"));
         runtime->get_image_drm_format_modifier_properties =
             reinterpret_cast<PFN_vkGetImageDrmFormatModifierPropertiesEXT>(vkGetDeviceProcAddr(runtime->device, "vkGetImageDrmFormatModifierPropertiesEXT"));
 

@@ -240,6 +240,7 @@ bool vkvv_surface_has_pending_work(const VkvvSurface* surface) {
 VAStatus vkvvCreateSurfaces2(VADriverContextP ctx, unsigned int format, unsigned int width, unsigned int height, VASurfaceID* surfaces, unsigned int num_surfaces,
                              VASurfaceAttrib* attrib_list, unsigned int num_attribs) {
     VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaCreateSurfaces", VA_INVALID_ID, VA_INVALID_SURFACE);
     trace_create_surface_attribs(drv != NULL ? drv->driver_instance_id : 0, format, width, height, num_surfaces, attrib_list, num_attribs);
     if (drv == NULL) {
         return VA_STATUS_ERROR_INVALID_CONTEXT;
@@ -266,6 +267,7 @@ VAStatus vkvvCreateSurfaces2(VADriverContextP ctx, unsigned int format, unsigned
         surface->sync_status        = VA_STATUS_SUCCESS;
         surfaces[i]                 = vkvv_object_add(drv, VKVV_OBJECT_SURFACE, surface);
         if (surfaces[i] == VA_INVALID_ID) {
+            vkvv_surface_import_close(&surface->import);
             delete surface;
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
@@ -293,6 +295,7 @@ VAStatus vkvvCreateSurfaces(VADriverContextP ctx, int width, int height, int for
 
 VAStatus vkvvDestroySurfaces(VADriverContextP ctx, VASurfaceID* surface_list, int num_surfaces) {
     VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaDestroySurfaces", VA_INVALID_ID, num_surfaces > 0 && surface_list != NULL ? surface_list[0] : VA_INVALID_SURFACE);
     for (int i = 0; i < num_surfaces; i++) {
         auto* surface = vkvv_surface_get_locked(drv, surface_list[i]);
         if (surface == NULL) {
@@ -315,6 +318,7 @@ VAStatus vkvvDestroySurfaces(VADriverContextP ctx, VASurfaceID* surface_list, in
         if (drv->vulkan != NULL) {
             vkvv_vulkan_surface_destroy(drv->vulkan, surface);
         }
+        vkvv_surface_import_close(&surface->import);
         locked_surface.unlock();
         surface = NULL;
         if (!vkvv_object_remove(drv, surface_list[i], VKVV_OBJECT_SURFACE)) {
@@ -326,6 +330,7 @@ VAStatus vkvvDestroySurfaces(VADriverContextP ctx, VASurfaceID* surface_list, in
 
 VAStatus vkvvSyncSurface(VADriverContextP ctx, VASurfaceID render_target) {
     VkvvDriver* drv     = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaSyncSurface", VA_INVALID_ID, render_target);
     auto*       surface = vkvv_surface_get_locked(drv, render_target);
     if (surface == NULL) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
@@ -336,6 +341,7 @@ VAStatus vkvvSyncSurface(VADriverContextP ctx, VASurfaceID render_target) {
 
 VAStatus vkvvQuerySurfaceStatus(VADriverContextP ctx, VASurfaceID render_target, VASurfaceStatus* status) {
     VkvvDriver* drv     = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaQuerySurfaceStatus", VA_INVALID_ID, render_target);
     auto*       surface = vkvv_surface_get_locked(drv, render_target);
     if (surface == NULL) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
@@ -357,6 +363,7 @@ VAStatus vkvvQuerySurfaceStatus(VADriverContextP ctx, VASurfaceID render_target,
 VAStatus vkvvQuerySurfaceError(VADriverContextP ctx, VASurfaceID render_target, VAStatus error_status, void** error_info) {
     (void)error_status;
     VkvvDriver* drv     = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaQuerySurfaceError", VA_INVALID_ID, render_target);
     auto*       surface = vkvv_surface_get_locked(drv, render_target);
     if (surface == NULL) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
@@ -409,6 +416,7 @@ VAStatus vkvvQuerySurfaceAttributes(VADriverContextP ctx, VAConfigID config, VAS
 
 VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, uint32_t mem_type, uint32_t flags, void* descriptor) {
     VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaExportSurfaceHandle", VA_INVALID_ID, surface_id);
     if ((mem_type & VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2) == 0) {
         vkvv_trace("va-export-unsupported-memory", "driver=%llu surface=%u mem_type=0x%x flags=0x%x",
                    (unsigned long long)(drv != NULL ? drv->driver_instance_id : 0), surface_id, mem_type, flags);
@@ -474,6 +482,7 @@ VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, u
 
 VAStatus vkvvSyncSurface2(VADriverContextP ctx, VASurfaceID surface, uint64_t timeout_ns) {
     VkvvDriver* drv    = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaSyncSurface2", VA_INVALID_ID, surface);
     auto*       target = vkvv_surface_get_locked(drv, surface);
     if (target == NULL) {
         return VA_STATUS_ERROR_INVALID_SURFACE;

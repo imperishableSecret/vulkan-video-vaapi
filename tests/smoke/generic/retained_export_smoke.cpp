@@ -402,6 +402,17 @@ namespace {
         ok &= check(vkvv::surface_resource_has_direct_import_output(&resource), "current direct import was not treated as published output");
         ok &= check(vkvv::surface_resource_has_published_visible_output(&resource), "current direct import did not satisfy visible publication");
 
+        resource.export_resource.image                         = fake_handle<VkImage>(3);
+        resource.export_resource.memory                        = fake_handle<VkDeviceMemory>(4);
+        resource.export_resource.content_generation            = resource.content_generation;
+        resource.export_resource.external_sync.release_mode    = vkvv::VkvvExternalReleaseMode::ImplicitSyncOnly;
+        resource.export_resource.external_sync.released_generation = resource.content_generation;
+        resource.decode_image_is_imported_image                = false;
+        resource.import_output_copy_done                       = true;
+        ok &= check(vkvv::surface_resource_has_direct_import_output(&resource), "copied imported output was not treated as published output");
+        ok &= check(vkvv::surface_resource_visible_publish_ready(&resource, true, true, false), "copied imported output did not pass visible publication gate");
+        ok &= check(!vkvv::surface_resource_visible_publish_ready(&resource, true, false, false), "copied imported output passed without copy completion");
+
         resource.import.fd.ino++;
         ok &= check(!vkvv::surface_resource_has_direct_import_output(&resource), "direct import identity drift was not rejected");
         resource.import.fd.ino = resource.import_fd_ino;
