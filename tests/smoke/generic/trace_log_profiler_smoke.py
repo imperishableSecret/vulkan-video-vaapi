@@ -185,6 +185,8 @@ def main() -> int:
     check(totals["pixel_proof_unavailable"] == 0, "pixel proof unavailable aggregate mismatch")
     check(totals["visible_publish_gates"] == 1 and totals["visible_publish_successes"] == 1, "visible publish gate aggregate mismatch")
     check(totals["visible_publish_blocks"] == 1 and totals["visible_publish_pixel_blocks"] == 1, "visible publish block aggregate mismatch")
+    check("pixel_proof_mode=seed seed_proof_required=1 visible_proof_required=0 publish_ok=1" in FIXTURE, "seed proof mode publish fixture missing")
+    check("pixel_proof_mode=all visible_proof_required=1 reason=pixel-mismatch" in FIXTURE, "all proof mode publish fixture missing")
     check(totals["nondisplay_present_pinned_skips"] == 0, "nondisplay present-pinned skip aggregate mismatch")
     check(totals["invalid_nondisplay_stale_export_shadows"] == 0, "invalid nondisplay stale shadow aggregate mismatch")
     check(totals["invalid_presentable_undecoded_surfaces"] == 0, "invalid undecoded presentable aggregate mismatch")
