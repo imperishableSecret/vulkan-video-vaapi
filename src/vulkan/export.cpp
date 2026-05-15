@@ -1276,8 +1276,8 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
             if (!seeded_predecode) {
                 if (exported_shadow->bootstrap_export) {
                     VKVV_TRACE("bootstrap-export-return",
-                               "surface=%u driver=%llu fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu presentable=0 published_visible=0 "
-                               "predecode_quarantined=1 export_role=%s status=0",
+                               "surface=%u driver=%llu fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu pixel_source=placeholder "
+                               "presentable=0 published_visible=0 predecode_quarantined=1 export_role=%s status=0",
                                surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(fd_stat.dev),
                                static_cast<unsigned long long>(fd_stat.ino), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                                static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(export_resource_fd_content_generation(exported_shadow)),

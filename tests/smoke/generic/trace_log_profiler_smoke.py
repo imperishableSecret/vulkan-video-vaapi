@@ -77,7 +77,7 @@ nvidia-vulkan-vaapi: trace seq=63 event=external-sync-proof surface=7 fd_dev=11 
 nvidia-vulkan-vaapi: trace seq=64 event=decode-pixel-proof surface=7 codec=0x8 stream=1 content_gen=2 order_hint_or_frame_num=2 decode_crc_valid=1 decode_crc=0x10 black_crc=0x10 zero_crc=0x0 is_black=1 is_zero=0 pixel_proof_valid=0 sample_bytes=4096
 nvidia-vulkan-vaapi: trace seq=65 event=va-export-call driver=2 surface=7 flags=0x5 mem_type=0x40000000 composed_layers=0 separate_layers=1 active_stream=1 active_codec=0x8 surface_stream=1 surface_codec=0x8 decoded=0 content_gen=0 pending_decode=0 had_va_begin=0 had_decode_submit=0 export_intent=read-only
 nvidia-vulkan-vaapi: trace seq=66 event=export-role-decision surface=7 driver=2 active_stream=1 active_codec=0x8 surface_stream=1 surface_codec=0x8 content_gen=0 decoded=0 pending_decode=0 had_va_begin=0 had_decode_submit=0 export_flags=0x5 mem_type=0x40000000 export_intent=read-only export_role=predecode-target reason=active-stream-undecoded-predecode
-nvidia-vulkan-vaapi: trace seq=67 event=bootstrap-export-return surface=8 driver=2 fd_dev=33 fd_ino=44 stream=0 codec=0x0 content_gen=0 fd_content_gen=0 presentable=0 published_visible=0 predecode_quarantined=1 export_role=bootstrap status=0
+nvidia-vulkan-vaapi: trace seq=67 event=bootstrap-export-return surface=8 driver=2 fd_dev=33 fd_ino=44 stream=0 codec=0x0 content_gen=0 fd_content_gen=0 pixel_source=placeholder presentable=0 published_visible=0 predecode_quarantined=1 export_role=bootstrap status=0
 nvidia-vulkan-vaapi: trace seq=68 event=generic-export-summary surface=8 stream=0 codec=0x0 width=3840 height=2160 fourcc=0x30313050 content_gen=0 fd_content_gen=0 returned_fd=1 decision=return-bootstrap pixel_source=placeholder pixel_proof_valid=0 is_black=1 is_zero=0 pending_decode=0 valid_seed_available=0 quarantine_outcome=pending external_release_mode=none status=0 may_be_sampled_by_client=1 export_role=bootstrap export_intent=read-only raw_export_flags=0x5 mem_type=0x40000000 had_va_begin=0 had_decode_submit=0
 nvidia-vulkan-vaapi: trace seq=69 event=bootstrap-export-upgrade surface=8 driver=2 fd_dev=33 fd_ino=44 codec=0x4 stream=2 content_gen=1 fd_content_gen=1 display_visible=1 presentable=1 published_visible=1
 nvidia-vulkan-vaapi: trace seq=70 event=bootstrap-export-destroyed-unused surface=10 fd_dev=55 fd_ino=66 age_ms=4 content_gen=0 had_decode_submit=0
@@ -213,6 +213,8 @@ def main() -> int:
     check("export_role=predecode-target reason=active-stream-undecoded-predecode" in FIXTURE, "predecode target role fixture missing")
     check(data["events"].get("bootstrap-export-destroyed-unused") == 1, "bootstrap destroyed-unused telemetry count mismatch")
     check(data["events"].get("bootstrap-export-unavailable") == 1, "bootstrap unavailable telemetry count mismatch")
+    check("event=bootstrap-export-return" in FIXTURE and "pixel_source=placeholder" in FIXTURE and "event=bootstrap-export-upgrade" in FIXTURE,
+          "bootstrap placeholder lifecycle fixture missing")
     check("candidate_pixel_proof_state=valid-nonblack" in FIXTURE and "candidate_valid=1 reject_reason=none" in FIXTURE, "valid seed proof fixture missing")
     check("event=seed-target-pixel-proof" in FIXTURE and "matches_source=1" in FIXTURE and "pixel_proof_state=valid-nonblack" in FIXTURE, "seed target proof fixture missing")
     check("reject_reason=bootstrap-placeholder" in FIXTURE, "bootstrap seed rejection fixture missing")
