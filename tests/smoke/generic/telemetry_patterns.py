@@ -277,6 +277,7 @@ def main() -> int:
         "nondisplay-present-pinned-skip",
         "neutral-placeholder",
         "source-not-client-safe",
+        "bootstrap-placeholder",
         "no-pixel-proof",
         "stream-local-seed",
         "return-bootstrap",

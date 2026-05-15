@@ -532,6 +532,9 @@ namespace vkvv {
             return false;
         }
         const ExportResource& export_resource = source->export_resource;
+        if (export_resource.bootstrap_export || export_resource.predecode_quarantined || export_resource.black_placeholder) {
+            return false;
+        }
         return export_resource.present_generation != 0 && export_resource_fd_may_be_sampled_by_client(&export_resource) &&
             export_resource.exported_fd.fd_content_generation == export_resource.present_generation && export_visible_release_satisfied(&export_resource);
     }

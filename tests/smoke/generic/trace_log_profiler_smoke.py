@@ -79,6 +79,7 @@ nvidia-vulkan-vaapi: trace seq=68 event=generic-export-summary surface=8 stream=
 nvidia-vulkan-vaapi: trace seq=69 event=bootstrap-export-upgrade surface=8 driver=2 fd_dev=33 fd_ino=44 codec=0x4 stream=2 content_gen=1 fd_content_gen=1 display_visible=1 presentable=1 published_visible=1
 nvidia-vulkan-vaapi: trace seq=70 event=bootstrap-export-destroyed-unused surface=10 fd_dev=55 fd_ino=66 age_ms=4 content_gen=0 had_decode_submit=0
 nvidia-vulkan-vaapi: trace seq=71 event=predecode-quarantine-outcome surface=8 fd_dev=33 fd_ino=44 stream=2 codec=0x4 age_ms=9 content_gen=1 fd_content_gen=1 decoded=1 had_va_begin=0 had_decode_submit=0 had_visible_decode=0 may_be_sampled_by_client=1 export_role=bootstrap outcome=bootstrap-upgraded reason=valid-pixels returned_fd=1
+nvidia-vulkan-vaapi: trace seq=72 event=export-seed-candidate target_surface=11 candidate_surface=10 same_driver=1 same_stream=1 same_codec=1 same_fourcc=1 same_visible_extent=1 same_coded_extent=1 same_sequence_generation=0 same_session_generation=1 candidate_present_gen=0 candidate_fd_content_gen=0 candidate_external_release_ok=0 candidate_pixel_proof_valid=0 candidate_is_black=1 candidate_is_zero=0 candidate_valid=0 reject_reason=bootstrap-placeholder
 [1:2:0512/000000.000000:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:3552] vaEndPicture failed, VA error: operation failed
 nvidia-vulkan-vaapi: device-lost call=vkWaitForFences operation=AV1 decode result=-4 decode_submitted=1 decode_completed=0
 """
@@ -131,7 +132,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 70, "trace record count mismatch")
+    check(data["trace_records"] == 71, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -207,6 +208,7 @@ def main() -> int:
         "export role telemetry count mismatch",
     )
     check(data["events"].get("bootstrap-export-destroyed-unused") == 1, "bootstrap destroyed-unused telemetry count mismatch")
+    check("reject_reason=bootstrap-placeholder" in FIXTURE, "bootstrap seed rejection fixture missing")
     check(data["browser_dropped_frames_observed"] is False, "browser dropped-frame observation mismatch")
     check(totals["device_lost"] == 1, "device-lost aggregate mismatch")
     check(totals["va_end_failed"] == 1, "VA end failure aggregate mismatch")

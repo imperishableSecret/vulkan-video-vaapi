@@ -1420,8 +1420,9 @@ namespace vkvv {
         if (target == nullptr || source == nullptr) {
             return;
         }
-        const bool thumbnail_like = predecode_seed_target_thumbnail_like(target);
-        const char* reject_reason = predecode_seed_source_safe_for_client(source) ? "no-pixel-proof" : "source-not-client-safe";
+        const bool thumbnail_like        = predecode_seed_target_thumbnail_like(target);
+        const bool bootstrap_placeholder = source->export_resource.bootstrap_export || source->export_resource.black_placeholder || source->export_resource.predecode_quarantined;
+        const char* reject_reason        = bootstrap_placeholder ? "bootstrap-placeholder" : (predecode_seed_source_safe_for_client(source) ? "no-pixel-proof" : "source-not-client-safe");
         VKVV_TRACE("predecode-seed-policy",
                    "surface=%u source_surface=%u action=neutral-placeholder reason=%s presentable=0 present_pinned=0 decoded=0 thumbnail_like=%u "
                    "content_gen=%llu target_mem=0x%llx source_external_release_ok=%u source_present_gen=%llu source_fd_content_gen=%llu",
@@ -1549,7 +1550,9 @@ namespace vkvv {
             const bool same_coded = source != nullptr && source->coded_extent.width == target->coded_extent.width &&
                 source->coded_extent.height == target->coded_extent.height;
             const bool same_domain = export_seed_record_matches(record, target) && source != target;
-            const bool source_safe = source != nullptr && predecode_seed_source_safe_for_client(source);
+            const bool bootstrap_placeholder = source != nullptr &&
+                (source->export_resource.bootstrap_export || source->export_resource.black_placeholder || source->export_resource.predecode_quarantined);
+            const bool source_safe = source != nullptr && !bootstrap_placeholder && predecode_seed_source_safe_for_client(source);
             const SeedPixelProofState source_pixel_proof = predecode_seed_source_pixel_proof_state(source);
             const bool valid       = same_domain && source_safe && source_pixel_proof.valid;
             if (valid) {
@@ -1562,6 +1565,7 @@ namespace vkvv {
                 !same_codec                                   ? "codec-mismatch" :
                 !same_fourcc                                  ? "fourcc-mismatch" :
                 !same_coded                                   ? "coded-extent-mismatch" :
+                bootstrap_placeholder                         ? "bootstrap-placeholder" :
                 !source_safe                                  ? "source-not-client-safe" :
                 !source_pixel_proof.valid                     ? "no-pixel-proof" :
                                                                  "domain-mismatch";
