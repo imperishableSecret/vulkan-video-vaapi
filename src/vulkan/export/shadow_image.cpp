@@ -998,6 +998,8 @@ namespace vkvv {
         const bool                source_valid        = predecode_seed_source_safe_for_client(source) && source_bytes > 0 && pixel_identity_valid_from_state(source_state);
         const bool                target_valid        = source_valid && target_ok && target_bytes > 0 && target_matches;
         target->seed_pixel_proof_valid                = target_valid;
+        const VkvvPixelColorState source_color_state  = pixel_color_state_from_sample(source_ok, source_black, source_zero);
+        const VkvvPixelColorState target_color_state  = pixel_color_state_from_sample(target_ok, target_black, target_zero);
         trace_pixel_proof_computed(source->surface_id, source->export_resource.fd_dev, source->export_resource.fd_ino, source->export_resource.present_generation,
                                    VkvvExportPixelSource::DecodedContent, source_ok ? source_crc : 0, black_crc, zero_crc, source_black, source_zero, source_bytes, source_state);
         trace_pixel_proof_computed(target->owner_surface_id, target->fd_dev, target->fd_ino, export_resource_fd_content_generation(target), VkvvExportPixelSource::StreamLocalSeed,
@@ -1012,11 +1014,12 @@ namespace vkvv {
                    source_valid ? 1U : 0U, static_cast<unsigned long long>(source_bytes), export_pixel_proof_enabled() ? 1U : 0U);
         VKVV_TRACE("seed-target-pixel-proof",
                    "target_surface=%u source_surface=%u target_fd_dev=%llu target_fd_ino=%llu target_crc_after_copy=0x%llx source_crc=0x%llx matches_source=%u "
-                   "target_is_black=%u target_is_zero=%u pixel_proof_valid=%u pixel_proof_state=%s reject_reason=%s copy_status=%s source_sample_bytes=%llu "
-                   "target_sample_bytes=%llu sample_bytes=%llu",
+                   "source_color_state=%s target_color_state=%s target_is_black=%u target_is_zero=%u pixel_proof_valid=%u pixel_proof_state=%s target_valid=%u "
+                   "reject_reason=%s copy_status=%s source_sample_bytes=%llu target_sample_bytes=%llu sample_bytes=%llu",
                    target->owner_surface_id, source->surface_id, static_cast<unsigned long long>(target->fd_dev), static_cast<unsigned long long>(target->fd_ino),
                    static_cast<unsigned long long>(target_ok ? target_crc : 0), static_cast<unsigned long long>(source_ok ? source_crc : 0), target_matches ? 1U : 0U,
-                   target_black ? 1U : 0U, target_zero ? 1U : 0U, target_valid ? 1U : 0U, vkvv_pixel_proof_state_name(target_state),
+                   vkvv_pixel_color_state_name(source_color_state), vkvv_pixel_color_state_name(target_color_state), target_black ? 1U : 0U, target_zero ? 1U : 0U,
+                   target_valid ? 1U : 0U, vkvv_pixel_proof_state_name(target_state), target_valid ? 1U : 0U,
                    target_valid ? "none" :
                                   (!source_valid                       ? "source-proof-invalid" :
                                        !target_ok || target_bytes == 0 ? "target-proof-unavailable" :
