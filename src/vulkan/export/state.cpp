@@ -58,6 +58,27 @@ namespace vkvv {
         }
     }
 
+    const char* vkvv_pixel_proof_state_name(VkvvPixelProofState state) {
+        switch (state) {
+            case VkvvPixelProofState::ValidNonBlack: return "valid-nonblack";
+            case VkvvPixelProofState::Black: return "black";
+            case VkvvPixelProofState::Zero: return "zero";
+            case VkvvPixelProofState::Mismatch: return "mismatch";
+            case VkvvPixelProofState::Unavailable: return "unavailable";
+            case VkvvPixelProofState::Unknown: return "unknown";
+            default: return "unknown";
+        }
+    }
+
+    const char* vkvv_pixel_proof_mode_name(VkvvPixelProofMode mode) {
+        switch (mode) {
+            case VkvvPixelProofMode::Off: return "off";
+            case VkvvPixelProofMode::Seed: return "seed";
+            case VkvvPixelProofMode::All: return "all";
+            default: return "unknown";
+        }
+    }
+
     const char* vkvv_export_present_source_name(VkvvExportPresentSource source) {
         switch (source) {
             case VkvvExportPresentSource::None: return "none";

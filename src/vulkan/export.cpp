@@ -806,15 +806,17 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
     const bool                    copy_done =
         surface_resource_has_current_export_shadow(resource) && resource->exported && resource->export_resource.exported && !surface_resource_export_shadow_stale(resource);
     const bool external_release_ok  = export_visible_release_satisfied(&resource->export_resource);
-    const bool pixel_proof_required = export_pixel_proof_enabled();
+    const VkvvPixelProofMode pixel_proof_mode     = export_pixel_proof_mode();
+    const bool               pixel_proof_required = export_visible_pixel_proof_required();
     const bool pixel_match_ok     = !pixel_proof_required || (resource->decode_pixel_proof_valid && resource->present_pixel_proof_valid && resource->present_pixel_matches_decode);
     const bool visible_publish_ok = surface_resource_visible_publish_ready(resource, display_visible, copy_done, pixel_proof_required);
     VKVV_TRACE("visible-publish-gate",
                "surface=%u codec=0x%x stream=%llu content_gen=%llu display_visible=%u copy_done=%u present_shadow_gen=%llu external_release_ok=%u pixel_match_ok=%u "
-               "pixel_proof_required=%u publish_ok=%u",
+               "pixel_proof_required=%u pixel_proof_mode=%s seed_proof_required=%u visible_proof_required=%u publish_ok=%u",
                surface->id, resource->codec_operation, static_cast<unsigned long long>(resource->stream_id), static_cast<unsigned long long>(resource->content_generation),
                display_visible ? 1U : 0U, copy_done ? 1U : 0U, static_cast<unsigned long long>(resource->export_resource.content_generation), external_release_ok ? 1U : 0U,
-               pixel_match_ok ? 1U : 0U, pixel_proof_required ? 1U : 0U, visible_publish_ok ? 1U : 0U);
+               pixel_match_ok ? 1U : 0U, pixel_proof_required ? 1U : 0U, vkvv_pixel_proof_mode_name(pixel_proof_mode), export_seed_pixel_proof_required() ? 1U : 0U,
+               export_visible_pixel_proof_required() ? 1U : 0U, visible_publish_ok ? 1U : 0U);
     if (visible_publish_ok) {
         pin_export_visible_present(resource, &resource->export_resource, present_source);
         exit_predecode_quarantine(resource, &resource->export_resource, external_release_ok);
@@ -827,10 +829,11 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
                                                       "unknown";
         VKVV_TRACE("visible-publish-blocked",
                    "surface=%u codec=0x%x stream=%llu content_gen=%llu display_visible=%u copy_done=%u present_shadow_gen=%llu external_release_ok=%u pixel_match_ok=%u "
-                   "pixel_proof_required=%u reason=%s",
+                   "pixel_proof_required=%u pixel_proof_mode=%s visible_proof_required=%u reason=%s",
                    surface->id, resource->codec_operation, static_cast<unsigned long long>(resource->stream_id), static_cast<unsigned long long>(resource->content_generation),
                    display_visible ? 1U : 0U, copy_done ? 1U : 0U, static_cast<unsigned long long>(resource->export_resource.content_generation), external_release_ok ? 1U : 0U,
-                   pixel_match_ok ? 1U : 0U, pixel_proof_required ? 1U : 0U, block_reason);
+                   pixel_match_ok ? 1U : 0U, pixel_proof_required ? 1U : 0U, vkvv_pixel_proof_mode_name(pixel_proof_mode),
+                   export_visible_pixel_proof_required() ? 1U : 0U, block_reason);
     }
     trace_av1_visible_output_check(surface, resource, refresh_export);
     const bool visible_shadow_published = surface_resource_has_exported_shadow_output(resource);

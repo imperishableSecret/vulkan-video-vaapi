@@ -68,6 +68,43 @@ namespace vkvv {
 
     const char* vkvv_export_role_name(VkvvExportRole role);
 
+    enum class VkvvPixelProofState {
+        Unknown = 0,
+        ValidNonBlack,
+        Black,
+        Zero,
+        Mismatch,
+        Unavailable,
+    };
+
+    const char* vkvv_pixel_proof_state_name(VkvvPixelProofState state);
+
+    enum class VkvvPixelProofMode {
+        Off = 0,
+        Seed,
+        All,
+    };
+
+    const char* vkvv_pixel_proof_mode_name(VkvvPixelProofMode mode);
+
+    struct VkvvPixelProof {
+        bool                valid        = false;
+        uint64_t            crc          = 0;
+        uint64_t            black_crc    = 0;
+        uint64_t            zero_crc     = 0;
+        bool                is_black     = false;
+        bool                is_zero      = false;
+        uint64_t            sample_bytes = 0;
+        VkvvPixelProofState state        = VkvvPixelProofState::Unknown;
+    };
+
+    struct VkvvImageProofCache {
+        uint64_t       generation = 0;
+        uint64_t       fd_dev     = 0;
+        uint64_t       fd_ino     = 0;
+        VkvvPixelProof proof{};
+    };
+
     struct VkvvReturnedFdProof {
         bool                          returned_fd              = false;
         int                           fd                       = -1;
