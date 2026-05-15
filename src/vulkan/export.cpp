@@ -665,12 +665,12 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
             clear_nondisplay_predecode_presentation_state(resource);
         }
         const bool has_exported_backing = resource->export_resource.exported && resource->export_resource.image != VK_NULL_HANDLE;
-        const bool fd_may_be_sampled    = export_resource_fd_may_be_sampled_by_client(&resource->export_resource);
+        const bool fd_observable        = export_resource_fd_observable(&resource->export_resource);
         const bool already_current      = resource->content_generation != 0 && surface_resource_has_current_decode_shadow(resource);
-        const bool exported_fd_stale    = fd_may_be_sampled && resource->content_generation != 0 && !export_resource_fd_fresh(resource);
+        const bool exported_fd_stale    = fd_observable && resource->content_generation != 0 && !export_resource_fd_fresh(resource);
         const bool present_pinned_private_refresh =
-            has_exported_backing && !already_current && !fd_may_be_sampled && resource->export_resource.present_pinned && resource->export_resource.client_visible_shadow;
-        const bool  predecode_quarantine_private_refresh = has_exported_backing && !already_current && !fd_may_be_sampled && predecode_quarantined;
+            has_exported_backing && !already_current && !fd_observable && resource->export_resource.present_pinned && resource->export_resource.client_visible_shadow;
+        const bool  predecode_quarantine_private_refresh = has_exported_backing && !already_current && !fd_observable && predecode_quarantined;
         const char* action                               = "no-backing";
         bool        attempted_copy                       = false;
         bool        attempted_private_copy               = false;
@@ -704,13 +704,14 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
         VKVV_TRACE(
             "nondisplay-export-guard",
             "codec=0x%x surface=%u driver=%llu stream=%llu content_gen=%llu shadow_gen=%llu refresh_export=0 exported=%u shadow_exported=%u predecode_before=%u "
-            "seeded_before=%u seed_source_before=%u action=%s attempted_seed=0 attempted_copy=%u attempted_private_copy=%u present_pinned=%u presentable=%u present_gen=%llu "
+            "seeded_before=%u seed_source_before=%u action=%s attempted_seed=0 attempted_copy=%u attempted_private_copy=%u fd_observable=%u present_pinned=%u presentable=%u present_gen=%llu "
             "private_shadow_gen=%llu decode_shadow_gen=%llu",
             resource->codec_operation, surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
             static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->export_resource.content_generation),
             resource->exported ? 1U : 0U, resource->export_resource.exported ? 1U : 0U, predecode_before ? 1U : 0U, seeded_before ? 1U : 0U, seed_source_before, action,
-            attempted_copy ? 1U : 0U, attempted_private_copy ? 1U : 0U, resource->export_resource.present_pinned ? 1U : 0U, resource->export_resource.presentable ? 1U : 0U,
-            static_cast<unsigned long long>(resource->export_resource.present_generation), static_cast<unsigned long long>(resource->private_decode_shadow.content_generation),
+            attempted_copy ? 1U : 0U, attempted_private_copy ? 1U : 0U, fd_observable ? 1U : 0U, resource->export_resource.present_pinned ? 1U : 0U,
+            resource->export_resource.presentable ? 1U : 0U, static_cast<unsigned long long>(resource->export_resource.present_generation),
+            static_cast<unsigned long long>(resource->private_decode_shadow.content_generation),
             static_cast<unsigned long long>(resource->export_resource.decode_shadow_generation));
         trace_exported_fd_freshness_check(resource, &resource->export_resource, false, false, attempted_copy ? "needs-refresh" : action);
         constexpr bool attempted_seed_or_copy = false;
@@ -750,11 +751,12 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
                        resource->export_resource.predecode_seeded ? 1U : 0U, resource->export_resource.present_pinned ? 1U : 0U, resource->export_resource.presentable ? 1U : 0U);
             VKVV_TRACE("nondisplay-exported-fd-refresh",
                        "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen_before=%llu fd_content_gen_after=%llu refresh_export=0 "
-                       "display_published=0 may_be_sampled_by_client=%u present_gen=%llu",
+                       "display_published=0 may_be_sampled_by_client=%u fd_observable=%u present_gen=%llu",
                        surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                        static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(fd_content_gen_before),
                        static_cast<unsigned long long>(export_resource_fd_content_generation(&resource->export_resource)),
                        export_resource_fd_may_be_sampled_by_client(&resource->export_resource) ? 1U : 0U,
+                       export_resource_fd_observable(&resource->export_resource) ? 1U : 0U,
                        static_cast<unsigned long long>(resource->export_resource.present_generation));
             trace_export_present_state(resource, &resource->export_resource, "nondisplay-current-refresh-unpinned", false, false);
             clear_private_decode_shadow_state(resource);

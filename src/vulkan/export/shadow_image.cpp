@@ -1898,21 +1898,23 @@ namespace vkvv {
     }
 
     struct ExportCopyTargetSnapshot {
-        ExportResource* resource           = nullptr;
-        VkImage         image              = VK_NULL_HANDLE;
-        VkDeviceMemory  memory             = VK_NULL_HANDLE;
-        uint64_t        content_generation = 0;
-        bool            predecode_exported = false;
+        ExportResource* resource              = nullptr;
+        VkImage         image                 = VK_NULL_HANDLE;
+        VkDeviceMemory  memory                = VK_NULL_HANDLE;
+        uint64_t        content_generation    = 0;
+        uint64_t        fd_content_generation = 0;
+        bool            predecode_exported    = false;
     };
 
     ExportCopyTargetSnapshot snapshot_export_copy_target(ExportResource* resource) {
         ExportCopyTargetSnapshot snapshot{};
         snapshot.resource = resource;
         if (resource != nullptr) {
-            snapshot.image              = resource->image;
-            snapshot.memory             = resource->memory;
-            snapshot.content_generation = resource->content_generation;
-            snapshot.predecode_exported = resource->predecode_exported;
+            snapshot.image                 = resource->image;
+            snapshot.memory                = resource->memory;
+            snapshot.content_generation    = resource->content_generation;
+            snapshot.fd_content_generation = export_resource_fd_content_generation(resource);
+            snapshot.predecode_exported    = resource->predecode_exported;
         }
         return snapshot;
     }
@@ -2136,8 +2138,19 @@ namespace vkvv {
             if (owner_export->predecode_quarantined && owner_export->content_generation != 0) {
                 exit_predecode_quarantine(source, owner_export, export_visible_release_satisfied(owner_export));
             }
+            if (export_resource_fd_observable(owner_export)) {
+                VKVV_TRACE("observable-fd-decode-refresh",
+                           "surface=%u driver=%llu stream=%llu codec=0x%x refresh_export=%u display_visible=%u content_gen=%llu fd_content_gen_before=%llu "
+                           "fd_content_gen_after=%llu present_gen=%llu display_published=%u presentable=%u present_pinned=%u",
+                           source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(source->stream_id),
+                           source->codec_operation, owner_refresh_export ? 1U : 0U, owner_refresh_export ? 1U : 0U,
+                           static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(owner_snapshot.fd_content_generation),
+                           static_cast<unsigned long long>(export_resource_fd_content_generation(owner_export)),
+                           static_cast<unsigned long long>(owner_export->present_generation), owner_export->published_visible ? 1U : 0U,
+                           owner_export->presentable ? 1U : 0U, owner_export->present_pinned ? 1U : 0U);
+            }
             if (was_bootstrap_export) {
-                VKVV_TRACE("bootstrap-export-upgrade",
+	                VKVV_TRACE("bootstrap-export-upgrade",
                            "surface=%u driver=%llu fd_dev=%llu fd_ino=%llu codec=0x%x stream=%llu content_gen=%llu fd_content_gen=%llu display_visible=%u presentable=%u "
                            "published_visible=%u",
                            source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(owner_export->fd_dev),

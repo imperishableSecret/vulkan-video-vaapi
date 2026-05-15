@@ -23,6 +23,7 @@ nvidia-vulkan-vaapi: trace seq=12 event=predecode-export-stale-drop surface=7 dr
 nvidia-vulkan-vaapi: trace seq=13 event=export-seed-stale-drop surface=0 driver=0 stream=0 codec=0x0
 nvidia-vulkan-vaapi: trace seq=14 event=export-refresh-skip-nondisplay surface=7 driver=2 stream=1 codec=0x8
 nvidia-vulkan-vaapi: trace seq=15 event=nondisplay-export-guard surface=7 driver=2 stream=1 codec=0x8 content_gen=2 shadow_gen=1 refresh_export=0 exported=1 shadow_exported=1 predecode_before=1 seeded_before=1 seed_source_before=6 action=current-refresh-unpinned attempted_seed=0 attempted_copy=1 present_pinned=0 presentable=0 present_gen=0
+nvidia-vulkan-vaapi: trace seq=16 event=observable-fd-decode-refresh surface=7 driver=2 stream=1 codec=0x8 refresh_export=0 display_visible=0 content_gen=2 fd_content_gen_before=1 fd_content_gen_after=2 present_gen=0 display_published=0 presentable=0 present_pinned=0
 nvidia-vulkan-vaapi: trace seq=16 event=export-copy-proof codec=0x8 surface=7 source_surface=7 target_surface=7 source_content_gen=2 target_content_gen_before=1 target_content_gen_after=2 source_shadow_gen=1 target_shadow_gen_before=1 target_shadow_gen_after=2 copy_reason=nondisplay-current-refresh refresh_export=0
 nvidia-vulkan-vaapi: trace seq=17 event=nondisplay-export-current-refresh codec=0x8 surface=7 stream=1 driver=2 content_gen=2 old_shadow_gen=1 new_shadow_gen=2 exported=1 shadow_exported=1 predecode_before=1 seeded_before=1 predecode_after=0 seeded_after=0 attempted_seed=0 attempted_copy=1 display_published=0 present_pinned=0 presentable=0 copy_status=success
 nvidia-vulkan-vaapi: trace seq=18 event=export-present-state action=nondisplay-current-refresh-unpinned surface=7 codec=0x8 stream=1 fd_dev=11 fd_ino=22 content_gen=2 shadow_gen=2 present_gen=0 presentable=0 present_pinned=0 published_visible=0 predecode=0 seeded=0 placeholder=0 refresh_export=0 display_visible=0 present_source=none client_visible_shadow=0
@@ -145,7 +146,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 84, "trace record count mismatch")
+    check(data["trace_records"] == 85, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -180,6 +181,8 @@ def main() -> int:
     check(totals["exported_fd_freshness_checks"] == 1 and totals["exported_fd_refreshes"] == 1, "exported fd freshness aggregate mismatch")
     check(totals["invalid_stale_exported_fds"] == 0, "invalid stale exported fd aggregate mismatch")
     check(totals["nondisplay_exported_fd_refreshes"] == 1, "nondisplay exported fd refresh aggregate mismatch")
+    check("event=observable-fd-decode-refresh" in FIXTURE and "refresh_export=0 display_visible=0" in FIXTURE and "fd_content_gen_after=2" in FIXTURE,
+          "observable fd decode refresh fixture missing")
     check(totals["predecode_export_policy_events"] == 2, "predecode export policy aggregate mismatch")
     check(totals["predecode_stream_local_seeds"] == 1 and totals["predecode_neutral_placeholders"] == 1, "predecode policy action aggregate mismatch")
     check(totals["export_validity_gates"] == 3 and totals["generic_export_summaries"] == 4, "generic export telemetry aggregate mismatch")

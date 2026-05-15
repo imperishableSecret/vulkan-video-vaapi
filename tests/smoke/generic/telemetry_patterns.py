@@ -174,6 +174,7 @@ def main() -> int:
         '"export-visible-release"',
         '"export-visible-acquire"',
         '"exported-fd-freshness-check"',
+        '"observable-fd-decode-refresh"',
         '"invalid-stale-exported-fd"',
         '"nondisplay-exported-fd-refresh"',
         '"decode-pixel-proof"',
