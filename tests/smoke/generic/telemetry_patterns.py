@@ -153,6 +153,7 @@ def main() -> int:
         '"bootstrap-export-return"',
         '"bootstrap-export-upgrade"',
         '"bootstrap-export-destroyed-unused"',
+        '"bootstrap-export-unavailable"',
         '"debug-placeholder-export"',
         '"external-sync-proof"',
         '"predecode-quarantine-enter"',

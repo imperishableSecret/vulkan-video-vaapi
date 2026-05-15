@@ -190,6 +190,13 @@ namespace {
         return export_env_flag_enabled("VKVV_ALLOW_PLACEHOLDER_EXPORT");
     }
 
+    VAStatus export_status_to_client_status(VkvvExportRole role, VAStatus status) {
+        if (role == VkvvExportRole::Bootstrap && status == VA_STATUS_ERROR_OPERATION_FAILED) {
+            return VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE;
+        }
+        return status;
+    }
+
     bool export_source_has_decoded_pixels(const SurfaceResource* owner, const ExportResource* resource, VkvvExportPixelSource pixel_source) {
         if (owner == nullptr || owner->content_generation == 0 || pixel_source != VkvvExportPixelSource::DecodedContent) {
             return false;
@@ -1092,8 +1099,14 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                        static_cast<unsigned long long>(resource->last_nondisplay_skip_shadow_generation), skip_shadow_was_stale ? 1U : 0U, seeded_predecode_exports);
         } else if (!ensure_export_resource(runtime, resource, reason, reason_size)) {
             VkvvFdIdentity no_fd{};
-            trace_export_summary(&resource->export_resource, nullptr, false, no_fd, "fail", "ensure-export-resource-failed", VA_STATUS_ERROR_OPERATION_FAILED);
-            return VA_STATUS_ERROR_OPERATION_FAILED;
+            const VAStatus client_status = export_status_to_client_status(export_role, VA_STATUS_ERROR_OPERATION_FAILED);
+            if (export_role == VkvvExportRole::Bootstrap) {
+                VKVV_TRACE("bootstrap-export-unavailable", "surface=%u driver=%llu stream=%llu codec=0x%x reason=ensure-export-resource-failed status=%d", surface->id,
+                           static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                           client_status);
+            }
+            trace_export_summary(&resource->export_resource, nullptr, false, no_fd, "fail", "ensure-export-resource-failed", client_status);
+            return client_status;
         } else {
             stamp_export_request(&resource->export_resource, export_role);
             if (!seed_predecode_export_from_last_good(runtime, resource, reason, reason_size)) {
