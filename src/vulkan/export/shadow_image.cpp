@@ -1701,7 +1701,21 @@ namespace vkvv {
     }
 
     void remember_stream_seed_resource_locked(VulkanRuntime* runtime, SurfaceResource* resource) {
-        if (runtime == nullptr || resource == nullptr || resource->content_generation == 0 || !surface_resource_has_published_visible_output(resource)) {
+        if (runtime == nullptr || resource == nullptr) {
+            return;
+        }
+        const bool bootstrap_placeholder = resource->export_resource.bootstrap_export || resource->export_resource.black_placeholder ||
+            (resource->export_resource.predecode_quarantined && resource->export_resource.content_generation == 0);
+        if (bootstrap_placeholder) {
+            VKVV_TRACE("invalid-bootstrap-used-as-seed",
+                       "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu present_gen=%llu fd_content_gen=%llu reason=stream-seed-update",
+                       resource->surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
+                       resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
+                       static_cast<unsigned long long>(resource->export_resource.present_generation),
+                       static_cast<unsigned long long>(export_resource_fd_content_generation(&resource->export_resource)));
+            return;
+        }
+        if (resource->content_generation == 0 || !surface_resource_has_published_visible_output(resource)) {
             return;
         }
 
@@ -1877,6 +1891,17 @@ namespace vkvv {
                                                                                             "domain-mismatch";
             if (!valid && reject_summary[0] == 'n' && std::strcmp(reject_summary, "none") == 0) {
                 reject_summary = reject_reason;
+            }
+            if (bootstrap_placeholder && same_domain) {
+                VKVV_TRACE("invalid-bootstrap-used-as-seed",
+                           "surface=%u target_surface=%u source_surface=%u driver=%llu stream=%llu codec=0x%x source_content_gen=%llu source_present_gen=%llu "
+                           "source_fd_content_gen=%llu reason=export-seed-candidate",
+                           target->surface_id, target->surface_id, source != nullptr ? source->surface_id : VA_INVALID_ID,
+                           source != nullptr ? static_cast<unsigned long long>(source->driver_instance_id) : 0ULL,
+                           source != nullptr ? static_cast<unsigned long long>(source->stream_id) : 0ULL, source != nullptr ? source->codec_operation : 0U,
+                           source != nullptr ? static_cast<unsigned long long>(source->content_generation) : 0ULL,
+                           source != nullptr ? static_cast<unsigned long long>(source->export_resource.present_generation) : 0ULL,
+                           source != nullptr ? static_cast<unsigned long long>(export_resource_fd_content_generation(&source->export_resource)) : 0ULL);
             }
             VKVV_TRACE("export-seed-candidate",
                        "target_surface=%u candidate_surface=%u same_driver=%u same_stream=%u same_codec=%u same_fourcc=%u same_visible_extent=%u same_coded_extent=%u "
@@ -2222,9 +2247,16 @@ namespace vkvv {
                            owner_export->presentable ? 1U : 0U, owner_export->present_pinned ? 1U : 0U, presentation_separate ? 1U : 0U);
             }
             if (was_bootstrap_export) {
-	                VKVV_TRACE("bootstrap-export-upgrade",
+                VKVV_TRACE("bootstrap-export-upgrade",
                            "surface=%u driver=%llu fd_dev=%llu fd_ino=%llu codec=0x%x stream=%llu content_gen=%llu fd_content_gen=%llu display_visible=%u presentable=%u "
                            "published_visible=%u",
+                           source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(owner_export->fd_dev),
+                           static_cast<unsigned long long>(owner_export->fd_ino), source->codec_operation, static_cast<unsigned long long>(source->stream_id),
+                           static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(export_resource_fd_content_generation(owner_export)),
+                           owner_refresh_export ? 1U : 0U, owner_export->presentable ? 1U : 0U, owner_export->published_visible ? 1U : 0U);
+                VKVV_TRACE("bootstrap-placeholder-upgraded",
+                           "surface=%u driver=%llu fd_dev=%llu fd_ino=%llu codec=0x%x stream=%llu content_gen=%llu fd_content_gen=%llu display_visible=%u presentable=%u "
+                           "published_visible=%u reason=first-decode",
                            source->surface_id, static_cast<unsigned long long>(source->driver_instance_id), static_cast<unsigned long long>(owner_export->fd_dev),
                            static_cast<unsigned long long>(owner_export->fd_ino), source->codec_operation, static_cast<unsigned long long>(source->stream_id),
                            static_cast<unsigned long long>(source->content_generation), static_cast<unsigned long long>(export_resource_fd_content_generation(owner_export)),

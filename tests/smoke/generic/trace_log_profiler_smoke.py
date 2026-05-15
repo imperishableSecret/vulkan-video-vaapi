@@ -86,13 +86,16 @@ nvidia-vulkan-vaapi: trace seq=62 event=generic-export-summary surface=7 stream=
 nvidia-vulkan-vaapi: trace seq=63 event=external-sync-proof surface=7 fd_dev=11 fd_ino=22 stream=1 codec=0x8 content_gen=1 copy_done=1 fence_waited=1 release_mode=implicit-sync-only release_required=0 release_done=1 acquire_required=0 acquire_done=0 old_layout=7 new_layout=1 src_queue_family=4294967295 dst_queue_family=4294967295 sync_fd=-1 semaphore_exported=0 present_crc_after_release=0xabc
 nvidia-vulkan-vaapi: trace seq=64 event=decode-pixel-proof surface=7 codec=0x8 stream=1 content_gen=2 order_hint_or_frame_num=2 decode_crc_valid=1 decode_crc=0x10 black_crc=0x10 zero_crc=0x0 is_black=1 is_zero=0 pixel_proof_valid=1 sample_bytes=4096
 nvidia-vulkan-vaapi: trace seq=65 event=va-export-call driver=2 surface=7 flags=0x5 mem_type=0x40000000 composed_layers=0 separate_layers=1 active_stream=1 active_codec=0x8 surface_stream=1 surface_codec=0x8 decoded=0 content_gen=0 pending_decode=0 had_va_begin=0 had_decode_submit=0 export_intent=read-only
-nvidia-vulkan-vaapi: trace seq=66 event=export-role-decision surface=7 driver=2 active_stream=1 active_codec=0x8 surface_stream=1 surface_codec=0x8 content_gen=0 decoded=0 pending_decode=0 had_va_begin=0 had_decode_submit=0 export_flags=0x5 mem_type=0x40000000 export_intent=read-only export_role=predecode-target reason=active-stream-undecoded-predecode
+nvidia-vulkan-vaapi: trace seq=66 event=export-role-decision surface=7 driver=2 active_stream=1 active_codec=0x8 surface_stream=1 surface_codec=0x8 content_gen=0 decoded=0 pending_decode=0 had_va_begin=0 had_decode_submit=0 bootstrap_placeholder_allowed=0 active_predecode_domain=1 export_flags=0x5 mem_type=0x40000000 export_intent=read-only export_role=predecode-target reason=active-stream-undecoded-predecode
 nvidia-vulkan-vaapi: trace seq=67 event=bootstrap-export-return surface=8 driver=2 fd_dev=33 fd_ino=44 stream=0 codec=0x0 content_gen=0 fd_content_gen=0 pixel_source=placeholder presentable=0 published_visible=0 predecode_quarantined=1 export_role=bootstrap status=0
 nvidia-vulkan-vaapi: trace seq=68 event=generic-export-summary surface=8 stream=0 codec=0x0 width=3840 height=2160 fourcc=0x30313050 content_gen=0 fd_content_gen=0 returned_fd=1 decision=return-bootstrap pixel_source=placeholder pixel_proof_valid=0 is_black=1 is_zero=0 pending_decode=0 valid_seed_available=0 quarantine_outcome=pending external_release_mode=none status=0 va_status=0 actual_mem_type_supported=1 policy_status=success may_be_sampled_by_client=1 export_role=bootstrap export_intent=read-only raw_export_flags=0x5 mem_type=0x40000000 had_va_begin=0 had_decode_submit=0
 nvidia-vulkan-vaapi: trace seq=69 event=bootstrap-export-upgrade surface=8 driver=2 fd_dev=33 fd_ino=44 codec=0x4 stream=2 content_gen=1 fd_content_gen=1 display_visible=1 presentable=1 published_visible=1
+nvidia-vulkan-vaapi: trace seq=69 event=bootstrap-placeholder-upgraded surface=8 driver=2 fd_dev=33 fd_ino=44 codec=0x4 stream=2 content_gen=1 fd_content_gen=1 display_visible=1 presentable=1 published_visible=1 reason=first-decode
 nvidia-vulkan-vaapi: trace seq=70 event=bootstrap-export-destroyed-unused surface=10 fd_dev=55 fd_ino=66 age_ms=4 content_gen=0 had_decode_submit=0
+nvidia-vulkan-vaapi: trace seq=70 event=bootstrap-placeholder-destroyed-unused surface=10 fd_dev=55 fd_ino=66 age_ms=4 content_gen=0 had_decode_submit=0 reason=surface-destroy
 nvidia-vulkan-vaapi: trace seq=71 event=predecode-quarantine-outcome surface=8 fd_dev=33 fd_ino=44 stream=2 codec=0x4 age_ms=9 content_gen=1 fd_content_gen=1 decoded=1 had_va_begin=0 had_decode_submit=0 had_visible_decode=0 may_be_sampled_by_client=1 export_role=bootstrap outcome=bootstrap-upgraded reason=valid-pixels returned_fd=1
 nvidia-vulkan-vaapi: trace seq=72 event=export-seed-candidate target_surface=11 candidate_surface=10 same_driver=1 same_stream=1 same_codec=1 same_fourcc=1 same_visible_extent=1 same_coded_extent=1 same_sequence_generation=0 same_session_generation=1 candidate_present_gen=0 candidate_fd_content_gen=0 candidate_external_release_ok=0 candidate_pixel_source=placeholder candidate_pixel_identity_valid=1 candidate_pixel_content_valid=0 candidate_pixel_color_state=black candidate_pixel_proof_state=black candidate_pixel_proof_valid=0 candidate_is_black=1 candidate_is_zero=0 candidate_valid=0 reject_reason=bootstrap-placeholder
+nvidia-vulkan-vaapi: trace seq=72 event=invalid-bootstrap-used-as-seed surface=11 target_surface=11 source_surface=10 driver=2 stream=1 codec=0x8 source_content_gen=0 source_present_gen=0 source_fd_content_gen=0 reason=export-seed-candidate
 nvidia-vulkan-vaapi: trace seq=73 event=bootstrap-export-unavailable surface=12 driver=2 stream=0 codec=0x0 reason=ensure-export-resource-failed status=20
 nvidia-vulkan-vaapi: trace seq=74 event=export-validity-gate surface=13 driver=2 stream=1 codec=0x8 profile=0 width=3840 height=2160 fourcc=0x30313050 content_gen=0 decoded=0 pending_decode=0 refresh_export=0 display_visible=0 fd_already_exported=0 fd_dev=0 fd_ino=0 fd_content_gen=0 may_be_sampled_by_client=0 valid_decoded_pixels_available=0 valid_seed_available=0 placeholder_available=1 retained_candidate_available=0 export_role=sampleable-presentation export_intent=read-only raw_export_flags=0x5 mem_type=0x40000000 had_va_begin=1 had_decode_submit=0 decision=fail reason=no-valid-decoded-or-seed-pixels returned_fd=0 status=18
 nvidia-vulkan-vaapi: trace seq=75 event=generic-export-summary surface=13 stream=1 codec=0x8 width=3840 height=2160 fourcc=0x30313050 content_gen=0 fd_content_gen=0 returned_fd=0 decision=fail pixel_source=placeholder pixel_proof_valid=0 is_black=1 is_zero=0 pending_decode=0 valid_seed_available=0 quarantine_outcome=pending external_release_mode=none status=18 va_status=18 actual_mem_type_supported=1 policy_status=policy-failed may_be_sampled_by_client=0 export_role=sampleable-presentation export_intent=read-only raw_export_flags=0x5 mem_type=0x40000000 had_va_begin=1 had_decode_submit=0
@@ -148,7 +151,7 @@ def main() -> int:
     data = json.loads(result.stdout)
     stdin_data = json.loads(stdin_result.stdout)
     totals = data["totals"]
-    check(data["trace_records"] == 87, "trace record count mismatch")
+    check(data["trace_records"] == 90, "trace record count mismatch")
     check(stdin_data["path"] == "-" and stdin_data["trace_records"] == data["trace_records"], "stdin trace profile mismatch")
     check(data["trace_sequence"]["missing"] == 1, "trace sequence gap mismatch")
     check(totals["streams"] == 2, "stream count mismatch")
@@ -254,6 +257,9 @@ def main() -> int:
     )
     check("export_role=predecode-target reason=active-stream-undecoded-predecode" in FIXTURE, "predecode target role fixture missing")
     check(data["events"].get("bootstrap-export-destroyed-unused") == 1, "bootstrap destroyed-unused telemetry count mismatch")
+    check(data["events"].get("bootstrap-placeholder-upgraded") == 1, "bootstrap placeholder upgraded telemetry count mismatch")
+    check(data["events"].get("bootstrap-placeholder-destroyed-unused") == 1, "bootstrap placeholder destroyed-unused telemetry count mismatch")
+    check(data["events"].get("invalid-bootstrap-used-as-seed") == 1, "invalid bootstrap seed telemetry count mismatch")
     check(data["events"].get("bootstrap-export-unavailable") == 1, "bootstrap unavailable telemetry count mismatch")
     check("event=bootstrap-export-return" in FIXTURE and "pixel_source=placeholder" in FIXTURE and "event=bootstrap-export-upgrade" in FIXTURE,
           "bootstrap placeholder lifecycle fixture missing")
@@ -266,6 +272,10 @@ def main() -> int:
           and "source_color_state=zero target_color_state=zero" in FIXTURE and "pixel_proof_state=zero target_valid=1" in FIXTURE,
           "zero seed target proof fixture missing")
     check("reject_reason=bootstrap-placeholder" in FIXTURE, "bootstrap seed rejection fixture missing")
+    check("bootstrap_placeholder_allowed=0 active_predecode_domain=1" in FIXTURE, "bootstrap domain rule fixture missing")
+    check("event=bootstrap-placeholder-upgraded" in FIXTURE and "reason=first-decode" in FIXTURE, "bootstrap placeholder upgrade fixture missing")
+    check("event=bootstrap-placeholder-destroyed-unused" in FIXTURE and "reason=surface-destroy" in FIXTURE, "bootstrap placeholder destroyed-unused fixture missing")
+    check("event=invalid-bootstrap-used-as-seed" in FIXTURE and "reason=export-seed-candidate" in FIXTURE, "invalid bootstrap seed fixture missing")
     check(data["browser_dropped_frames_observed"] is False, "browser dropped-frame observation mismatch")
     check(totals["device_lost"] == 1, "device-lost aggregate mismatch")
     check(totals["va_end_failed"] == 1, "VA end failure aggregate mismatch")

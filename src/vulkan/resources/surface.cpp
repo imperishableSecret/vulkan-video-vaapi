@@ -90,6 +90,11 @@ namespace vkvv {
                            resource->owner_surface_id, static_cast<unsigned long long>(resource->predecode_fd_dev),
                            static_cast<unsigned long long>(resource->predecode_fd_ino), static_cast<unsigned long long>(age_ms),
                            static_cast<unsigned long long>(resource->content_generation), resource->predecode_had_decode_submit ? 1U : 0U);
+                VKVV_TRACE("bootstrap-placeholder-destroyed-unused",
+                           "surface=%u fd_dev=%llu fd_ino=%llu age_ms=%llu content_gen=%llu had_decode_submit=%u reason=surface-destroy",
+                           resource->owner_surface_id, static_cast<unsigned long long>(resource->predecode_fd_dev),
+                           static_cast<unsigned long long>(resource->predecode_fd_ino), static_cast<unsigned long long>(age_ms),
+                           static_cast<unsigned long long>(resource->content_generation), resource->predecode_had_decode_submit ? 1U : 0U);
             }
             VKVV_TRACE("export-resource-destroy", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx fd_dev=%llu fd_ino=%llu content_gen=%llu predecode_quarantined=1",
                        resource->owner_surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),

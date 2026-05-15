@@ -109,6 +109,28 @@ namespace {
         const char*      reason = "default-sampleable";
     };
 
+    bool bootstrap_placeholder_domain_allowed(const VkvvSurface* surface, const SurfaceResource* resource, const ExportPendingSnapshot& pending_before_export) {
+        if (surface == nullptr || resource == nullptr) {
+            return false;
+        }
+        const bool has_no_content     = resource->content_generation == 0 && !surface->decoded;
+        const bool has_no_pending     = !pending_before_export.found;
+        const bool has_no_lifecycle   = !surface->had_va_begin && !surface->had_decode_submit;
+        const bool has_incomplete_key = surface->stream_id == 0 || surface->codec_operation == 0 || resource->stream_id == 0 || resource->codec_operation == 0;
+        return has_no_content && has_no_pending && has_no_lifecycle && has_incomplete_key;
+    }
+
+    bool active_predecode_target_domain(const VkvvSurface* surface, const SurfaceResource* resource, const ExportPendingSnapshot& pending_before_export) {
+        if (surface == nullptr || resource == nullptr) {
+            return false;
+        }
+        const bool has_no_content   = resource->content_generation == 0 && !surface->decoded;
+        const bool has_no_pending   = !pending_before_export.found;
+        const bool has_no_lifecycle = !surface->had_va_begin && !surface->had_decode_submit;
+        return has_no_content && has_no_pending && has_no_lifecycle && surface->stream_id != 0 && resource->stream_id == surface->stream_id &&
+            surface->codec_operation != 0 && resource->codec_operation == surface->codec_operation;
+    }
+
     VkvvExportIntent export_intent_from_flags(uint32_t flags) {
         const uint32_t access = flags & VA_EXPORT_SURFACE_READ_WRITE;
         if (access == VA_EXPORT_SURFACE_READ_ONLY) {
@@ -136,26 +158,20 @@ namespace {
             decision.reason = "decoded-content";
             return decision;
         }
-        if (resource->export_resource.bootstrap_export && resource->content_generation == 0 && !surface->decoded) {
+        if (resource->export_resource.bootstrap_export && bootstrap_placeholder_domain_allowed(surface, resource, pending_before_export)) {
             decision.role   = VkvvExportRole::Bootstrap;
             decision.reason = "existing-bootstrap-quarantine";
             return decision;
         }
-        const bool has_no_content     = resource->content_generation == 0 && !surface->decoded;
-        const bool has_no_pending     = !pending_before_export.found;
-        const bool has_no_lifecycle   = !surface->had_va_begin && !surface->had_decode_submit;
-        const bool has_incomplete_key = surface->stream_id == 0 || surface->codec_operation == 0 || resource->stream_id == 0 || resource->codec_operation == 0;
-        if (has_no_content && has_no_pending && has_no_lifecycle) {
-            if (has_incomplete_key) {
-                decision.role   = VkvvExportRole::Bootstrap;
-                decision.reason = "initial-undecoded-incomplete-domain";
-                return decision;
-            }
-            if (surface->stream_id == resource->stream_id && surface->codec_operation == resource->codec_operation) {
-                decision.role   = VkvvExportRole::PredecodeTarget;
-                decision.reason = "active-stream-undecoded-predecode";
-                return decision;
-            }
+        if (bootstrap_placeholder_domain_allowed(surface, resource, pending_before_export)) {
+            decision.role   = VkvvExportRole::Bootstrap;
+            decision.reason = "initial-undecoded-incomplete-domain";
+            return decision;
+        }
+        if (active_predecode_target_domain(surface, resource, pending_before_export)) {
+            decision.role   = VkvvExportRole::PredecodeTarget;
+            decision.reason = "active-stream-undecoded-predecode";
+            return decision;
         }
         decision.role   = VkvvExportRole::SampleablePresentation;
         decision.reason = pending_before_export.found ? "pending-decode-sampleable" : "undecoded-sampleable";
@@ -1014,6 +1030,8 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
     ExportRoleDecision          export_role_decision            = classify_export_role(surface, resource, flags, pending_before_export);
     VkvvExportRole              export_role                     = export_role_decision.role;
     const VkvvExportIntent      export_intent                   = export_role_decision.intent;
+    const bool                  bootstrap_domain_allowed        = bootstrap_placeholder_domain_allowed(surface, resource, pending_before_export);
+    const bool                  active_predecode_domain         = active_predecode_target_domain(surface, resource, pending_before_export);
     auto                        stamp_export_request            = [&](ExportResource* export_resource, VkvvExportRole role) {
         if (export_resource == nullptr) {
             return;
@@ -1027,10 +1045,12 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
     };
     VKVV_TRACE("export-role-decision",
                "surface=%u driver=%llu active_stream=%llu active_codec=0x%x surface_stream=%llu surface_codec=0x%x content_gen=%llu decoded=%u pending_decode=%u "
-               "had_va_begin=%u had_decode_submit=%u export_flags=0x%x mem_type=0x%x export_intent=%s export_role=%s reason=%s",
+               "had_va_begin=%u had_decode_submit=%u bootstrap_placeholder_allowed=%u active_predecode_domain=%u export_flags=0x%x mem_type=0x%x export_intent=%s "
+               "export_role=%s reason=%s",
                surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                static_cast<unsigned long long>(surface->stream_id), surface->codec_operation, static_cast<unsigned long long>(resource->content_generation),
-               surface->decoded ? 1U : 0U, pending_before_export.found ? 1U : 0U, surface->had_va_begin ? 1U : 0U, surface->had_decode_submit ? 1U : 0U, flags, export_mem_type,
+               surface->decoded ? 1U : 0U, pending_before_export.found ? 1U : 0U, surface->had_va_begin ? 1U : 0U, surface->had_decode_submit ? 1U : 0U,
+               bootstrap_domain_allowed ? 1U : 0U, active_predecode_domain ? 1U : 0U, flags, export_mem_type,
                vkvv_export_intent_name(export_intent), vkvv_export_role_name(export_role), export_role_decision.reason);
     auto trace_drain_attempt = [&](VAStatus status) {
         VKVV_TRACE("export-drain-attempt",
@@ -1229,13 +1249,19 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
     const bool                  valid_decoded_pixels_available = export_source_has_decoded_pixels(resource, exported_shadow, pre_fd_pixel_source);
     const bool                  valid_seed_available           = export_source_has_seed_pixels(exported_shadow, pre_fd_pixel_source);
     const bool                  placeholder_available          = export_source_is_placeholder(exported_shadow, pre_fd_pixel_source);
-    if (export_role == VkvvExportRole::Bootstrap && placeholder_available && exported_shadow != nullptr) {
+    if (export_role == VkvvExportRole::Bootstrap && placeholder_available && exported_shadow != nullptr && bootstrap_domain_allowed) {
         exported_shadow->bootstrap_export = true;
     }
     export_role = effective_export_role_for_source(export_role, pre_fd_pixel_source, valid_decoded_pixels_available, valid_seed_available, exported_shadow);
+    if (export_role == VkvvExportRole::Bootstrap && !bootstrap_domain_allowed) {
+        if (exported_shadow != nullptr) {
+            exported_shadow->bootstrap_export = false;
+        }
+        export_role = active_predecode_domain ? VkvvExportRole::PredecodeTarget : VkvvExportRole::SampleablePresentation;
+    }
     stamp_export_request(exported_shadow, export_role);
     const uint64_t stream_visible_generation = export_role == VkvvExportRole::PredecodeTarget ? stream_visible_generation_from_seed_records(runtime, resource) : 0;
-    const bool bootstrap_placeholder_allowed = export_role == VkvvExportRole::Bootstrap && placeholder_available && exported_shadow != nullptr;
+    const bool bootstrap_placeholder_allowed = export_role == VkvvExportRole::Bootstrap && placeholder_available && exported_shadow != nullptr && bootstrap_domain_allowed;
     const bool predecode_target_placeholder_allowed =
         export_role == VkvvExportRole::PredecodeTarget && placeholder_available && exported_shadow != nullptr && stream_visible_generation == 0;
     const bool active_predecode_placeholder_invalid =
