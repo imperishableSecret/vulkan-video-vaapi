@@ -1695,43 +1695,50 @@ namespace vkvv {
                 source != nullptr && source->visible_extent.width == target->visible_extent.width && source->visible_extent.height == target->visible_extent.height;
             const bool same_coded  = source != nullptr && source->coded_extent.width == target->coded_extent.width && source->coded_extent.height == target->coded_extent.height;
             const bool same_domain = export_seed_record_matches(record, target) && source != target;
+            const VkvvExportPixelSource candidate_pixel_source =
+                source != nullptr ? export_pixel_source_for_resource(source, &source->export_resource) : VkvvExportPixelSource::None;
             const bool bootstrap_placeholder =
                 source != nullptr && (source->export_resource.bootstrap_export || source->export_resource.black_placeholder || source->export_resource.predecode_quarantined);
             const bool                source_safe        = source != nullptr && !bootstrap_placeholder && predecode_seed_source_safe_for_client(source);
             const SeedPixelProofState source_pixel_proof = predecode_seed_source_pixel_proof_state(source);
-            const bool                valid              = same_domain && source_safe && source_pixel_proof.valid;
+            const bool candidate_placeholder = candidate_pixel_source == VkvvExportPixelSource::Placeholder || source_pixel_proof.source_is_placeholder || bootstrap_placeholder;
+            const bool valid = same_domain && same_visible && source_safe && !candidate_placeholder && source_pixel_proof.identity_valid && source_pixel_proof.content_valid;
             if (valid) {
                 valid_candidate_count++;
             }
-            const char* proof_reject_reason = source_pixel_proof.state == VkvvPixelProofState::Black ? "black-source" :
-                source_pixel_proof.state == VkvvPixelProofState::Zero                                ? "zero-source" :
-                source_pixel_proof.state == VkvvPixelProofState::Mismatch                            ? "pixel-proof-mismatch" :
-                                                                                                       "no-pixel-proof";
-            const char* reject_reason       = valid ? "none" :
-                source == target                    ? "self" :
-                !same_driver                        ? "driver-mismatch" :
-                !same_stream                        ? "stream-mismatch" :
-                !same_codec                         ? "codec-mismatch" :
-                !same_fourcc                        ? "fourcc-mismatch" :
-                !same_coded                         ? "coded-extent-mismatch" :
-                bootstrap_placeholder               ? "bootstrap-placeholder" :
-                !source_safe                        ? "source-not-client-safe" :
-                !source_pixel_proof.valid           ? proof_reject_reason :
-                                                      "domain-mismatch";
+            const char* proof_reject_reason = source_pixel_proof.state == VkvvPixelProofState::Mismatch ? "pixel-proof-mismatch" :
+                !source_pixel_proof.identity_valid                                                      ? "no-pixel-proof" :
+                !source_pixel_proof.content_valid                                                       ? "content-invalid" :
+                                                                                                          "none";
+            const char* reject_reason       = valid                                       ? "none" :
+                source == target                                                          ? "self" :
+                !same_driver                                                              ? "driver-mismatch" :
+                !same_stream                                                              ? "stream-mismatch" :
+                !same_codec                                                               ? "codec-mismatch" :
+                !same_fourcc                                                              ? "fourcc-mismatch" :
+                !same_visible                                                             ? "visible-extent-mismatch" :
+                !same_coded                                                               ? "coded-extent-mismatch" :
+                candidate_placeholder                                                     ? "bootstrap-placeholder" :
+                !source_safe                                                              ? "source-not-client-safe" :
+                (!source_pixel_proof.identity_valid || !source_pixel_proof.content_valid) ? proof_reject_reason :
+                                                                                            "domain-mismatch";
             if (!valid && reject_summary[0] == 'n' && std::strcmp(reject_summary, "none") == 0) {
                 reject_summary = reject_reason;
             }
             VKVV_TRACE("export-seed-candidate",
                        "target_surface=%u candidate_surface=%u same_driver=%u same_stream=%u same_codec=%u same_fourcc=%u same_visible_extent=%u same_coded_extent=%u "
                        "same_sequence_generation=%u same_session_generation=%u candidate_present_gen=%llu candidate_fd_content_gen=%llu candidate_external_release_ok=%u "
+                       "candidate_pixel_source=%s candidate_pixel_identity_valid=%u candidate_pixel_content_valid=%u candidate_pixel_color_state=%s "
                        "candidate_pixel_proof_state=%s candidate_pixel_proof_valid=%u candidate_is_black=%u candidate_is_zero=%u candidate_valid=%u reject_reason=%s",
                        target->surface_id, source != nullptr ? source->surface_id : VA_INVALID_ID, same_driver ? 1U : 0U, same_stream ? 1U : 0U, same_codec ? 1U : 0U,
                        same_fourcc ? 1U : 0U, same_visible ? 1U : 0U, same_coded ? 1U : 0U,
                        source != nullptr && source->export_seed_generation == target->export_seed_generation ? 1U : 0U, same_stream ? 1U : 0U,
                        source != nullptr ? static_cast<unsigned long long>(source->export_resource.present_generation) : 0ULL,
                        source != nullptr ? static_cast<unsigned long long>(export_resource_fd_content_generation(&source->export_resource)) : 0ULL,
-                       source != nullptr && export_visible_release_satisfied(&source->export_resource) ? 1U : 0U, vkvv_pixel_proof_state_name(source_pixel_proof.state),
-                       source_pixel_proof.valid ? 1U : 0U, source_pixel_proof.is_black ? 1U : 0U, source_pixel_proof.is_zero ? 1U : 0U, valid ? 1U : 0U, reject_reason);
+                       source != nullptr && export_visible_release_satisfied(&source->export_resource) ? 1U : 0U, vkvv_export_pixel_source_name(candidate_pixel_source),
+                       source_pixel_proof.identity_valid ? 1U : 0U, source_pixel_proof.content_valid ? 1U : 0U, vkvv_pixel_color_state_name(source_pixel_proof.color_state),
+                       vkvv_pixel_proof_state_name(source_pixel_proof.state), source_pixel_proof.valid ? 1U : 0U, source_pixel_proof.is_black ? 1U : 0U,
+                       source_pixel_proof.is_zero ? 1U : 0U, valid ? 1U : 0U, reject_reason);
             if (same_domain && selected == nullptr) {
                 selected = source;
                 if (valid) {
