@@ -198,7 +198,7 @@ namespace {
     }
 
     VAStatus export_status_to_client_status(VkvvExportRole role, VAStatus status) {
-        if (role == VkvvExportRole::Bootstrap && status == VA_STATUS_ERROR_OPERATION_FAILED) {
+        if ((role == VkvvExportRole::Bootstrap || role == VkvvExportRole::PredecodeTarget) && status == VA_STATUS_ERROR_OPERATION_FAILED) {
             return VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE;
         }
         return status;
@@ -1180,6 +1180,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
     if (!valid_decoded_pixels_available && !valid_seed_available && !bootstrap_placeholder_allowed && !predecode_target_placeholder_allowed &&
         !(placeholder_available && allow_placeholder_export())) {
         VkvvFdIdentity no_fd{};
+        const VAStatus client_status = export_status_to_client_status(export_role, VA_STATUS_ERROR_OPERATION_FAILED);
         if (placeholder_available && exported_shadow != nullptr) {
             const bool predecode_target = export_role == VkvvExportRole::PredecodeTarget;
             trace_predecode_quarantine_outcome(resource, exported_shadow,
@@ -1191,17 +1192,17 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                            "status=%d reason=predecode-target-needs-proven-seed",
                            surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
                            resource->codec_operation, static_cast<unsigned long long>(resource->content_generation), vkvv_export_intent_name(export_intent),
-                           valid_seed_available ? 1U : 0U, VA_STATUS_ERROR_OPERATION_FAILED);
+                           valid_seed_available ? 1U : 0U, client_status);
             }
         }
         trace_export_summary(exported_shadow, nullptr, false, no_fd, "fail",
                              export_role == VkvvExportRole::PredecodeTarget ? "predecode-target-needs-proven-seed" : "no-valid-decoded-or-seed-pixels",
-                             VA_STATUS_ERROR_OPERATION_FAILED);
-        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_OPERATION_FAILED,
+                             client_status);
+        VKVV_ERROR_REASON(reason, reason_size, client_status,
                           "surface export refused sampleable fd without decoded or valid seed pixels: surface=%u stream=%llu codec=0x%x content_gen=%llu pixel_source=%s",
                           surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                           static_cast<unsigned long long>(resource->content_generation), vkvv_export_pixel_source_name(pre_fd_pixel_source));
-        return VA_STATUS_ERROR_OPERATION_FAILED;
+        return client_status;
     }
     if (placeholder_available && !bootstrap_placeholder_allowed && !predecode_target_placeholder_allowed) {
         VKVV_TRACE("debug-placeholder-export",
