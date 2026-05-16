@@ -1,5 +1,6 @@
 #include "vp9.h"
 #include "codecs/storage.h"
+#include "telemetry.h"
 
 #ifndef GST_USE_UNSTABLE_API
 #define GST_USE_UNSTABLE_API
@@ -219,38 +220,38 @@ VAStatus vkvv_vp9_render_buffer(void* state, const VkvvBuffer* buffer) {
 VAStatus vkvv_vp9_prepare_decode(void* state, unsigned int* width, unsigned int* height, char* reason, size_t reason_size) {
     auto* vp9 = static_cast<VP9State*>(state);
     if (vp9 == nullptr) {
-        std::snprintf(reason, reason_size, "missing VP9 state");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_CONTEXT, "missing VP9 state");
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
     if (!vp9->has_pic) {
-        std::snprintf(reason, reason_size, "missing VP9 picture parameters");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing VP9 picture parameters");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (!vp9->has_slice) {
-        std::snprintf(reason, reason_size, "missing VP9 slice parameters");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing VP9 slice parameters");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (!vp9->has_slice_data) {
-        std::snprintf(reason, reason_size, "missing VP9 slice data");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing VP9 slice data");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (!supported_profile_depth(vp9->pic.profile, vp9->pic.bit_depth)) {
-        std::snprintf(reason, reason_size, "VP9 path currently supports only Profile0 8-bit and Profile2 10-bit 4:2:0");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_PROFILE, "VP9 path currently supports only Profile0 8-bit and Profile2 10-bit 4:2:0");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
     if (!vp9->pic.pic_fields.bits.subsampling_x || !vp9->pic.pic_fields.bits.subsampling_y) {
-        std::snprintf(reason, reason_size, "VP9 path currently supports only 4:2:0");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT, "VP9 path currently supports only 4:2:0");
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
     if (vp9->pic.frame_width == 0 || vp9->pic.frame_height == 0) {
-        std::snprintf(reason, reason_size, "VP9 picture has empty dimensions");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "VP9 picture has empty dimensions");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (!parse_vp9_frame_header(vp9, reason, reason_size)) {
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (vp9->header.show_existing_frame) {
-        std::snprintf(reason, reason_size, "VP9 show-existing-frame is not implemented yet");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNIMPLEMENTED, "VP9 show-existing-frame is not implemented yet");
         return VA_STATUS_ERROR_UNIMPLEMENTED;
     }
     if (vp9->header.profile != vp9->pic.profile || vp9->header.bit_depth != vp9->pic.bit_depth || vp9->header.subsampling_x != vp9->pic.pic_fields.bits.subsampling_x ||
@@ -271,11 +272,12 @@ VAStatus vkvv_vp9_prepare_decode(void* state, unsigned int* width, unsigned int*
 
     *width  = vp9->pic.frame_width;
     *height = vp9->pic.frame_height;
-    std::snprintf(reason, reason_size,
-                  "captured VP9 picture: %ux%u profile=%u depth=%u bytes=%zu refresh=0x%02x frame=%u show=%u q=%u header=%u first_partition=%u va_header=%u va_first_partition=%u",
-                  *width, *height, vp9->pic.profile, vp9->pic.bit_depth, vp9->bitstream.size(), vp9->header.refresh_frame_flags, vp9->header.frame_type, vp9->header.show_frame,
-                  vp9->header.base_q_idx, vp9->header.frame_header_length_in_bytes, vp9->header.first_partition_size, vp9->pic.frame_header_length_in_bytes,
-                  vp9->pic.first_partition_size);
+    VKVV_SUCCESS_REASON(reason, reason_size,
+                        "captured VP9 picture: %ux%u profile=%u depth=%u bytes=%zu refresh=0x%02x frame=%u show=%u q=%u header=%u first_partition=%u va_header=%u "
+                        "va_first_partition=%u",
+                        *width, *height, vp9->pic.profile, vp9->pic.bit_depth, vp9->bitstream.size(), vp9->header.refresh_frame_flags, vp9->header.frame_type,
+                        vp9->header.show_frame, vp9->header.base_q_idx, vp9->header.frame_header_length_in_bytes, vp9->header.first_partition_size,
+                        vp9->pic.frame_header_length_in_bytes, vp9->pic.first_partition_size);
     return VA_STATUS_SUCCESS;
 }
 

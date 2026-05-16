@@ -34,10 +34,24 @@ namespace vkvv {
                                        size_t reason_size);
 
     bool     ensure_export_resource(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
+    bool     ensure_imported_output_resource(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
+    bool     ensure_private_decode_shadow(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
+    bool     copy_decode_to_private_shadow(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
     bool     attach_imported_export_resource_by_fd(VulkanRuntime* runtime, SurfaceResource* source);
     bool     ensure_export_only_surface_resource(VkvvSurface* surface, const ExportFormatInfo* format, VkExtent2D extent, char* reason, size_t reason_size);
     bool     copy_surface_to_export_resource(VulkanRuntime* runtime, SurfaceResource* source, uint32_t* seeded_predecode_exports, char* reason, size_t reason_size);
+    bool     refresh_nondisplay_export_resource(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
     bool     seed_predecode_export_from_last_good(VulkanRuntime* runtime, SurfaceResource* target, char* reason, size_t reason_size);
+    void     enter_predecode_quarantine(const SurfaceResource* owner, ExportResource* resource);
+    void     exit_predecode_quarantine(const SurfaceResource* owner, ExportResource* resource, bool release_done);
+    void     mark_export_visible_acquire(const SurfaceResource* owner, ExportResource* resource);
+    void     mark_export_visible_release(const SurfaceResource* owner, ExportResource* resource, VkImageLayout old_layout, VkImageLayout new_layout);
+    bool     export_pixel_proof_enabled();
+    bool     trace_visible_pixel_proof(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
+    bool     trace_private_shadow_pixel_proof(VulkanRuntime* runtime, SurfaceResource* source, char* reason, size_t reason_size);
+    bool     trace_returned_fd_pixel_proof(VulkanRuntime* runtime, const SurfaceResource* owner, ExportResource* resource, const VkvvFdIdentity& fd,
+                                           VkvvExportPixelSource pixel_source, VkvvReturnedFdProof* proof, char* reason, size_t reason_size);
+    void     trace_seed_pixel_proof(VulkanRuntime* runtime, SurfaceResource* source, ExportResource* target, const char* copy_status);
 
 } // namespace vkvv
 

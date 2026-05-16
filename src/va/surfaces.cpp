@@ -81,7 +81,7 @@ namespace {
         }
         const int            fd      = descriptor->num_objects > 0 ? descriptor->objects[0].fd : -1;
         const VkvvFdIdentity fd_stat = vkvv_fd_identity_from_fd(fd);
-        vkvv_trace("surface-import-drm-prime2",
+        VKVV_TRACE("surface-import-drm-prime2",
                    "index=%u fourcc=0x%x %ux%u objects=%u layers=%u fd0=%d fd0_stat=%u fd0_dev=%llu fd0_ino=%llu size0=%u mod0=0x%llx layer0_format=0x%x layer0_planes=%u "
                    "layer0_object0=%u layer0_offset0=%u layer0_pitch0=%u",
                    index, descriptor->fourcc, descriptor->width, descriptor->height, descriptor->num_objects, descriptor->num_layers, fd, fd_stat.valid ? 1U : 0U,
@@ -99,7 +99,7 @@ namespace {
         }
         const int            fd      = descriptor->num_objects > 0 ? descriptor->objects[0].fd : -1;
         const VkvvFdIdentity fd_stat = vkvv_fd_identity_from_fd(fd);
-        vkvv_trace("surface-import-drm-prime3",
+        VKVV_TRACE("surface-import-drm-prime3",
                    "index=%u fourcc=0x%x %ux%u objects=%u layers=%u fd0=%d fd0_stat=%u fd0_dev=%llu fd0_ino=%llu size0=%u mod0=0x%llx flags=0x%x layer0_format=0x%x "
                    "layer0_planes=%u layer0_object0=%u layer0_offset0=%u layer0_pitch0=%u",
                    index, descriptor->fourcc, descriptor->width, descriptor->height, descriptor->num_objects, descriptor->num_layers, fd, fd_stat.valid ? 1U : 0U,
@@ -118,7 +118,7 @@ namespace {
         const uintptr_t      first_buffer = descriptor->buffers != NULL && descriptor->num_buffers > 0 ? descriptor->buffers[0] : 0;
         const int            fd           = first_buffer <= static_cast<uintptr_t>(INT32_MAX) ? static_cast<int>(first_buffer) : -1;
         const VkvvFdIdentity fd_stat      = vkvv_fd_identity_from_fd(fd);
-        vkvv_trace(
+        VKVV_TRACE(
             "surface-import-external-buffers",
             "index=%u fourcc=0x%x %ux%u size=%u planes=%u buffers=%u buffer0=%llu fd0_stat=%u fd0_dev=%llu fd0_ino=%llu flags=0x%x pitch0=%u offset0=%u pitch1=%u offset1=%u",
             index, descriptor->pixel_format, descriptor->width, descriptor->height, descriptor->data_size, descriptor->num_planes, descriptor->num_buffers,
@@ -134,13 +134,13 @@ namespace {
         }
         const uint32_t memory_type  = vkvv_surface_import_memory_type(attrib_list, num_attribs);
         const bool     has_external = vkvv_surface_import_has_external_descriptor(attrib_list, num_attribs);
-        vkvv_trace("surface-create-request", "driver=%llu format=0x%x %ux%u count=%u attribs=%u mem_type=0x%x external=%u", static_cast<unsigned long long>(driver_instance_id),
+        VKVV_TRACE("surface-create-request", "driver=%llu format=0x%x %ux%u count=%u attribs=%u mem_type=0x%x external=%u", static_cast<unsigned long long>(driver_instance_id),
                    format, width, height, num_surfaces, num_attribs, memory_type, has_external ? 1U : 0U);
 
         for (unsigned int i = 0; i < num_attribs; i++) {
             const VASurfaceAttrib&   attrib        = attrib_list[i];
             const unsigned long long pointer_value = attrib.value.type == VAGenericValueTypePointer ? reinterpret_cast<unsigned long long>(attrib.value.value.p) : 0ULL;
-            vkvv_trace("surface-create-attrib", "driver=%llu index=%u type=%u(%s) flags=0x%x value_type=%u(%s) int=%d ptr=0x%llx",
+            VKVV_TRACE("surface-create-attrib", "driver=%llu index=%u type=%u(%s) flags=0x%x value_type=%u(%s) int=%d ptr=0x%llx",
                        static_cast<unsigned long long>(driver_instance_id), i, static_cast<unsigned int>(attrib.type), surface_attrib_name(attrib.type), attrib.flags,
                        static_cast<unsigned int>(attrib.value.type), generic_value_type_name(attrib.value.type),
                        attrib.value.type == VAGenericValueTypeInteger ? attrib.value.value.i : 0, pointer_value);
@@ -234,13 +234,17 @@ void vkvv_surface_complete_work(VkvvSurface* surface, VAStatus status) {
 }
 
 bool vkvv_surface_has_pending_work(const VkvvSurface* surface) {
-    return surface != NULL && surface->work_state == VKVV_SURFACE_WORK_RENDERING;
+    return surface != NULL && !surface->destroying && surface->work_state == VKVV_SURFACE_WORK_RENDERING;
 }
 
 VAStatus vkvvCreateSurfaces2(VADriverContextP ctx, unsigned int format, unsigned int width, unsigned int height, VASurfaceID* surfaces, unsigned int num_surfaces,
                              VASurfaceAttrib* attrib_list, unsigned int num_attribs) {
     VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaCreateSurfaces", VA_INVALID_ID, VA_INVALID_SURFACE);
     trace_create_surface_attribs(drv != NULL ? drv->driver_instance_id : 0, format, width, height, num_surfaces, attrib_list, num_attribs);
+    if (drv == NULL) {
+        return VA_STATUS_ERROR_INVALID_CONTEXT;
+    }
     const unsigned int selected_format = vkvv_select_driver_rt_format(drv, format);
     if (selected_format == 0) {
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
@@ -263,6 +267,7 @@ VAStatus vkvvCreateSurfaces2(VADriverContextP ctx, unsigned int format, unsigned
         surface->sync_status        = VA_STATUS_SUCCESS;
         surfaces[i]                 = vkvv_object_add(drv, VKVV_OBJECT_SURFACE, surface);
         if (surfaces[i] == VA_INVALID_ID) {
+            vkvv_surface_import_close(&surface->import);
             delete surface;
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
@@ -270,13 +275,13 @@ VAStatus vkvvCreateSurfaces2(VADriverContextP ctx, unsigned int format, unsigned
         if (drv->vulkan != NULL) {
             vkvv_vulkan_note_surface_created(drv->vulkan, surface);
         }
-        vkvv_trace("surface-create",
+        VKVV_TRACE("surface-create",
                    "driver=%llu surface=%u stream=%llu codec=0x%x %ux%u fourcc=0x%x rt=0x%x role=0x%x import_mem=0x%x import_external=%u import_fd_stat=%u import_fd_dev=%llu "
-                   "import_fd_ino=%llu import_fourcc=0x%x import_size=%ux%u",
+                   "import_fd_ino=%llu import_fourcc=0x%x import_size=%ux%u import_modifier_valid=%u import_modifier=0x%llx",
                    (unsigned long long)surface->driver_instance_id, surfaces[i], (unsigned long long)surface->stream_id, surface->codec_operation, width, height, surface->fourcc,
                    surface->rt_format, surface->role_flags, surface->import.memory_type, surface->import.external ? 1U : 0U, surface->import.fd.valid ? 1U : 0U,
                    static_cast<unsigned long long>(surface->import.fd.dev), static_cast<unsigned long long>(surface->import.fd.ino), surface->import.fourcc, surface->import.width,
-                   surface->import.height);
+                   surface->import.height, surface->import.has_drm_format_modifier ? 1U : 0U, static_cast<unsigned long long>(surface->import.drm_format_modifier));
         vkvv_log("created surface %u: driver=%llu stream=%llu codec=0x%x %ux%u fourcc=0x%x rt=0x%x", surfaces[i], (unsigned long long)surface->driver_instance_id,
                  (unsigned long long)surface->stream_id, surface->codec_operation, width, height, surface->fourcc, surface->rt_format);
     }
@@ -290,26 +295,30 @@ VAStatus vkvvCreateSurfaces(VADriverContextP ctx, int width, int height, int for
 
 VAStatus vkvvDestroySurfaces(VADriverContextP ctx, VASurfaceID* surface_list, int num_surfaces) {
     VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaDestroySurfaces", VA_INVALID_ID, num_surfaces > 0 && surface_list != NULL ? surface_list[0] : VA_INVALID_SURFACE);
     for (int i = 0; i < num_surfaces; i++) {
         auto* surface = vkvv_surface_get_locked(drv, surface_list[i]);
         if (surface == NULL) {
             return VA_STATUS_ERROR_INVALID_SURFACE;
         }
         LockedSurface locked_surface(surface);
-        vkvv_trace("surface-destroy", "driver=%llu surface=%u stream=%llu codec=0x%x decoded=%u pending=%u destroying=%u", (unsigned long long)surface->driver_instance_id,
+        VKVV_TRACE("surface-destroy", "driver=%llu surface=%u stream=%llu codec=0x%x decoded=%u pending=%u destroying=%u", (unsigned long long)surface->driver_instance_id,
                    surface->id, (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U, vkvv_surface_has_pending_work(surface) ? 1U : 0U,
                    surface->destroying ? 1U : 0U);
-        surface->destroying = true;
         if (drv->vulkan != NULL) {
             if (vkvv_surface_has_pending_work(surface)) {
                 (void)complete_vulkan_surface_work(drv, surface, VA_TIMEOUT_INFINITE);
             }
-            vkvv_vulkan_surface_destroy(drv->vulkan, surface);
         }
         if (vkvv_surface_has_pending_work(surface)) {
             surface->work_state  = VKVV_SURFACE_WORK_READY;
             surface->sync_status = VA_STATUS_ERROR_OPERATION_FAILED;
         }
+        surface->destroying = true;
+        if (drv->vulkan != NULL) {
+            vkvv_vulkan_surface_destroy(drv->vulkan, surface);
+        }
+        vkvv_surface_import_close(&surface->import);
         locked_surface.unlock();
         surface = NULL;
         if (!vkvv_object_remove(drv, surface_list[i], VKVV_OBJECT_SURFACE)) {
@@ -320,8 +329,9 @@ VAStatus vkvvDestroySurfaces(VADriverContextP ctx, VASurfaceID* surface_list, in
 }
 
 VAStatus vkvvSyncSurface(VADriverContextP ctx, VASurfaceID render_target) {
-    VkvvDriver* drv     = vkvv_driver_from_ctx(ctx);
-    auto*       surface = vkvv_surface_get_locked(drv, render_target);
+    VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaSyncSurface", VA_INVALID_ID, render_target);
+    auto* surface = vkvv_surface_get_locked(drv, render_target);
     if (surface == NULL) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
@@ -330,8 +340,9 @@ VAStatus vkvvSyncSurface(VADriverContextP ctx, VASurfaceID render_target) {
 }
 
 VAStatus vkvvQuerySurfaceStatus(VADriverContextP ctx, VASurfaceID render_target, VASurfaceStatus* status) {
-    VkvvDriver* drv     = vkvv_driver_from_ctx(ctx);
-    auto*       surface = vkvv_surface_get_locked(drv, render_target);
+    VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaQuerySurfaceStatus", VA_INVALID_ID, render_target);
+    auto* surface = vkvv_surface_get_locked(drv, render_target);
     if (surface == NULL) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
@@ -351,8 +362,9 @@ VAStatus vkvvQuerySurfaceStatus(VADriverContextP ctx, VASurfaceID render_target,
 
 VAStatus vkvvQuerySurfaceError(VADriverContextP ctx, VASurfaceID render_target, VAStatus error_status, void** error_info) {
     (void)error_status;
-    VkvvDriver* drv     = vkvv_driver_from_ctx(ctx);
-    auto*       surface = vkvv_surface_get_locked(drv, render_target);
+    VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaQuerySurfaceError", VA_INVALID_ID, render_target);
+    auto* surface = vkvv_surface_get_locked(drv, render_target);
     if (surface == NULL) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
@@ -374,14 +386,27 @@ VAStatus vkvvQuerySurfaceAttributes(VADriverContextP ctx, VAConfigID config, VAS
     VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
     auto*       cfg = static_cast<VkvvConfig*>(vkvv_object_get(drv, config, VKVV_OBJECT_CONFIG));
     if (cfg == NULL) {
+        VKVV_TRACE_DEEP("surface-attrib-query", "driver=%llu config=%u status=%d", static_cast<unsigned long long>(drv != NULL ? drv->driver_instance_id : 0), config,
+                        VA_STATUS_ERROR_INVALID_CONFIG);
         return VA_STATUS_ERROR_INVALID_CONFIG;
     }
 
     if (attrib_list == NULL) {
         *num_attribs = surface_attribute_count;
+        VKVV_TRACE_DEEP("surface-attrib-query",
+                        "driver=%llu config=%u profile=%d entrypoint=%d status=%d count_only=1 count=%u min=%ux%u max=%ux%u fourcc=0x%x rt=0x%x memory=0x%x exportable=%u",
+                        static_cast<unsigned long long>(drv != NULL ? drv->driver_instance_id : 0), config, cfg->profile, cfg->entrypoint, VA_STATUS_SUCCESS, *num_attribs,
+                        cfg->min_width, cfg->min_height, cfg->max_width, cfg->max_height, cfg->fourcc, cfg->rt_format,
+                        VA_SURFACE_ATTRIB_MEM_TYPE_VA | (cfg->exportable ? VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2 : 0), cfg->exportable ? 1U : 0U);
         return VA_STATUS_SUCCESS;
     }
     if (*num_attribs < surface_attribute_count) {
+        VKVV_TRACE_DEEP("surface-attrib-query",
+                        "driver=%llu config=%u profile=%d entrypoint=%d status=%d count_only=0 requested_count=%u required_count=%u min=%ux%u max=%ux%u fourcc=0x%x rt=0x%x "
+                        "memory=0x%x exportable=%u",
+                        static_cast<unsigned long long>(drv != NULL ? drv->driver_instance_id : 0), config, cfg->profile, cfg->entrypoint, VA_STATUS_ERROR_MAX_NUM_EXCEEDED,
+                        *num_attribs, surface_attribute_count, cfg->min_width, cfg->min_height, cfg->max_width, cfg->max_height, cfg->fourcc, cfg->rt_format,
+                        VA_SURFACE_ATTRIB_MEM_TYPE_VA | (cfg->exportable ? VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2 : 0), cfg->exportable ? 1U : 0U);
         return VA_STATUS_ERROR_MAX_NUM_EXCEEDED;
     }
 
@@ -399,12 +424,20 @@ VAStatus vkvvQuerySurfaceAttributes(VADriverContextP ctx, VAConfigID config, VAS
     attrib_list[6].value.type    = VAGenericValueTypePointer;
     attrib_list[6].value.value.p = NULL;
     *num_attribs                 = surface_attribute_count;
+    VKVV_TRACE_DEEP("surface-attrib-query",
+                    "driver=%llu config=%u profile=%d entrypoint=%d status=%d count_only=0 count=%u min=%ux%u max=%ux%u fourcc=0x%x rt=0x%x memory=0x%x exportable=%u",
+                    static_cast<unsigned long long>(drv != NULL ? drv->driver_instance_id : 0), config, cfg->profile, cfg->entrypoint, VA_STATUS_SUCCESS, *num_attribs,
+                    cfg->min_width, cfg->min_height, cfg->max_width, cfg->max_height, cfg->fourcc, cfg->rt_format,
+                    VA_SURFACE_ATTRIB_MEM_TYPE_VA | (cfg->exportable ? VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2 : 0), cfg->exportable ? 1U : 0U);
     return VA_STATUS_SUCCESS;
 }
 
 VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, uint32_t mem_type, uint32_t flags, void* descriptor) {
     VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaExportSurfaceHandle", VA_INVALID_ID, surface_id);
     if ((mem_type & VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2) == 0) {
+        VKVV_TRACE("va-export-unsupported-memory", "driver=%llu surface=%u mem_type=0x%x flags=0x%x", (unsigned long long)(drv != NULL ? drv->driver_instance_id : 0), surface_id,
+                   mem_type, flags);
         return VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE;
     }
     VkvvLockGuard driver_state_lock(&drv->state_mutex);
@@ -417,8 +450,9 @@ VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, u
     if (surface->destroying) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
-    vkvv_trace("va-export-enter", "driver=%llu surface=%u active_stream=%llu active_codec=0x%x surface_stream=%llu surface_codec=0x%x decoded=%u pending=%u",
-               (unsigned long long)drv->driver_instance_id, surface->id, (unsigned long long)drv->active_decode_stream_id, drv->active_decode_codec_operation,
+    VKVV_TRACE("va-export-enter",
+               "driver=%llu surface=%u mem_type=0x%x flags=0x%x active_stream=%llu active_codec=0x%x surface_stream=%llu surface_codec=0x%x decoded=%u pending=%u",
+               (unsigned long long)drv->driver_instance_id, surface->id, mem_type, flags, (unsigned long long)drv->active_decode_stream_id, drv->active_decode_codec_operation,
                (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U, vkvv_surface_has_pending_work(surface) ? 1U : 0U);
     const bool applied_active_domain = vkvv_driver_apply_active_decode_domain_locked(drv, surface);
     if (applied_active_domain) {
@@ -426,11 +460,11 @@ VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, u
                  (unsigned long long)surface->driver_instance_id, (unsigned long long)surface->stream_id, surface->codec_operation, surface->width, surface->height,
                  surface->fourcc, surface->rt_format);
     }
-    vkvv_trace("va-export-domain", "driver=%llu surface=%u applied=%u stream=%llu codec=0x%x decoded=%u", (unsigned long long)drv->driver_instance_id, surface->id,
+    VKVV_TRACE("va-export-domain", "driver=%llu surface=%u applied=%u stream=%llu codec=0x%x decoded=%u", (unsigned long long)drv->driver_instance_id, surface->id,
                applied_active_domain ? 1U : 0U, (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U);
     if (vkvv_surface_has_pending_work(surface)) {
-        vkvv_trace("va-export-drain", "driver=%llu surface=%u stream=%llu codec=0x%x", (unsigned long long)drv->driver_instance_id, surface->id,
-                   (unsigned long long)surface->stream_id, surface->codec_operation);
+        VKVV_TRACE("va-export-drain", "driver=%llu surface=%u mem_type=0x%x flags=0x%x stream=%llu codec=0x%x", (unsigned long long)drv->driver_instance_id, surface->id, mem_type,
+                   flags, (unsigned long long)surface->stream_id, surface->codec_operation);
         VAStatus status = complete_vulkan_surface_work(drv, surface, VA_TIMEOUT_INFINITE);
         if (status != VA_STATUS_SUCCESS) {
             return status;
@@ -457,14 +491,15 @@ VAStatus vkvvExportSurfaceHandle(VADriverContextP ctx, VASurfaceID surface_id, u
 
     status = vkvv_vulkan_export_surface(drv->vulkan, surface, flags, static_cast<VADRMPRIMESurfaceDescriptor*>(descriptor), reason, sizeof(reason));
     vkvv_log("%s", reason);
-    vkvv_trace("va-export-return", "driver=%llu surface=%u status=%d stream=%llu codec=0x%x decoded=%u", (unsigned long long)drv->driver_instance_id, surface->id, status,
-               (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U);
+    VKVV_TRACE("va-export-return", "driver=%llu surface=%u status=%d mem_type=0x%x flags=0x%x stream=%llu codec=0x%x decoded=%u", (unsigned long long)drv->driver_instance_id,
+               surface->id, status, mem_type, flags, (unsigned long long)surface->stream_id, surface->codec_operation, surface->decoded ? 1U : 0U);
     return status;
 }
 
 VAStatus vkvvSyncSurface2(VADriverContextP ctx, VASurfaceID surface, uint64_t timeout_ns) {
-    VkvvDriver* drv    = vkvv_driver_from_ctx(ctx);
-    auto*       target = vkvv_surface_get_locked(drv, surface);
+    VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
+    vkvv_trace_va_call_gap(drv, "vaSyncSurface2", VA_INVALID_ID, surface);
+    auto* target = vkvv_surface_get_locked(drv, surface);
     if (target == NULL) {
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }

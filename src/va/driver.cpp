@@ -3,7 +3,6 @@
 #include "vulkan/runtime.h"
 
 #include <atomic>
-#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -33,19 +32,6 @@ namespace {
     }
 
 } // namespace
-
-void vkvv_log(const char* fmt, ...) {
-    if (!vkvv_log_enabled()) {
-        return;
-    }
-
-    va_list args;
-    va_start(args, fmt);
-    std::fprintf(stderr, "nvidia-vulkan-vaapi: ");
-    std::vfprintf(stderr, fmt, args);
-    std::fprintf(stderr, "\n");
-    va_end(args);
-}
 
 void* vkvv_get_or_create_vulkan_runtime(char* reason, size_t reason_size) {
     std::lock_guard<std::mutex> lock(global_runtime_mutex);
@@ -87,7 +73,6 @@ static VAStatus vkvvTerminate(VADriverContextP ctx) {
     VkvvDriver* drv = vkvv_driver_from_ctx(ctx);
     if (drv != NULL) {
         release_owned_payloads(drv);
-        vkvv_vulkan_flush_perf_summary(drv->vulkan);
         vkvv_object_clear(drv);
         delete drv;
         ctx->pDriverData = NULL;
@@ -95,14 +80,21 @@ static VAStatus vkvvTerminate(VADriverContextP ctx) {
     return VA_STATUS_SUCCESS;
 }
 
-template <typename Ret, typename... Args>
+enum class UnsupportedVADomain {
+    DecodeSurfaceInterop,
+    Encode,
+    VideoProc,
+    Legacy,
+};
+
+template <UnsupportedVADomain Domain, typename Ret, typename... Args>
 static Ret unsupported_callback_impl(Args...) {
     return static_cast<Ret>(VA_STATUS_ERROR_UNIMPLEMENTED);
 }
 
-template <typename Ret, typename... Args>
+template <UnsupportedVADomain Domain, typename Ret, typename... Args>
 static Ret (*unsupported_callback(Ret (*)(Args...)))(Args...) {
-    return unsupported_callback_impl<Ret, Args...>;
+    return unsupported_callback_impl<Domain, Ret, Args...>;
 }
 
 static struct VADriverVTable make_vtable(void) {
@@ -129,42 +121,42 @@ static struct VADriverVTable make_vtable(void) {
     vt.vaSyncSurface              = vkvvSyncSurface;
     vt.vaQuerySurfaceStatus       = vkvvQuerySurfaceStatus;
     vt.vaQuerySurfaceError        = vkvvQuerySurfaceError;
-    vt.vaPutSurface               = unsupported_callback(vt.vaPutSurface);
+    vt.vaPutSurface               = unsupported_callback<UnsupportedVADomain::DecodeSurfaceInterop>(vt.vaPutSurface);
     vt.vaQueryImageFormats        = vkvvQueryImageFormats;
-    vt.vaCreateImage              = unsupported_callback(vt.vaCreateImage);
-    vt.vaDeriveImage              = unsupported_callback(vt.vaDeriveImage);
-    vt.vaDestroyImage             = unsupported_callback(vt.vaDestroyImage);
-    vt.vaSetImagePalette          = unsupported_callback(vt.vaSetImagePalette);
-    vt.vaGetImage                 = unsupported_callback(vt.vaGetImage);
-    vt.vaPutImage                 = unsupported_callback(vt.vaPutImage);
-    vt.vaQuerySubpictureFormats   = unsupported_callback(vt.vaQuerySubpictureFormats);
-    vt.vaCreateSubpicture         = unsupported_callback(vt.vaCreateSubpicture);
-    vt.vaDestroySubpicture        = unsupported_callback(vt.vaDestroySubpicture);
-    vt.vaSetSubpictureImage       = unsupported_callback(vt.vaSetSubpictureImage);
-    vt.vaSetSubpictureChromakey   = unsupported_callback(vt.vaSetSubpictureChromakey);
-    vt.vaSetSubpictureGlobalAlpha = unsupported_callback(vt.vaSetSubpictureGlobalAlpha);
-    vt.vaAssociateSubpicture      = unsupported_callback(vt.vaAssociateSubpicture);
-    vt.vaDeassociateSubpicture    = unsupported_callback(vt.vaDeassociateSubpicture);
-    vt.vaQueryDisplayAttributes   = unsupported_callback(vt.vaQueryDisplayAttributes);
-    vt.vaGetDisplayAttributes     = unsupported_callback(vt.vaGetDisplayAttributes);
-    vt.vaSetDisplayAttributes     = unsupported_callback(vt.vaSetDisplayAttributes);
+    vt.vaCreateImage              = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaCreateImage);
+    vt.vaDeriveImage              = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaDeriveImage);
+    vt.vaDestroyImage             = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaDestroyImage);
+    vt.vaSetImagePalette          = unsupported_callback<UnsupportedVADomain::Legacy>(vt.vaSetImagePalette);
+    vt.vaGetImage                 = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaGetImage);
+    vt.vaPutImage                 = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaPutImage);
+    vt.vaQuerySubpictureFormats   = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaQuerySubpictureFormats);
+    vt.vaCreateSubpicture         = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaCreateSubpicture);
+    vt.vaDestroySubpicture        = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaDestroySubpicture);
+    vt.vaSetSubpictureImage       = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaSetSubpictureImage);
+    vt.vaSetSubpictureChromakey   = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaSetSubpictureChromakey);
+    vt.vaSetSubpictureGlobalAlpha = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaSetSubpictureGlobalAlpha);
+    vt.vaAssociateSubpicture      = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaAssociateSubpicture);
+    vt.vaDeassociateSubpicture    = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaDeassociateSubpicture);
+    vt.vaQueryDisplayAttributes   = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaQueryDisplayAttributes);
+    vt.vaGetDisplayAttributes     = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaGetDisplayAttributes);
+    vt.vaSetDisplayAttributes     = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaSetDisplayAttributes);
     vt.vaBufferInfo               = vkvvBufferInfo;
-    vt.vaLockSurface              = unsupported_callback(vt.vaLockSurface);
-    vt.vaUnlockSurface            = unsupported_callback(vt.vaUnlockSurface);
+    vt.vaLockSurface              = unsupported_callback<UnsupportedVADomain::DecodeSurfaceInterop>(vt.vaLockSurface);
+    vt.vaUnlockSurface            = unsupported_callback<UnsupportedVADomain::DecodeSurfaceInterop>(vt.vaUnlockSurface);
     vt.vaCreateSurfaces2          = vkvvCreateSurfaces2;
     vt.vaQuerySurfaceAttributes   = vkvvQuerySurfaceAttributes;
-    vt.vaAcquireBufferHandle      = unsupported_callback(vt.vaAcquireBufferHandle);
-    vt.vaReleaseBufferHandle      = unsupported_callback(vt.vaReleaseBufferHandle);
-    vt.vaCreateMFContext          = unsupported_callback(vt.vaCreateMFContext);
-    vt.vaMFAddContext             = unsupported_callback(vt.vaMFAddContext);
-    vt.vaMFReleaseContext         = unsupported_callback(vt.vaMFReleaseContext);
-    vt.vaMFSubmit                 = unsupported_callback(vt.vaMFSubmit);
-    vt.vaCreateBuffer2            = unsupported_callback(vt.vaCreateBuffer2);
-    vt.vaQueryProcessingRate      = unsupported_callback(vt.vaQueryProcessingRate);
+    vt.vaAcquireBufferHandle      = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaAcquireBufferHandle);
+    vt.vaReleaseBufferHandle      = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaReleaseBufferHandle);
+    vt.vaCreateMFContext          = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaCreateMFContext);
+    vt.vaMFAddContext             = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaMFAddContext);
+    vt.vaMFReleaseContext         = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaMFReleaseContext);
+    vt.vaMFSubmit                 = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaMFSubmit);
+    vt.vaCreateBuffer2            = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaCreateBuffer2);
+    vt.vaQueryProcessingRate      = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaQueryProcessingRate);
     vt.vaExportSurfaceHandle      = vkvvExportSurfaceHandle;
     vt.vaSyncSurface2             = vkvvSyncSurface2;
-    vt.vaSyncBuffer               = unsupported_callback(vt.vaSyncBuffer);
-    vt.vaCopy                     = unsupported_callback(vt.vaCopy);
+    vt.vaSyncBuffer               = unsupported_callback<UnsupportedVADomain::Encode>(vt.vaSyncBuffer);
+    vt.vaCopy                     = unsupported_callback<UnsupportedVADomain::VideoProc>(vt.vaCopy);
     vt.vaMapBuffer2               = vkvvMapBuffer2;
     return vt;
 }
@@ -218,7 +210,7 @@ static VAStatus              vkvvDriverInit(VADriverContextP ctx) {
     ctx->max_image_formats      = VKVV_MAX_IMAGE_FORMATS;
     ctx->max_subpic_formats     = VKVV_MAX_SUBPIC_FORMATS;
     ctx->max_display_attributes = VKVV_MAX_DISPLAY_ATTRIBUTES;
-    ctx->str_vendor             = "NVIDIA Vulkan Video VA-API prototype " VKVV_VERSION;
+    ctx->str_vendor             = "NVIDIA Vulkan Video VA-API driver " VKVV_VERSION;
 
     vkvv_log("%s", drv->caps.summary);
     return VA_STATUS_SUCCESS;

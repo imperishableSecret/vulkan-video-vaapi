@@ -59,6 +59,7 @@ void     vkvv_release_context_payload(VkvvDriver* drv, VkvvContext* vctx);
 void     vkvv_surface_begin_work(VkvvSurface* surface);
 void     vkvv_surface_complete_work(VkvvSurface* surface, VAStatus status);
 bool     vkvv_surface_has_pending_work(const VkvvSurface* surface);
+void     vkvv_trace_va_call_gap(VkvvDriver* drv, const char* call, VAContextID context, VASurfaceID surface);
 void     vkvv_driver_note_decode_domain_locked(VkvvDriver* drv, const VkvvContext* vctx, const VkvvSurface* surface);
 void     vkvv_driver_note_decode_domain(VkvvDriver* drv, const VkvvContext* vctx, const VkvvSurface* surface);
 bool     vkvv_driver_apply_active_decode_domain(VkvvDriver* drv, VkvvSurface* surface);

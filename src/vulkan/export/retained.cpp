@@ -1,4 +1,5 @@
 #include "vulkan/runtime_internal.h"
+#include "va/surface_import.h"
 
 #include <algorithm>
 #include <mutex>
@@ -29,26 +30,56 @@ namespace vkvv {
         return identity;
     }
 
-    RetainedExportMatch retained_export_match_import(const RetainedExportBacking& backing, const VkvvExternalSurfaceImport& import, unsigned int va_fourcc, VkFormat format,
-                                                     VkExtent2D coded_extent) {
+    VkvvExternalImageIdentity retained_export_image_identity(const ExportResource& resource) {
+        VkvvExternalImageIdentity identity{};
+        identity.fd                      = retained_export_fd_identity(resource);
+        identity.fourcc                  = resource.va_fourcc;
+        identity.width                   = resource.extent.width;
+        identity.height                  = resource.extent.height;
+        identity.has_drm_format_modifier = resource.has_drm_format_modifier;
+        identity.drm_format_modifier     = resource.drm_format_modifier;
+        return identity;
+    }
+
+    RetainedExportMatch retained_export_match_import(const RetainedExportBacking& backing, const VkvvExternalSurfaceImport& import, uint64_t driver_instance_id, uint64_t stream_id,
+                                                     VkVideoCodecOperationFlagsKHR codec_operation, unsigned int va_fourcc, VkFormat format, VkExtent2D coded_extent) {
         if (!import.external) {
             return RetainedExportMatch::MissingImport;
         }
-        if (!import.fd.valid || !backing.fd.valid) {
+        const ExportResource&           resource     = backing.resource;
+        const VkvvExternalImageIdentity import_key   = vkvv_external_image_identity_from_import(import);
+        const VkvvExternalImageIdentity retained_key = retained_export_image_identity(resource);
+
+        if (!export_resource_has_valid_retained_presentation(&resource)) {
+            return RetainedExportMatch::RoleMismatch;
+        }
+        if (!import_key.fd.valid || !retained_key.fd.valid) {
             return RetainedExportMatch::MissingFd;
         }
-        if (backing.fd.dev != import.fd.dev || backing.fd.ino != import.fd.ino) {
+        if (!vkvv_fd_identity_equal(retained_key.fd, import_key.fd)) {
             return RetainedExportMatch::FdMismatch;
         }
 
-        const ExportResource& resource = backing.resource;
-        if (resource.va_fourcc != va_fourcc) {
+        if (resource.driver_instance_id != driver_instance_id) {
+            return RetainedExportMatch::DriverMismatch;
+        }
+        if (resource.stream_id != stream_id) {
+            return RetainedExportMatch::StreamMismatch;
+        }
+        if (resource.codec_operation != codec_operation) {
+            return RetainedExportMatch::CodecMismatch;
+        }
+        if ((import_key.fourcc != 0 && import_key.fourcc != va_fourcc) || retained_key.fourcc != va_fourcc) {
             return RetainedExportMatch::FourccMismatch;
+        }
+        if (retained_key.has_drm_format_modifier != import_key.has_drm_format_modifier ||
+            (retained_key.has_drm_format_modifier && retained_key.drm_format_modifier != import_key.drm_format_modifier)) {
+            return RetainedExportMatch::ModifierMismatch;
         }
         if (resource.format != format) {
             return RetainedExportMatch::FormatMismatch;
         }
-        if (resource.extent.width < coded_extent.width || resource.extent.height < coded_extent.height) {
+        if (retained_key.width < coded_extent.width || retained_key.height < coded_extent.height) {
             return RetainedExportMatch::ExtentMismatch;
         }
         return RetainedExportMatch::Match;
@@ -60,15 +91,20 @@ namespace vkvv {
             case RetainedExportMatch::MissingImport: return "missing-import";
             case RetainedExportMatch::MissingFd: return "missing-fd";
             case RetainedExportMatch::FdMismatch: return "fd-mismatch";
+            case RetainedExportMatch::DriverMismatch: return "driver-mismatch";
+            case RetainedExportMatch::StreamMismatch: return "stream-mismatch";
+            case RetainedExportMatch::CodecMismatch: return "codec-mismatch";
             case RetainedExportMatch::FourccMismatch: return "fourcc-mismatch";
+            case RetainedExportMatch::ModifierMismatch: return "modifier-mismatch";
             case RetainedExportMatch::FormatMismatch: return "format-mismatch";
             case RetainedExportMatch::ExtentMismatch: return "extent-mismatch";
+            case RetainedExportMatch::RoleMismatch: return "role-mismatch";
         }
         return "unknown";
     }
 
     bool retained_export_matches_window(const ExportResource& resource, const TransitionRetentionWindow& window) {
-        return window.active && resource.driver_instance_id == window.driver_instance_id && resource.stream_id == window.stream_id &&
+        return window.active && !resource.private_nondisplay_shadow && resource.driver_instance_id == window.driver_instance_id && resource.stream_id == window.stream_id &&
             resource.codec_operation == window.codec_operation && resource.format == window.format && resource.va_fourcc == window.va_fourcc &&
             resource.extent.width == window.coded_extent.width && resource.extent.height == window.coded_extent.height;
     }

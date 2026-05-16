@@ -105,7 +105,7 @@ unsigned int vkvv_select_driver_rt_format(const VkvvDriver* drv, unsigned int re
     }
 
     for (unsigned int i = 0; i < drv->profile_cap_count; i++) {
-        if (!drv->profile_caps[i].advertise) {
+        if (vkvv_profile_capability_stage(&drv->profile_caps[i]) != VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED) {
             continue;
         }
         const unsigned int selected = vkvv_select_rt_format(&drv->profile_caps[i], requested);
@@ -124,12 +124,13 @@ unsigned int vkvv_query_image_formats(const VkvvDriver* drv, VAImageFormat* form
     unsigned int count = 0;
     for (unsigned int i = 0; i < drv->profile_cap_count && count < max_formats; i++) {
         const VkvvProfileCapability* cap = &drv->profile_caps[i];
-        if (cap->direction != VKVV_CODEC_DIRECTION_DECODE) {
+        if (cap->direction != VKVV_CODEC_DIRECTION_DECODE || vkvv_profile_capability_stage(cap) != VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED) {
             continue;
         }
-        for (unsigned int j = 0; j < cap->format_count && count < max_formats; j++) {
+        const unsigned int format_count = cap->format_count < VKVV_MAX_FORMAT_VARIANTS ? cap->format_count : VKVV_MAX_FORMAT_VARIANTS;
+        for (unsigned int j = 0; j < format_count && count < max_formats; j++) {
             const VkvvFormatVariant* format = &cap->formats[j];
-            if (!format->hardware_supported || !format->export_wired) {
+            if (!format->advertise || !format->export_wired) {
                 continue;
             }
             if (!image_format_seen(format_list, count, format->fourcc)) {

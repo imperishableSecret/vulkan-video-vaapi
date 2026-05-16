@@ -66,7 +66,7 @@ namespace {
         const unsigned int type     = buffer != nullptr ? static_cast<unsigned int>(buffer->type) : 0U;
         const unsigned int size     = buffer != nullptr ? buffer->size : 0U;
         const unsigned int elements = buffer != nullptr ? buffer->num_elements : 0U;
-        vkvv_trace("hevc-render-reject", "reason=%s type=%u size=%u elements=%u has_pic=%u has_iq=%u has_slice_params=%u has_slice_data=%u slices=%u bitstream=%zu",
+        VKVV_TRACE("hevc-render-reject", "reason=%s type=%u size=%u elements=%u has_pic=%u has_iq=%u has_slice_params=%u has_slice_data=%u slices=%u bitstream=%zu",
                    reason != nullptr ? reason : "unknown", type, size, elements, hevc != nullptr && hevc->has_pic ? 1U : 0U, hevc != nullptr && hevc->has_iq ? 1U : 0U,
                    hevc != nullptr && hevc->has_slice_params ? 1U : 0U, hevc != nullptr && hevc->has_slice_data ? 1U : 0U, hevc != nullptr ? hevc->slice_count : 0U,
                    hevc != nullptr ? hevc->bitstream.size() : 0U);
@@ -207,39 +207,39 @@ VAStatus vkvv_hevc_render_buffer(void* state, const VkvvBuffer* buffer) {
 VAStatus vkvv_hevc_prepare_decode(void* state, unsigned int* width, unsigned int* height, char* reason, size_t reason_size) {
     auto* hevc = static_cast<HEVCState*>(state);
     if (hevc == nullptr) {
-        std::snprintf(reason, reason_size, "missing HEVC state");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_CONTEXT, "missing HEVC state");
         return VA_STATUS_ERROR_INVALID_CONTEXT;
     }
     if (!hevc->has_pic) {
-        std::snprintf(reason, reason_size, "missing HEVC picture parameters");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing HEVC picture parameters");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (!hevc->has_slice_params) {
-        std::snprintf(reason, reason_size, "missing HEVC slice parameters");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing HEVC slice parameters");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (!hevc->has_slice_data) {
-        std::snprintf(reason, reason_size, "missing HEVC slice data");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "missing HEVC slice data");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (hevc->pic.pic_width_in_luma_samples == 0 || hevc->pic.pic_height_in_luma_samples == 0) {
-        std::snprintf(reason, reason_size, "HEVC picture has empty dimensions");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_INVALID_BUFFER, "HEVC picture has empty dimensions");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if (!hevc_supported_bit_depth_minus8(hevc->pic.bit_depth_luma_minus8, hevc->pic.bit_depth_chroma_minus8)) {
-        std::snprintf(reason, reason_size, "HEVC path currently supports only Main 8-bit and Main10 10-bit 4:2:0 decode");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_PROFILE, "HEVC path currently supports only Main 8-bit and Main10 10-bit 4:2:0 decode");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
     if (hevc->pic.pic_fields.bits.chroma_format_idc != 1) {
-        std::snprintf(reason, reason_size, "HEVC path currently supports only 4:2:0");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT, "HEVC path currently supports only 4:2:0");
         return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
     if ((hevc->pic.CurrPic.flags & VA_PICTURE_HEVC_FIELD_PIC) != 0) {
-        std::snprintf(reason, reason_size, "HEVC field pictures are not supported yet");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_PROFILE, "HEVC field pictures are not supported yet");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
     if (hevc->has_picture_ext || hevc->has_slice_ext) {
-        std::snprintf(reason, reason_size, "HEVC range-extension/SCC buffers are not supported yet");
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_UNSUPPORTED_PROFILE, "HEVC range-extension/SCC buffers are not supported yet");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
 
@@ -247,19 +247,20 @@ VAStatus vkvv_hevc_prepare_decode(void* state, unsigned int* width, unsigned int
     *height                                       = hevc->pic.pic_height_in_luma_samples;
     const VASliceParameterBufferHEVC* first_slice = hevc->slices.empty() ? nullptr : &hevc->slices.front();
     const unsigned int                bit_depth   = static_cast<unsigned int>(hevc->pic.bit_depth_luma_minus8) + 8U;
-    std::snprintf(reason, reason_size,
-                  "captured HEVC picture: %ux%u depth=%u slices=%zu bytes=%zu refs=%u iq=%u st_rps_bits=%u scaling=%u tiles=%u entropy_sync=%u weighted=%u/%u "
-                  "lists_mod=%u range_pic_ext=%u range_slice_ext=%u slice_type=%u dep=%u saddr=%u slice_hdr_bytes=%u slice_data=%u+%u nal=%02x:%02x "
-                  "refidx=%u/%u wdenom=%u/%d",
-                  *width, *height, bit_depth, hevc->slice_offsets.size(), hevc->bitstream.size(), hevc->reference_count, hevc->has_iq ? 1U : 0U, hevc->pic.st_rps_bits,
-                  hevc->pic.pic_fields.bits.scaling_list_enabled_flag, hevc->pic.pic_fields.bits.tiles_enabled_flag, hevc->pic.pic_fields.bits.entropy_coding_sync_enabled_flag,
-                  hevc->pic.pic_fields.bits.weighted_pred_flag, hevc->pic.pic_fields.bits.weighted_bipred_flag, hevc->pic.slice_parsing_fields.bits.lists_modification_present_flag,
-                  hevc->has_picture_ext ? 1U : 0U, hevc->has_slice_ext ? 1U : 0U, first_slice != nullptr ? first_slice->LongSliceFlags.fields.slice_type : 0U,
-                  first_slice != nullptr ? first_slice->LongSliceFlags.fields.dependent_slice_segment_flag : 0U, first_slice != nullptr ? first_slice->slice_segment_address : 0U,
-                  hevc->first_slice_data_byte_offset, hevc->first_slice_data_offset, hevc->first_slice_data_size, hevc->has_first_slice_nal ? hevc->first_slice_nal0 : 0U,
-                  hevc->has_first_slice_nal ? hevc->first_slice_nal1 : 0U, first_slice != nullptr ? first_slice->num_ref_idx_l0_active_minus1 : 0U,
-                  first_slice != nullptr ? first_slice->num_ref_idx_l1_active_minus1 : 0U, first_slice != nullptr ? first_slice->luma_log2_weight_denom : 0U,
-                  first_slice != nullptr ? first_slice->delta_chroma_log2_weight_denom : 0);
+    VKVV_SUCCESS_REASON(reason, reason_size,
+                        "captured HEVC picture: %ux%u depth=%u slices=%zu bytes=%zu refs=%u iq=%u st_rps_bits=%u scaling=%u tiles=%u entropy_sync=%u weighted=%u/%u "
+                        "lists_mod=%u range_pic_ext=%u range_slice_ext=%u slice_type=%u dep=%u saddr=%u slice_hdr_bytes=%u slice_data=%u+%u nal=%02x:%02x "
+                        "refidx=%u/%u wdenom=%u/%d",
+                        *width, *height, bit_depth, hevc->slice_offsets.size(), hevc->bitstream.size(), hevc->reference_count, hevc->has_iq ? 1U : 0U, hevc->pic.st_rps_bits,
+                        hevc->pic.pic_fields.bits.scaling_list_enabled_flag, hevc->pic.pic_fields.bits.tiles_enabled_flag,
+                        hevc->pic.pic_fields.bits.entropy_coding_sync_enabled_flag, hevc->pic.pic_fields.bits.weighted_pred_flag, hevc->pic.pic_fields.bits.weighted_bipred_flag,
+                        hevc->pic.slice_parsing_fields.bits.lists_modification_present_flag, hevc->has_picture_ext ? 1U : 0U, hevc->has_slice_ext ? 1U : 0U,
+                        first_slice != nullptr ? first_slice->LongSliceFlags.fields.slice_type : 0U,
+                        first_slice != nullptr ? first_slice->LongSliceFlags.fields.dependent_slice_segment_flag : 0U,
+                        first_slice != nullptr ? first_slice->slice_segment_address : 0U, hevc->first_slice_data_byte_offset, hevc->first_slice_data_offset,
+                        hevc->first_slice_data_size, hevc->has_first_slice_nal ? hevc->first_slice_nal0 : 0U, hevc->has_first_slice_nal ? hevc->first_slice_nal1 : 0U,
+                        first_slice != nullptr ? first_slice->num_ref_idx_l0_active_minus1 : 0U, first_slice != nullptr ? first_slice->num_ref_idx_l1_active_minus1 : 0U,
+                        first_slice != nullptr ? first_slice->luma_log2_weight_denom : 0U, first_slice != nullptr ? first_slice->delta_chroma_log2_weight_denom : 0);
     return VA_STATUS_SUCCESS;
 }
 

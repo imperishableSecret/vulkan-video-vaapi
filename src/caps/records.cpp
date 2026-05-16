@@ -1,5 +1,7 @@
 #include "va/private.h"
+#include "codecs/av1/av1.h"
 
+#include <cstdio>
 #include <va/va_dec_av1.h>
 #include <vulkan/vulkan.h>
 
@@ -106,11 +108,31 @@ namespace {
         add_format_variant(cap, rt_format, format_supported, surface_wired);
     }
 
+    bool av1_limits_safe(VkvvVideoProfileLimits limits) {
+        return limits.max_dpb_slots >= VKVV_AV1_MIN_DPB_SLOTS && limits.max_active_references >= VKVV_AV1_MIN_ACTIVE_REFERENCES;
+    }
+
+    VkvvVideoProfileLimits av1_profile0_limits(const VkvvDriver* drv) {
+        if (drv == NULL) {
+            return {};
+        }
+        if (drv->caps.av1 && av1_limits_safe(drv->caps.av1_limits)) {
+            return drv->caps.av1_limits;
+        }
+        if (drv->caps.av1_10 && av1_limits_safe(drv->caps.av1_10_limits)) {
+            return drv->caps.av1_10_limits;
+        }
+        return drv->caps.av1_limits;
+    }
+
     void add_av1_profile0(VkvvDriver* drv) {
-        VkvvProfileCapability* cap = add_profile_record(drv, VAProfileAV1Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE, VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR,
-                                                        VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME, drv->caps.av1_limits, drv->caps.av1 || drv->caps.av1_10, true, true);
-        add_format_variant(cap, VA_RT_FORMAT_YUV420, drv->caps.av1, drv->caps.surface_export_nv12);
-        add_format_variant(cap, VA_RT_FORMAT_YUV420_10, drv->caps.av1_10, drv->caps.surface_export_p010);
+        const bool                   av1_8_safe  = drv->caps.av1 && av1_limits_safe(drv->caps.av1_limits);
+        const bool                   av1_10_safe = drv->caps.av1_10 && av1_limits_safe(drv->caps.av1_10_limits);
+        const VkvvVideoProfileLimits limits      = av1_profile0_limits(drv);
+        VkvvProfileCapability*       cap = add_profile_record(drv, VAProfileAV1Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE, VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR,
+                                                              VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME, limits, av1_8_safe || av1_10_safe, true, true);
+        add_format_variant(cap, VA_RT_FORMAT_YUV420, av1_8_safe, drv->caps.surface_export_nv12);
+        add_format_variant(cap, VA_RT_FORMAT_YUV420_10, av1_10_safe, drv->caps.surface_export_p010);
     }
 
     void add_vp9_profile2(VkvvDriver* drv) {
@@ -168,7 +190,7 @@ const VkvvProfileCapability* vkvv_profile_capability(const VkvvDriver* drv, VAPr
         return NULL;
     }
     for (unsigned int i = 0; i < drv->profile_cap_count; i++) {
-        if (drv->profile_caps[i].advertise && drv->profile_caps[i].profile == profile) {
+        if (vkvv_profile_capability_stage(&drv->profile_caps[i]) == VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED && drv->profile_caps[i].profile == profile) {
             return &drv->profile_caps[i];
         }
     }
@@ -181,11 +203,32 @@ const VkvvProfileCapability* vkvv_profile_capability_for_entrypoint(const VkvvDr
     }
     for (unsigned int i = 0; i < drv->profile_cap_count; i++) {
         const VkvvProfileCapability* cap = &drv->profile_caps[i];
-        if (cap->advertise && cap->profile == profile && cap->entrypoint == entrypoint) {
+        if (vkvv_profile_capability_stage(cap) == VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED && cap->profile == profile && cap->entrypoint == entrypoint) {
             return cap;
         }
     }
     return NULL;
+}
+
+VAStatus vkvv_profile_entrypoint_status(const VkvvDriver* drv, VAProfile profile, VAEntrypoint entrypoint) {
+    if (!vkvv_profile_supported(drv, profile)) {
+        return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
+    }
+    if (vkvv_profile_capability_for_entrypoint(drv, profile, entrypoint) == NULL) {
+        return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
+    }
+    return VA_STATUS_SUCCESS;
+}
+
+const VkvvProfileCapability* vkvv_profile_capability_for_config(const VkvvDriver* drv, VAProfile profile, VAEntrypoint entrypoint, VAStatus* status) {
+    const VAStatus profile_status = vkvv_profile_entrypoint_status(drv, profile, entrypoint);
+    if (status != NULL) {
+        *status = profile_status;
+    }
+    if (profile_status != VA_STATUS_SUCCESS) {
+        return NULL;
+    }
+    return vkvv_profile_capability_for_entrypoint(drv, profile, entrypoint);
 }
 
 const VkvvProfileCapability* vkvv_profile_capability_record(const VkvvDriver* drv, VAProfile profile, VAEntrypoint entrypoint, VkvvCodecDirection direction) {
@@ -199,6 +242,58 @@ const VkvvProfileCapability* vkvv_profile_capability_record(const VkvvDriver* dr
         }
     }
     return NULL;
+}
+
+VkvvProfileCapabilityStage vkvv_profile_capability_stage(const VkvvProfileCapability* cap) {
+    if (cap == NULL || !cap->hardware_supported) {
+        return VKVV_PROFILE_CAPABILITY_STAGE_MISSING;
+    }
+    if (!cap->parser_wired) {
+        return VKVV_PROFILE_CAPABILITY_STAGE_PROBED;
+    }
+    if (!cap->runtime_wired) {
+        return VKVV_PROFILE_CAPABILITY_STAGE_PARSER;
+    }
+    if (!cap->surface_wired) {
+        return VKVV_PROFILE_CAPABILITY_STAGE_RUNTIME;
+    }
+    if (!cap->export_wired) {
+        return VKVV_PROFILE_CAPABILITY_STAGE_SURFACE;
+    }
+    if (!cap->advertise) {
+        return VKVV_PROFILE_CAPABILITY_STAGE_EXPORT;
+    }
+    return VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED;
+}
+
+const char* vkvv_profile_capability_stage_name(VkvvProfileCapabilityStage stage) {
+    switch (stage) {
+        case VKVV_PROFILE_CAPABILITY_STAGE_MISSING: return "missing";
+        case VKVV_PROFILE_CAPABILITY_STAGE_PROBED: return "probed";
+        case VKVV_PROFILE_CAPABILITY_STAGE_PARSER: return "parser";
+        case VKVV_PROFILE_CAPABILITY_STAGE_RUNTIME: return "runtime";
+        case VKVV_PROFILE_CAPABILITY_STAGE_SURFACE: return "surface";
+        case VKVV_PROFILE_CAPABILITY_STAGE_EXPORT: return "export";
+        case VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED: return "advertised";
+    }
+    return "unknown";
+}
+
+void vkvv_profile_capability_debug_string(const VkvvProfileCapability* cap, char* out, size_t out_size) {
+    if (out == NULL || out_size == 0) {
+        return;
+    }
+    if (cap == NULL) {
+        std::snprintf(out, out_size, "profile=unknown stage=missing");
+        return;
+    }
+
+    const VkvvProfileCapabilityStage stage = vkvv_profile_capability_stage(cap);
+    std::snprintf(out, out_size,
+                  "profile=%d entrypoint=%d direction=%d codec=0x%x stage=%s hw=%u parser=%u runtime=%u surface=%u export=%u advertise=%u formats=%u rt=0x%x fourcc=0x%x",
+                  cap->profile, cap->entrypoint, cap->direction, cap->vulkan_codec_operation, vkvv_profile_capability_stage_name(stage), cap->hardware_supported ? 1U : 0U,
+                  cap->parser_wired ? 1U : 0U, cap->runtime_wired ? 1U : 0U, cap->surface_wired ? 1U : 0U, cap->export_wired ? 1U : 0U, cap->advertise ? 1U : 0U, cap->format_count,
+                  cap->rt_format, cap->fourcc);
 }
 
 unsigned int vkvv_config_attribute_count(void) {

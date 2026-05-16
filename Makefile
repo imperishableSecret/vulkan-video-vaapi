@@ -7,6 +7,7 @@ MESON_INSTALL ?= $(MESON) install
 MESON_TEST ?= $(MESON) test
 CLANG_FORMAT ?= clang-format
 CLANG_TIDY ?= clang-tidy
+JQ ?= jq
 
 OPTIMIZATION ?= 2
 DEBUG ?= false
@@ -16,6 +17,7 @@ EXPERIMENTAL_MESON_SETUP_OPTIONS ?= -Doptimization=3 -Ddebug=false -Db_ndebug=tr
 
 FORMAT_FILES := $(shell find src tests -type f \( -name '*.cpp' -o -name '*.h' \) | sort)
 TIDY_FILES := $(shell find src tests -type f -name '*.cpp' | sort)
+TIDY_BUILDDIR := $(BUILDDIR)/clang-tidy
 
 .PHONY: all setup experimental test install format-fix tidy clean
 
@@ -51,7 +53,9 @@ format-fix:
 	$(CLANG_FORMAT) -i $(FORMAT_FILES)
 
 tidy: all
-	$(CLANG_TIDY) -p "$(BUILDDIR)" $(TIDY_FILES)
+	@mkdir -p "$(TIDY_BUILDDIR)"
+	$(JQ) 'unique_by(.file) | map(.command |= gsub(" -fno-gnu-unique"; ""))' "$(BUILDDIR)/compile_commands.json" > "$(TIDY_BUILDDIR)/compile_commands.json"
+	$(CLANG_TIDY) --quiet -p "$(TIDY_BUILDDIR)" $(TIDY_FILES)
 
 clean:
 	@if [ -f "$(BUILDDIR)/build.ninja" ]; then \
