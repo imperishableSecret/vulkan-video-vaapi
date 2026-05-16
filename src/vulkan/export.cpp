@@ -272,10 +272,13 @@ namespace {
             exported_shadow->codec_operation == resource->codec_operation;
     }
 
-    bool predecode_no_seed_export_is_probe_sized(const VkvvSurface* surface, const SurfaceResource* resource) {
+    bool predecode_no_seed_export_matches_compat_probe_policy(const VkvvSurface* surface, const SurfaceResource* resource) {
         if (surface == nullptr || resource == nullptr) {
             return false;
         }
+        // Compatibility fallback for observed browser predecode probes that
+        // immediately sample small allocation-only exports. This is not a
+        // content-validity rule; replace it only with telemetry-backed state.
         return surface->width <= 960 && surface->height <= 540 && resource->coded_extent.width <= 960 && resource->coded_extent.height <= 544;
     }
 
@@ -320,7 +323,7 @@ namespace {
         decision.no_seed_predecode_backing =
             export_request_readable && decision.predecode_backing_export && decision.placeholder_available && !decision.valid_decoded_pixels_available &&
             !decision.valid_seed_available;
-        decision.no_seed_predecode_probe_export = decision.no_seed_predecode_backing && predecode_no_seed_export_is_probe_sized(surface, resource);
+        decision.no_seed_predecode_probe_export = decision.no_seed_predecode_backing && predecode_no_seed_export_matches_compat_probe_policy(surface, resource);
         decision.sampleable_placeholder_export  = export_request_readable && decision.placeholder_available && !decision.predecode_backing_export;
         decision.role = decision.predecode_backing_export ? VkvvExportRole::PredecodeBacking :
             (decision.valid_transition_hold_available ? VkvvExportRole::TransitionHold :

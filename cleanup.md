@@ -80,10 +80,10 @@ Validation:
 
 Current state:
 
-- `src/vulkan/export.cpp:282` uses `predecode_no_seed_export_is_probe_sized()`.
+- `src/vulkan/export.cpp` uses `predecode_no_seed_export_matches_compat_probe_policy()`.
 - The rule is currently `surface <= 960x540` and `coded <= 960x544`.
 - `src/vulkan/export.cpp:1366` rejects only no-seed predecode backing exports matching that size rule.
-- `src/vulkan/export/shadow_image.cpp:204` has a similar `predecode_seed_target_thumbnail_like()` helper, currently used for telemetry.
+- `src/vulkan/export/shadow_image.cpp` has a similar `predecode_seed_target_matches_compat_probe_policy()` helper, currently used for telemetry.
 
 Why it is prototype residue:
 
@@ -334,7 +334,7 @@ Validation:
 ### Phase 5: Replace or quarantine the size-based probe rule
 
 - Add only the telemetry needed to identify a non-size signal.
-- If concrete signal exists, replace `predecode_no_seed_export_is_probe_sized()`.
+- If concrete signal exists, replace `predecode_no_seed_export_matches_compat_probe_policy()`.
 - If no concrete signal exists, keep it as a named compatibility policy with tests and comments instead of pretending it is generic correctness.
 
 ### Phase 6: Rename placeholder/backing terminology

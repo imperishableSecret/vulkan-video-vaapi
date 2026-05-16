@@ -201,7 +201,10 @@ namespace vkvv {
             return true;
         }
 
-        bool predecode_seed_target_thumbnail_like(const ExportResource* target) {
+        bool predecode_seed_target_matches_compat_probe_policy(const ExportResource* target) {
+            // Mirrors the export-side compatibility fallback for small
+            // predecode targets. It keeps those targets allocation-only rather
+            // than treating dimensions as proof of valid presentation content.
             return target != nullptr && target->extent.width <= 960 && target->extent.height <= 540 && target->content_generation == 0;
         }
 
@@ -1377,7 +1380,7 @@ namespace vkvv {
 
     bool predecode_seed_policy_keeps_placeholder(const ExportResource* target, const SurfaceResource* source) {
         return predecode_seed_target_matches(target, source) &&
-            (predecode_seed_target_thumbnail_like(target) || !predecode_seed_source_decoded_for_internal_copy(source));
+            (predecode_seed_target_matches_compat_probe_policy(target) || !predecode_seed_source_decoded_for_internal_copy(source));
     }
 
     bool can_seed_predecode_target(const ExportResource* target, const SurfaceResource* source) {
@@ -1839,13 +1842,13 @@ namespace vkvv {
         if (target == nullptr || source == nullptr) {
             return;
         }
-        const bool thumbnail_like = predecode_seed_target_thumbnail_like(target);
-        const char* reject_reason = thumbnail_like ? "thumbnail-like-target" : predecode_seed_source_reject_reason(source);
+        const bool compat_probe_target = predecode_seed_target_matches_compat_probe_policy(target);
+        const char* reject_reason = compat_probe_target ? "compat-probe-target" : predecode_seed_source_reject_reason(source);
         VKVV_TRACE("predecode-seed-policy",
-                   "surface=%u source_surface=%u action=neutral-placeholder reason=%s presentable=0 present_pinned=0 decoded=0 thumbnail_like=%u "
+                   "surface=%u source_surface=%u action=neutral-placeholder reason=%s presentable=0 present_pinned=0 decoded=0 compat_probe_target=%u "
                    "content_gen=%llu target_mem=0x%llx source_external_release_ok=%u source_present_gen=%llu source_fd_content_gen=%llu "
                    "source_decode_proof_gen=%llu source_decode_proof_valid=%u source_decode_content_valid=%u",
-                   target->owner_surface_id, source->surface_id, reject_reason, thumbnail_like ? 1U : 0U, static_cast<unsigned long long>(target->content_generation),
+                   target->owner_surface_id, source->surface_id, reject_reason, compat_probe_target ? 1U : 0U, static_cast<unsigned long long>(target->content_generation),
                    vkvv_trace_handle(target->memory), export_visible_release_satisfied(&source->export_resource) ? 1U : 0U,
                    static_cast<unsigned long long>(source->export_resource.present_generation),
                    static_cast<unsigned long long>(export_resource_fd_content_generation(&source->export_resource)),
@@ -2394,11 +2397,11 @@ namespace vkvv {
                        source->surface_id, static_cast<unsigned long long>(source->stream_id), source->codec_operation, static_cast<unsigned long long>(source->content_generation),
                        target->owner_surface_id, vkvv_trace_handle(target->memory), static_cast<unsigned long long>(target->content_generation),
                        static_cast<unsigned long long>(export_resource_fd_content_generation(target)), target->predecode_exported ? 1U : 0U);
-            const bool thumbnail_like = predecode_seed_target_thumbnail_like(target);
+            const bool compat_probe_target = predecode_seed_target_matches_compat_probe_policy(target);
             VKVV_TRACE("predecode-seed-policy",
-                       "surface=%u source_surface=%u action=stream-local-seed presentable=0 present_pinned=0 thumbnail_like=%u content_gen=%llu fd_content_gen=%llu "
+                       "surface=%u source_surface=%u action=stream-local-seed presentable=0 present_pinned=0 compat_probe_target=%u content_gen=%llu fd_content_gen=%llu "
                        "target_mem=0x%llx",
-                       target->owner_surface_id, source->surface_id, thumbnail_like ? 1U : 0U, static_cast<unsigned long long>(target->content_generation),
+                       target->owner_surface_id, source->surface_id, compat_probe_target ? 1U : 0U, static_cast<unsigned long long>(target->content_generation),
                        static_cast<unsigned long long>(export_resource_fd_content_generation(target)), vkvv_trace_handle(target->memory));
             VKVV_TRACE("predecode-export-policy",
                        "surface=%u codec=0x%x stream=%llu content_gen=%llu pending_decode=0 policy=stream-local-last-visible action=stream-local-seed source_surface=%u "
@@ -2616,10 +2619,10 @@ namespace vkvv {
                        export_visible_release_satisfied(&source->export_resource) ? 1U : 0U);
             return true;
         }
-        const bool thumbnail_like = predecode_seed_target_thumbnail_like(&target->export_resource);
+        const bool compat_probe_target = predecode_seed_target_matches_compat_probe_policy(&target->export_resource);
         VKVV_TRACE("predecode-seed-policy",
-                   "surface=%u source_surface=%u action=stream-local-seed presentable=0 present_pinned=0 thumbnail_like=%u content_gen=%llu target_mem=0x%llx", target->surface_id,
-                   source->surface_id, thumbnail_like ? 1U : 0U, static_cast<unsigned long long>(target->export_resource.content_generation),
+                   "surface=%u source_surface=%u action=stream-local-seed presentable=0 present_pinned=0 compat_probe_target=%u content_gen=%llu target_mem=0x%llx", target->surface_id,
+                   source->surface_id, compat_probe_target ? 1U : 0U, static_cast<unsigned long long>(target->export_resource.content_generation),
                    vkvv_trace_handle(target->export_resource.memory));
         VKVV_TRACE("export-seed-hit",
                    "surface=%u driver=%llu stream=%llu codec=0x%x source_surface=%u source_gen=%llu source_seed_gen=%llu source_shadow_gen=%llu target_mem=0x%llx target_gen=%llu",

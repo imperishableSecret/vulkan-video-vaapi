@@ -58,8 +58,8 @@ def main() -> int:
         fail("freshly seeded pre-return export shadows must count as valid seed pixels")
     if '"predecode-backing-no-seed-return"' not in export_text:
         fail("unseeded predecode backing returns need explicit role telemetry")
-    if "predecode_no_seed_export_is_probe_sized" not in export_text:
-        fail("probe-sized no-seed predecode exports must be rejected before returning a black sampleable FD")
+    if "predecode_no_seed_export_matches_compat_probe_policy" not in export_text or "Compatibility fallback" not in export_text:
+        fail("probe-sized no-seed predecode exports must be quarantined in an explicit compatibility policy")
     if '"predecode-backing-no-seed-probe-reject"' not in export_text:
         fail("probe-sized no-seed predecode export rejection needs explicit telemetry")
     if '"predecode-backing-no-seed-defer"' in export_text:
@@ -251,8 +251,8 @@ def main() -> int:
         fail("predecode seed admission must have a structural source-validity helper")
     if "return export_pixel_proof_enabled() && source != nullptr" in shadow_text:
         fail("predecode seed source admission still depends on pixel proof being enabled")
-    if "predecode_seed_target_thumbnail_like(target) || !predecode_seed_source_decoded_for_internal_copy(source)" not in shadow_text:
-        fail("thumbnail-like predecode targets must stay on the placeholder path even when a structural source exists")
+    if "predecode_seed_target_matches_compat_probe_policy(target) || !predecode_seed_source_decoded_for_internal_copy(source)" not in shadow_text:
+        fail("compatibility-probe predecode targets must stay on the placeholder path even when a structural source exists")
     for forbidden in (
         "VKVV_ALLOW_PLACEHOLDER_EXPORT",
         "DebugPlaceholder",
