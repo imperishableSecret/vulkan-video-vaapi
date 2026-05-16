@@ -279,6 +279,77 @@ namespace {
         return surface->width <= 960 && surface->height <= 540 && resource->coded_extent.width <= 960 && resource->coded_extent.height <= 544;
     }
 
+    struct ExportAdmissionDecision {
+        VkvvExportPixelSource pixel_source                    = VkvvExportPixelSource::None;
+        VkvvExportRole        role                            = VkvvExportRole::None;
+        bool                  valid_decoded_pixels_available  = false;
+        bool                  valid_seed_available            = false;
+        bool                  valid_transition_hold_available = false;
+        bool                  placeholder_available           = false;
+        bool                  active_predecode_candidate      = false;
+        bool                  exported_shadow_is_owner        = false;
+        bool                  exact_predecode_pool_placeholder = false;
+        bool                  predecode_backing_export        = false;
+        bool                  no_seed_predecode_backing       = false;
+        bool                  no_seed_predecode_probe_export  = false;
+        bool                  sampleable_placeholder_export   = false;
+        bool                  may_return_fd                   = true;
+        VAStatus              status                          = VA_STATUS_SUCCESS;
+        const char*           failure_decision                = nullptr;
+        const char*           failure_reason                  = nullptr;
+    };
+
+    ExportAdmissionDecision decide_export_admission(const VkvvSurface* surface, const SurfaceResource* resource, const ExportResource* exported_shadow,
+                                                    bool export_request_readable) {
+        ExportAdmissionDecision decision{};
+        decision.pixel_source =
+            exported_shadow != nullptr ? export_pixel_source_for_resource(resource, exported_shadow) :
+                                         (surface != nullptr && resource != nullptr && surface->decoded && resource->content_generation != 0 ?
+                                              VkvvExportPixelSource::DecodedContent :
+                                              VkvvExportPixelSource::None);
+        decision.valid_decoded_pixels_available = export_source_has_decoded_pixels(surface, resource, exported_shadow, decision.pixel_source);
+        decision.valid_seed_available           = export_source_has_seed_pixels(exported_shadow, decision.pixel_source);
+        decision.valid_transition_hold_available = export_resource_is_transition_hold_for_surface(resource, exported_shadow) &&
+            decision.pixel_source == VkvvExportPixelSource::RetainedUnknown;
+        decision.placeholder_available = export_source_is_placeholder(exported_shadow, decision.pixel_source);
+        decision.active_predecode_candidate = active_domain_predecode_pool_export_candidate(surface, resource);
+        decision.exported_shadow_is_owner   = resource != nullptr && exported_shadow == &resource->export_resource;
+        decision.exact_predecode_pool_placeholder =
+            allow_exact_predecode_pool_placeholder_export(surface, resource, exported_shadow, decision.pixel_source);
+        decision.predecode_backing_export = decision.exact_predecode_pool_placeholder;
+        decision.no_seed_predecode_backing =
+            export_request_readable && decision.predecode_backing_export && decision.placeholder_available && !decision.valid_decoded_pixels_available &&
+            !decision.valid_seed_available;
+        decision.no_seed_predecode_probe_export = decision.no_seed_predecode_backing && predecode_no_seed_export_is_probe_sized(surface, resource);
+        decision.sampleable_placeholder_export  = export_request_readable && decision.placeholder_available && !decision.predecode_backing_export;
+        decision.role = decision.predecode_backing_export ? VkvvExportRole::PredecodeBacking :
+            (decision.valid_transition_hold_available ? VkvvExportRole::TransitionHold :
+                 (decision.valid_seed_available ? VkvvExportRole::PixelProvenSeed :
+                      (decision.valid_decoded_pixels_available ||
+                               (surface != nullptr && resource != nullptr && surface->decoded && resource->content_generation != 0) ?
+                           VkvvExportRole::DecodedPixels :
+                           VkvvExportRole::None)));
+
+        if (decision.no_seed_predecode_probe_export) {
+            decision.may_return_fd    = false;
+            decision.status           = VA_STATUS_ERROR_OPERATION_FAILED;
+            decision.failure_decision = "fail";
+            decision.failure_reason   = "sampleable-no-seed-predecode-probe";
+        } else if (decision.sampleable_placeholder_export) {
+            decision.may_return_fd    = false;
+            decision.status           = VA_STATUS_ERROR_OPERATION_FAILED;
+            decision.failure_decision = "fail";
+            decision.failure_reason   = "sampleable-placeholder-not-presentable";
+        } else if (!decision.valid_decoded_pixels_available && !decision.valid_seed_available && !decision.valid_transition_hold_available &&
+                   !decision.predecode_backing_export) {
+            decision.may_return_fd    = false;
+            decision.status           = VA_STATUS_ERROR_OPERATION_FAILED;
+            decision.failure_decision = "fail";
+            decision.failure_reason   = "no-valid-decoded-or-seed-pixels";
+        }
+        return decision;
+    }
+
     void trace_direct_export_fd_lifetime(const VkvvSurface* surface, const SurfaceResource* resource, const VkvvFdIdentity& fd_stat, const char* action,
                                          uint64_t generation_at_action, bool may_be_sampled_by_client) {
         if (surface == nullptr || resource == nullptr) {
@@ -1342,23 +1413,19 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         return VA_STATUS_ERROR_INVALID_SURFACE;
     }
 
-    const VkvvExportPixelSource pre_fd_pixel_source =
-        exported_shadow != nullptr ? export_pixel_source_for_resource(resource, exported_shadow) :
-                                     (surface->decoded && resource->content_generation != 0 ? VkvvExportPixelSource::DecodedContent : VkvvExportPixelSource::None);
-    const bool valid_decoded_pixels_available = export_source_has_decoded_pixels(surface, resource, exported_shadow, pre_fd_pixel_source);
-    const bool valid_seed_available           = export_source_has_seed_pixels(exported_shadow, pre_fd_pixel_source);
-    const bool valid_transition_hold_available = export_resource_is_transition_hold_for_surface(resource, exported_shadow) &&
-        pre_fd_pixel_source == VkvvExportPixelSource::RetainedUnknown;
-    const bool placeholder_available          = export_source_is_placeholder(exported_shadow, pre_fd_pixel_source);
-    const bool active_predecode_candidate    = active_domain_predecode_pool_export_candidate(surface, resource);
-    const bool exported_shadow_is_owner      = exported_shadow == &resource->export_resource;
-    const bool exact_predecode_pool_placeholder =
-        allow_exact_predecode_pool_placeholder_export(surface, resource, exported_shadow, pre_fd_pixel_source);
-    const bool predecode_backing_export      = exact_predecode_pool_placeholder;
-    const bool no_seed_predecode_backing =
-        export_request_readable && predecode_backing_export && placeholder_available && !valid_decoded_pixels_available && !valid_seed_available;
-    const bool no_seed_predecode_probe_export = no_seed_predecode_backing && predecode_no_seed_export_is_probe_sized(surface, resource);
-    const bool sampleable_placeholder_export = export_request_readable && placeholder_available && !predecode_backing_export;
+    const ExportAdmissionDecision admission = decide_export_admission(surface, resource, exported_shadow, export_request_readable);
+    const VkvvExportPixelSource   pre_fd_pixel_source              = admission.pixel_source;
+    const bool                    valid_decoded_pixels_available   = admission.valid_decoded_pixels_available;
+    const bool                    valid_seed_available             = admission.valid_seed_available;
+    const bool                    valid_transition_hold_available  = admission.valid_transition_hold_available;
+    const bool                    placeholder_available            = admission.placeholder_available;
+    const bool                    active_predecode_candidate       = admission.active_predecode_candidate;
+    const bool                    exported_shadow_is_owner         = admission.exported_shadow_is_owner;
+    const bool                    exact_predecode_pool_placeholder = admission.exact_predecode_pool_placeholder;
+    const bool                    predecode_backing_export         = admission.predecode_backing_export;
+    const bool                    no_seed_predecode_backing        = admission.no_seed_predecode_backing;
+    const bool                    no_seed_predecode_probe_export   = admission.no_seed_predecode_probe_export;
+    const bool                    sampleable_placeholder_export    = admission.sampleable_placeholder_export;
     if (export_request_readable && placeholder_available) {
         const uint64_t    shadow_content_generation = exported_shadow != nullptr ? exported_shadow->content_generation : 0;
         const VASurfaceID shadow_owner_surface      = exported_shadow != nullptr ? exported_shadow->owner_surface_id : VA_INVALID_ID;
@@ -1395,7 +1462,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                    resource->codec_operation, surface->width, surface->height, resource->coded_extent.width, resource->coded_extent.height, surface->fourcc, flags,
                    vkvv_export_pixel_source_name(pre_fd_pixel_source), placeholder_available ? 1U : 0U,
                    predecode_seed_attempted_before_backing ? 1U : 0U, predecode_seeded_before_backing ? 1U : 0U, VA_STATUS_ERROR_OPERATION_FAILED);
-        trace_export_summary(exported_shadow, nullptr, false, no_fd, "fail", "sampleable-no-seed-predecode-probe", VA_STATUS_ERROR_OPERATION_FAILED);
+        trace_export_summary(exported_shadow, nullptr, false, no_fd, admission.failure_decision, admission.failure_reason, admission.status);
         VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_OPERATION_FAILED,
                           "surface export refused sampleable no-seed predecode probe fd: surface=%u stream=%llu codec=0x%x %ux%u content_gen=%llu",
                           surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, surface->width, surface->height,
@@ -1407,7 +1474,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         if (exported_shadow != nullptr) {
             trace_predecode_quarantine_outcome(resource, exported_shadow, "export-failed", "sampleable-placeholder", false);
         }
-        trace_export_summary(exported_shadow, nullptr, false, no_fd, "fail", "sampleable-placeholder-not-presentable", VA_STATUS_ERROR_OPERATION_FAILED);
+        trace_export_summary(exported_shadow, nullptr, false, no_fd, admission.failure_decision, admission.failure_reason, admission.status);
         VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_OPERATION_FAILED,
                           "surface export refused sampleable placeholder fd: surface=%u stream=%llu codec=0x%x content_gen=%llu pixel_source=%s",
                           surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
@@ -1419,7 +1486,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         if (placeholder_available && exported_shadow != nullptr) {
             trace_predecode_quarantine_outcome(resource, exported_shadow, "export-failed", "no-valid-pixels", false);
         }
-        trace_export_summary(exported_shadow, nullptr, false, no_fd, "fail", "no-valid-decoded-or-seed-pixels", VA_STATUS_ERROR_OPERATION_FAILED);
+        trace_export_summary(exported_shadow, nullptr, false, no_fd, admission.failure_decision, admission.failure_reason, admission.status);
         VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_OPERATION_FAILED,
                           "surface export refused sampleable fd without decoded or valid seed pixels: surface=%u stream=%llu codec=0x%x content_gen=%llu pixel_source=%s",
                           surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
@@ -1486,10 +1553,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         }
     }
     const VkvvFdIdentity fd_stat = vkvv_fd_identity_from_fd(fd);
-    const VkvvExportRole returned_export_role = predecode_backing_export ? VkvvExportRole::PredecodeBacking :
-        (valid_transition_hold_available ? VkvvExportRole::TransitionHold :
-             (valid_seed_available ? VkvvExportRole::PixelProvenSeed :
-                  (valid_decoded_pixels_available || (surface->decoded && resource->content_generation != 0) ? VkvvExportRole::DecodedPixels : VkvvExportRole::None)));
+    const VkvvExportRole returned_export_role = admission.role;
     if (exported_shadow != nullptr) {
         exported_shadow->fd_stat_valid       = fd_stat.valid;
         exported_shadow->fd_dev              = fd_stat.dev;

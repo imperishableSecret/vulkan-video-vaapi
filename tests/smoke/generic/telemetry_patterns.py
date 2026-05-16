@@ -50,7 +50,7 @@ def main() -> int:
 
     export_cpp = root / "src" / "vulkan" / "export.cpp"
     export_text = export_cpp.read_text(encoding="utf-8")
-    if "const bool predecode_backing_export      = exact_predecode_pool_placeholder;" not in export_text:
+    if "decision.predecode_backing_export = decision.exact_predecode_pool_placeholder;" not in export_text:
         fail("exact-predecode pool exports must use the explicit predecode backing path")
     if "seed_predecode_export_from_last_good(runtime, resource, reason, reason_size)" not in export_text:
         fail("active predecode backing must try stream-local seed before returning allocation-only backing")
@@ -64,10 +64,14 @@ def main() -> int:
         fail("probe-sized no-seed predecode export rejection needs explicit telemetry")
     if '"predecode-backing-no-seed-defer"' in export_text:
         fail("unseeded predecode backing must not be blanket-deferred without a role discriminator")
-    if "const bool sampleable_placeholder_export = export_request_readable && placeholder_available && !predecode_backing_export;" not in export_text:
+    if "decision.sampleable_placeholder_export  = export_request_readable && decision.placeholder_available && !decision.predecode_backing_export;" not in export_text:
         fail("sampleable placeholder rejection must only exempt explicit predecode backing")
     if re.search(r"sampleable_placeholder_export\s*=\s*export_request_readable\s*&&\s*placeholder_available\s*;", export_text):
         fail("sampleable placeholder rejection still includes predecode backing")
+    if "struct ExportAdmissionDecision" not in export_text or "decide_export_admission" not in export_text:
+        fail("export admission role matrix must be centralized in an ExportAdmissionDecision helper")
+    if "const VkvvExportRole returned_export_role = admission.role;" not in export_text:
+        fail("returned export role must come from the centralized admission decision")
     shadow_text_for_lock = "\n".join(lines)
     if "target->content_generation        = source->content_generation;" not in shadow_text_for_lock:
         fail("predecode seed targets must inherit the source content generation after pixel-proofed copy")
