@@ -265,6 +265,20 @@ def main() -> int:
     ):
         if token not in runtime_internal_text:
             fail(f"generic visible-output runtime metadata is missing token: {token}")
+    for token in (
+        "struct PendingDecodeTrace",
+        "CodecVisibleOutputTrace visible{}",
+        "uint32_t              reference_count",
+        "PendingDecodeTrace          decode_trace{}",
+        "const PendingDecodeTrace* decode_trace",
+    ):
+        if token not in runtime_internal_text:
+            fail(f"generic pending decode metadata is missing token: {token}")
+    pending_work_start = runtime_internal_text.find("struct PendingWork")
+    pending_work_end = runtime_internal_text.find("struct CommandSlot", pending_work_start)
+    pending_work_text = runtime_internal_text[pending_work_start:pending_work_end]
+    if "Av1PendingDecodeTrace" in pending_work_text:
+        fail("PendingWork must carry generic PendingDecodeTrace instead of AV1 trace directly")
     if "resource->visible_output_trace = trace;" not in export_state_text:
         fail("generic visible-output trace setter must update SurfaceResource metadata")
     if "clear_surface_visible_output_trace(resource);" not in export_state_text:

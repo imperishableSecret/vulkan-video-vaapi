@@ -1800,6 +1800,10 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     av1_pending_trace.target_dpb_slot       = target_dpb_slot;
     av1_pending_trace.setup_slot            = has_setup_slot ? target_dpb_slot : -1;
     av1_pending_trace.reference_count       = reference_count;
+    PendingDecodeTrace pending_trace{};
+    pending_trace.valid                  = true;
+    pending_trace.reference_count        = reference_count;
+    pending_trace.traced_reference_count = std::min<uint32_t>(reference_count, av1_pending_reference_trace_capacity);
     fill_av1_pending_parameter_trace(&av1_pending_trace, input, &std_data, tile_sum_size, tile_bytes_hash, bitstream_hash);
     const uint32_t traced_reference_count   = std::min<uint32_t>(reference_count, av1_pending_reference_trace_capacity);
     for (uint32_t i = 0; i < traced_reference_count; i++) {
@@ -1828,7 +1832,9 @@ VAStatus vkvv_vulkan_decode_av1(void* runtime_ptr, void* session_ptr, VkvvDriver
     }
 
     set_av1_visible_output_trace(target_resource, input, refresh_export);
-    track_pending_decode(runtime, target, parameters, upload_allocation_size, refresh_export, "AV1 decode", &av1_pending_trace);
+    pending_trace.visible   = target_resource->visible_output_trace;
+    pending_trace.av1_trace = av1_pending_trace;
+    track_pending_decode(runtime, target, parameters, upload_allocation_size, refresh_export, "AV1 decode", &pending_trace);
     trace_av1_display_decision(drv, vctx, target_surface_id, refresh_export ? target_surface_id : VA_INVALID_ID, input, target_resource, refresh_export,
                                refresh_export ? "decode-display-queued" : "decode-reference-only");
     remember_av1_visible_order_hint(session, input, target_surface_id, frame_seq, refresh_export);
