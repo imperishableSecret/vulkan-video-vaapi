@@ -660,10 +660,28 @@ namespace vkvv {
         resource->import_codec_operation         = 0;
     }
 
+    void set_surface_visible_output_trace(SurfaceResource* resource, const CodecVisibleOutputTrace& trace) {
+        if (resource == nullptr) {
+            return;
+        }
+        resource->visible_output_trace = trace;
+        if (resource->visible_output_trace.tile_or_slice_source == nullptr) {
+            resource->visible_output_trace.tile_or_slice_source = "unknown";
+        }
+    }
+
+    void clear_surface_visible_output_trace(SurfaceResource* resource) {
+        if (resource == nullptr) {
+            return;
+        }
+        resource->visible_output_trace = {};
+    }
+
     void clear_surface_av1_visible_output_trace(SurfaceResource* resource) {
         if (resource == nullptr) {
             return;
         }
+        clear_surface_visible_output_trace(resource);
         resource->av1_visible_output_trace_valid    = false;
         resource->av1_visible_show_frame            = false;
         resource->av1_visible_show_existing_frame   = false;

@@ -283,6 +283,18 @@ namespace vkvv {
         VkVideoComponentBitDepthFlagsKHR chroma_bit_depth   = 0;
     };
 
+    struct CodecVisibleOutputTrace {
+        bool        valid                     = false;
+        bool        visible_output            = false;
+        bool        show_existing             = false;
+        uint64_t    frame_sequence            = 0;
+        uint64_t    display_order             = 0;
+        uint32_t    frame_type                = 0;
+        uint32_t    refresh_flags             = 0;
+        int32_t     displayed_reference_index = -1;
+        const char* tile_or_slice_source      = "unknown";
+    };
+
     struct SurfaceResource {
         VkImage                       image              = VK_NULL_HANDLE;
         VkImageView                   view               = VK_NULL_HANDLE;
@@ -324,6 +336,7 @@ namespace vkvv {
         uint64_t                      import_driver_instance_id              = 0;
         uint64_t                      import_stream_id                       = 0;
         VkVideoCodecOperationFlagsKHR import_codec_operation                 = 0;
+        CodecVisibleOutputTrace       visible_output_trace{};
         bool                          av1_visible_output_trace_valid         = false;
         bool                          av1_visible_show_frame                 = false;
         bool                          av1_visible_show_existing_frame        = false;
@@ -568,6 +581,23 @@ namespace vkvv {
         uint64_t                      pixel_crc             = 0;
     };
 
+    struct VisiblePublishCadence {
+        bool                          valid                 = false;
+        uint64_t                      monotonic_us          = 0;
+        uint64_t                      driver_instance_id    = 0;
+        uint64_t                      stream_id             = 0;
+        VkVideoCodecOperationFlagsKHR codec_operation       = 0;
+        VASurfaceID                   surface_id            = VA_INVALID_ID;
+        uint64_t                      frame_sequence        = 0;
+        uint64_t                      display_order         = 0;
+        uint64_t                      content_generation    = 0;
+        uint64_t                      fd_dev                = 0;
+        uint64_t                      fd_ino                = 0;
+        uint64_t                      fd_content_generation = 0;
+        uint64_t                      present_generation    = 0;
+        uint64_t                      pixel_crc             = 0;
+    };
+
     class VulkanRuntime {
       public:
         ~VulkanRuntime();
@@ -632,6 +662,7 @@ namespace vkvv {
         uint64_t                           retained_export_sequence      = 0;
         TransitionRetentionWindow          transition_retention{};
         Av1VisiblePublishCadence           av1_visible_publish_cadence{};
+        VisiblePublishCadence              visible_publish_cadence{};
 
         void                               destroy_command_resources() {
             for (CommandSlot& slot : command_slots) {
@@ -717,6 +748,8 @@ namespace vkvv {
     void                  clear_nondisplay_predecode_presentation_state(SurfaceResource* resource);
     void                  clear_surface_export_attach_state(SurfaceResource* resource);
     void                  clear_surface_direct_import_present_state(SurfaceResource* resource);
+    void                  set_surface_visible_output_trace(SurfaceResource* resource, const CodecVisibleOutputTrace& trace);
+    void                  clear_surface_visible_output_trace(SurfaceResource* resource);
     void                  clear_surface_av1_visible_output_trace(SurfaceResource* resource);
     VkDeviceSize retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties& properties);
     RetainedExportBudget  retained_export_budget_from_expected(size_t expected_count, VkDeviceSize expected_bytes, VkDeviceSize global_cap_bytes);

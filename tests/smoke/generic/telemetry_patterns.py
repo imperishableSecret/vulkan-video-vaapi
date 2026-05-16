@@ -246,7 +246,28 @@ def main() -> int:
     export_state_text = (root / "src" / "vulkan" / "export" / "state.cpp").read_text(encoding="utf-8")
     export_retained_text = (root / "src" / "vulkan" / "export" / "retained.cpp").read_text(encoding="utf-8")
     resource_text = (root / "src" / "vulkan" / "resources" / "surface.cpp").read_text(encoding="utf-8")
+    runtime_internal_text = (vulkan_root / "runtime_internal.h").read_text(encoding="utf-8")
     export_combined_text = export_text + "\n" + shadow_text + "\n" + export_state_text + "\n" + export_retained_text + "\n" + resource_text
+    for token in (
+        "struct CodecVisibleOutputTrace",
+        "bool        visible_output",
+        "uint64_t    display_order",
+        "const char* tile_or_slice_source",
+        "CodecVisibleOutputTrace       visible_output_trace{}",
+        "struct VisiblePublishCadence",
+        "uint64_t                      display_order",
+        "VisiblePublishCadence              visible_publish_cadence{}",
+        "set_surface_visible_output_trace",
+        "clear_surface_visible_output_trace",
+    ):
+        if token not in runtime_internal_text:
+            fail(f"generic visible-output runtime metadata is missing token: {token}")
+    if "resource->visible_output_trace = trace;" not in export_state_text:
+        fail("generic visible-output trace setter must update SurfaceResource metadata")
+    if "clear_surface_visible_output_trace(resource);" not in export_state_text:
+        fail("AV1 visible-output clear must also clear generic visible-output metadata")
+    if "CodecVisibleOutputTrace visible{};" not in av1_text or "set_surface_visible_output_trace(resource, visible);" not in av1_text:
+        fail("AV1 decode must populate generic visible-output metadata")
     if "predecode_seed_source_structurally_valid" not in shadow_text:
         fail("predecode seed admission must have a structural source-validity helper")
     if "return export_pixel_proof_enabled() && source != nullptr" in shadow_text:
