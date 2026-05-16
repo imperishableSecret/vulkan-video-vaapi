@@ -220,34 +220,54 @@ namespace vkvv {
                 source->decode_pixel_proof_valid && source->decode_pixel_content_valid;
         }
 
+        bool predecode_seed_source_structurally_valid(const SurfaceResource* source) {
+            if (source == nullptr || source->image == VK_NULL_HANDLE || source->content_generation == 0 || source->export_seed_generation != source->content_generation ||
+                source->driver_instance_id == 0 || source->stream_id == 0 || source->codec_operation == 0 || source->format == VK_FORMAT_UNDEFINED || source->va_fourcc == 0 ||
+                source->coded_extent.width == 0 || source->coded_extent.height == 0) {
+                return false;
+            }
+            const ExportResource& export_resource = source->export_resource;
+            return export_resource.content_generation == source->content_generation && !export_resource.private_nondisplay_shadow &&
+                !export_resource.predecode_exported && !export_resource.predecode_seeded && !export_resource.predecode_quarantined && !export_resource.black_placeholder &&
+                export_resource.seed_source_surface_id == VA_INVALID_ID && export_resource.seed_source_generation == 0 &&
+                export_resource_fd_role(&export_resource) == VkvvExportRole::DecodedPixels && predecode_seed_source_safe_for_client(source);
+        }
+
+        bool predecode_seed_source_pixel_proof_valid(const SurfaceResource* source) {
+            return !export_pixel_proof_enabled() || decode_pixel_content_proven_for_current_generation(source);
+        }
+
         bool predecode_seed_source_decoded_for_internal_copy(const SurfaceResource* source) {
-            return export_pixel_proof_enabled() && source != nullptr && source->image != VK_NULL_HANDLE && source->content_generation != 0 &&
-                source->driver_instance_id != 0 && source->stream_id != 0 && source->codec_operation != 0 && source->format != VK_FORMAT_UNDEFINED &&
-                source->va_fourcc != 0 && source->coded_extent.width != 0 && source->coded_extent.height != 0 &&
-                decode_pixel_content_proven_for_current_generation(source);
+            return predecode_seed_source_structurally_valid(source) && predecode_seed_source_pixel_proof_valid(source);
         }
 
         const char* predecode_seed_source_reject_reason(const SurfaceResource* source) {
-            if (!export_pixel_proof_enabled()) {
-                return "pixel-proof-disabled";
-            }
             if (source == nullptr) {
                 return "source-missing";
             }
             if (source->content_generation == 0 || source->image == VK_NULL_HANDLE) {
                 return "source-not-decoded";
             }
-            if (source->decode_pixel_proof_generation != source->content_generation) {
-                return "source-proof-stale";
+            if (source->export_seed_generation != source->content_generation) {
+                return "source-not-published-seed";
             }
-            if (!source->decode_pixel_proof_valid) {
-                return "source-proof-unavailable";
+            if (source->driver_instance_id == 0 || source->stream_id == 0 || source->codec_operation == 0 || source->format == VK_FORMAT_UNDEFINED ||
+                source->va_fourcc == 0 || source->coded_extent.width == 0 || source->coded_extent.height == 0) {
+                return "source-domain-incomplete";
             }
-            if (!source->decode_pixel_content_valid) {
-                return "source-proof-invalid";
-            }
-            if (!predecode_seed_source_decoded_for_internal_copy(source)) {
+            if (!predecode_seed_source_structurally_valid(source)) {
                 return "source-not-copyable";
+            }
+            if (export_pixel_proof_enabled()) {
+                if (source->decode_pixel_proof_generation != source->content_generation) {
+                    return "source-proof-stale";
+                }
+                if (!source->decode_pixel_proof_valid) {
+                    return "source-proof-unavailable";
+                }
+                if (!source->decode_pixel_content_valid) {
+                    return "source-proof-invalid";
+                }
             }
             return "none";
         }
@@ -1090,8 +1110,8 @@ namespace vkvv {
             proof->pixel_source             = pixel_source;
             proof->export_role              = export_resource_fd_role(resource);
             proof->decoded_pixels_valid     = pixel_source == VkvvExportPixelSource::DecodedContent && proof->fd_content_generation != 0;
-            proof->seed_pixels_valid        = pixel_source == VkvvExportPixelSource::StreamLocalSeed && proof->fd_content_generation != 0 && resource != nullptr &&
-                resource->seed_pixel_proof_valid;
+            proof->seed_pixels_valid = pixel_source == VkvvExportPixelSource::StreamLocalSeed && proof->fd_content_generation != 0 && resource != nullptr &&
+                (!export_pixel_proof_enabled() || resource->seed_pixel_proof_valid);
             proof->placeholder_pixels       = pixel_source == VkvvExportPixelSource::Placeholder;
         }
         if (owner == nullptr || resource == nullptr || resource->image == VK_NULL_HANDLE) {
@@ -1119,8 +1139,8 @@ namespace vkvv {
             proof->zero_crc          = zero_crc;
             proof->decoded_pixels_valid =
                 pixel_source == VkvvExportPixelSource::DecodedContent && proof->fd_content_generation != 0 && (!export_pixel_proof_enabled() || pixel_proof_valid);
-            proof->seed_pixels_valid = pixel_source == VkvvExportPixelSource::StreamLocalSeed && proof->fd_content_generation != 0 && resource->seed_pixel_proof_valid &&
-                pixel_proof_valid;
+            proof->seed_pixels_valid = pixel_source == VkvvExportPixelSource::StreamLocalSeed && proof->fd_content_generation != 0 &&
+                (!export_pixel_proof_enabled() || (resource->seed_pixel_proof_valid && pixel_proof_valid));
             proof->placeholder_pixels = pixel_source == VkvvExportPixelSource::Placeholder || is_black || is_zero;
         }
         VKVV_TRACE("returned-fd-pixel-proof",
@@ -1158,14 +1178,18 @@ namespace vkvv {
             target_ok = readback_image_luma_sample(runtime, target->image, &target->layout, format, target->extent, "seed target pixel proof", &target_crc, &target_bytes,
                                                    proof_reason, sizeof(proof_reason));
         }
-        const bool source_black    = source_ok && black_crc != 0 && source_crc == black_crc;
-        const bool source_zero     = source_ok && zero_crc != 0 && source_crc == zero_crc;
-        const bool target_black    = target_ok && black_crc != 0 && target_crc == black_crc;
-        const bool target_zero     = target_ok && zero_crc != 0 && target_crc == zero_crc;
-        const bool source_valid    = predecode_seed_source_decoded_for_internal_copy(source) && source_ok && source_bytes > 0 && !source_black && !source_zero;
-        const bool target_matches  = source_ok && target_ok && source_crc == target_crc;
-        const bool target_valid    = source_valid && target_ok && target_bytes > 0 && target_matches && !target_black && !target_zero;
-        target->seed_pixel_proof_valid = target_valid;
+        const bool proof_enabled    = export_pixel_proof_enabled();
+        const bool source_black     = source_ok && black_crc != 0 && source_crc == black_crc;
+        const bool source_zero      = source_ok && zero_crc != 0 && source_crc == zero_crc;
+        const bool target_black     = target_ok && black_crc != 0 && target_crc == black_crc;
+        const bool target_zero      = target_ok && zero_crc != 0 && target_crc == zero_crc;
+        const bool source_structural = predecode_seed_source_structurally_valid(source);
+        const bool source_proof_ok  = !proof_enabled || (source_ok && source_bytes > 0 && !source_black && !source_zero);
+        const bool source_valid     = source_structural && source_proof_ok;
+        const bool target_matches   = source_ok && target_ok && source_crc == target_crc;
+        const bool target_proof_ok  = !proof_enabled || (target_ok && target_bytes > 0 && target_matches && !target_black && !target_zero);
+        const bool target_valid     = source_valid && target_proof_ok;
+        target->seed_pixel_proof_valid = proof_enabled && target_valid;
         VKVV_TRACE("seed-source-pixel-proof",
                    "source_surface=%u source_stream=%llu source_codec=0x%x source_present_gen=%llu source_fd_content_gen=%llu source_crc=0x%llx black_crc=0x%llx "
                    "zero_crc=0x%llx is_black=%u is_zero=%u pixel_proof_valid=%u valid_for_seed=%u sample_bytes=%llu proof_enabled=%u",
@@ -1173,7 +1197,7 @@ namespace vkvv {
                    static_cast<unsigned long long>(source->export_resource.present_generation),
                    static_cast<unsigned long long>(export_resource_fd_content_generation(&source->export_resource)), static_cast<unsigned long long>(source_ok ? source_crc : 0),
                    static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc), source_black ? 1U : 0U, source_zero ? 1U : 0U,
-                   source_ok ? 1U : 0U, source_valid ? 1U : 0U, static_cast<unsigned long long>(source_bytes), export_pixel_proof_enabled() ? 1U : 0U);
+                   source_ok ? 1U : 0U, source_valid ? 1U : 0U, static_cast<unsigned long long>(source_bytes), proof_enabled ? 1U : 0U);
         VKVV_TRACE("seed-target-pixel-proof",
                    "target_surface=%u source_surface=%u target_fd_dev=%llu target_fd_ino=%llu target_crc_after_copy=0x%llx source_crc=0x%llx matches_source=%u "
                    "target_is_black=%u target_is_zero=%u pixel_proof_valid=%u reject_reason=%s copy_status=%s target_sample_bytes=%llu",
@@ -1352,7 +1376,8 @@ namespace vkvv {
     }
 
     bool predecode_seed_policy_keeps_placeholder(const ExportResource* target, const SurfaceResource* source) {
-        return predecode_seed_target_matches(target, source) && !predecode_seed_source_decoded_for_internal_copy(source);
+        return predecode_seed_target_matches(target, source) &&
+            (predecode_seed_target_thumbnail_like(target) || !predecode_seed_source_decoded_for_internal_copy(source));
     }
 
     bool can_seed_predecode_target(const ExportResource* target, const SurfaceResource* source) {
@@ -1815,7 +1840,7 @@ namespace vkvv {
             return;
         }
         const bool thumbnail_like = predecode_seed_target_thumbnail_like(target);
-        const char* reject_reason = predecode_seed_source_reject_reason(source);
+        const char* reject_reason = thumbnail_like ? "thumbnail-like-target" : predecode_seed_source_reject_reason(source);
         VKVV_TRACE("predecode-seed-policy",
                    "surface=%u source_surface=%u action=neutral-placeholder reason=%s presentable=0 present_pinned=0 decoded=0 thumbnail_like=%u "
                    "content_gen=%llu target_mem=0x%llx source_external_release_ok=%u source_present_gen=%llu source_fd_content_gen=%llu "
@@ -2336,7 +2361,9 @@ namespace vkvv {
                 clear_export_present_state(target);
             }
             trace_seed_pixel_proof(runtime, source, target, "success");
-            if (!target->seed_pixel_proof_valid) {
+            const bool seed_proof_required = export_pixel_proof_enabled();
+            const bool seed_copy_valid     = !seed_proof_required || target->seed_pixel_proof_valid;
+            if (!seed_copy_valid) {
                 if (target_predecode_exported) {
                     target->predecode_seeded       = false;
                     target->seed_source_surface_id = VA_INVALID_ID;

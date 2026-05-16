@@ -6,6 +6,8 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <drm_fourcc.h>
 #include <fcntl.h>
 #include <mutex>
@@ -31,6 +33,17 @@ namespace {
 
     void init_nv12_surface(VkvvSurface* surface, VASurfaceID id, uint64_t stream_id, VkVideoCodecOperationFlagsKHR codec_operation) {
         init_nv12_surface_sized(surface, id, stream_id, codec_operation, 64, 64);
+    }
+
+    bool pixel_proof_enabled_for_smoke() {
+        const char* value = std::getenv("VKVV_PIXEL_PROOF");
+        if (value == nullptr || value[0] == '\0') {
+            value = std::getenv("VKVV_EXPORT_PIXEL_PROOF");
+        }
+        if (value == nullptr || value[0] == '\0') {
+            value = std::getenv("VKVV_TRACE_PIXEL_PROOF");
+        }
+        return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 && std::strcmp(value, "off") != 0;
     }
 
     vkvv::DecodeImageKey h264_decode_key(const vkvv::H264VideoSession* session, const VkvvSurface* surface, VkExtent2D coded_extent) {
@@ -449,10 +462,12 @@ namespace {
         return true;
     }
 
-    [[maybe_unused]] bool check_export_time_last_good_keeps_placeholder(vkvv::VulkanRuntime* runtime) {
+    bool check_export_time_last_good_structural_seed(vkvv::VulkanRuntime* runtime) {
         char                        reason[512] = {};
         void*                       session     = nullptr;
+        VADRMPRIMESurfaceDescriptor source_descriptor{};
         VADRMPRIMESurfaceDescriptor descriptor{};
+        source_descriptor.objects[0].fd = -1;
         descriptor.objects[0].fd = -1;
 
         VkvvSurface decoded{};
@@ -461,15 +476,15 @@ namespace {
         VkvvSurface late_export{};
         init_nv12_surface_sized(&late_export, 906, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, non_thumbnail_seed_width, non_thumbnail_seed_height);
 
-        VkvvSurface newer_visible{};
-        init_nv12_surface_sized(&newer_visible, 907, decoded.stream_id, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, non_thumbnail_seed_width, non_thumbnail_seed_height);
-
         auto cleanup = [&]() {
+            if (source_descriptor.objects[0].fd >= 0) {
+                close(source_descriptor.objects[0].fd);
+                source_descriptor.objects[0].fd = -1;
+            }
             if (descriptor.objects[0].fd >= 0) {
                 close(descriptor.objects[0].fd);
                 descriptor.objects[0].fd = -1;
             }
-            vkvv_vulkan_surface_destroy(runtime, &newer_visible);
             vkvv_vulkan_surface_destroy(runtime, &late_export);
             vkvv_vulkan_surface_destroy(runtime, &decoded);
             vkvv_vulkan_h264_session_destroy(runtime, session);
@@ -489,12 +504,28 @@ namespace {
 
         auto*                      typed_session = static_cast<vkvv::H264VideoSession*>(session);
         const vkvv::DecodeImageKey decode_key    = h264_decode_key(typed_session, &decoded, {non_thumbnail_seed_width, non_thumbnail_seed_height});
+        status                                 = vkvv_vulkan_prepare_surface_export(runtime, &decoded, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        if (status != VA_STATUS_SUCCESS) {
+            cleanup();
+            return false;
+        }
+        status = vkvv_vulkan_export_surface(runtime, &decoded, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &source_descriptor, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        auto* decoded_resource = static_cast<vkvv::SurfaceResource*>(decoded.vulkan);
+        if (status != VA_STATUS_SUCCESS || source_descriptor.objects[0].fd < 0 || decoded_resource == nullptr ||
+            vkvv::export_resource_fd_role(&decoded_resource->export_resource) != vkvv::VkvvExportRole::PredecodeBacking ||
+            vkvv::export_resource_fd_may_be_sampled_by_client(&decoded_resource->export_resource)) {
+            std::fprintf(stderr, "decoded source did not start with a non-sampleable predecode backing fd\n");
+            cleanup();
+            return false;
+        }
         if (!vkvv::ensure_surface_resource(runtime, &decoded, decode_key, reason, sizeof(reason))) {
             std::fprintf(stderr, "%s\n", reason);
             cleanup();
             return false;
         }
-        auto* decoded_resource = static_cast<vkvv::SurfaceResource*>(decoded.vulkan);
+        decoded_resource = static_cast<vkvv::SurfaceResource*>(decoded.vulkan);
         decoded.decoded        = true;
         decoded_resource->content_generation++;
         status = vkvv_vulkan_refresh_surface_export(runtime, &decoded, true, reason, sizeof(reason));
@@ -502,6 +533,11 @@ namespace {
             std::printf("%s\n", reason);
         }
         if (status != VA_STATUS_SUCCESS) {
+            cleanup();
+            return false;
+        }
+        if (decoded_resource->export_seed_generation != decoded_resource->content_generation || !vkvv::predecode_seed_source_safe_for_client(decoded_resource)) {
+            std::fprintf(stderr, "decoded visible source was not structurally eligible for predecode seeding\n");
             cleanup();
             return false;
         }
@@ -515,40 +551,31 @@ namespace {
         status = vkvv_vulkan_export_surface(runtime, &late_export, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &descriptor, reason, sizeof(reason));
         std::printf("%s\n", reason);
         auto* late_resource = static_cast<vkvv::SurfaceResource*>(late_export.vulkan);
-        if (status != VA_STATUS_SUCCESS || late_resource == nullptr || !late_resource->export_resource.predecode_exported || late_resource->export_resource.predecode_seeded ||
-            !late_resource->export_resource.black_placeholder || late_resource->export_resource.seed_source_surface_id != VA_INVALID_ID ||
-            late_resource->export_resource.seed_source_generation != 0) {
-            std::fprintf(stderr, "predecode export seeded from the last same-stream decoded surface before fd return\n");
+        const bool proof_enabled = pixel_proof_enabled_for_smoke();
+        if (proof_enabled) {
+            if (status != VA_STATUS_SUCCESS || descriptor.objects[0].fd < 0 || late_resource == nullptr || !late_resource->export_resource.predecode_exported ||
+                late_resource->export_resource.predecode_seeded || !late_resource->export_resource.black_placeholder ||
+                late_resource->export_resource.seed_source_surface_id != VA_INVALID_ID || late_resource->export_resource.seed_source_generation != 0 ||
+                late_resource->export_resource.content_generation != 0 ||
+                vkvv::export_resource_fd_role(&late_resource->export_resource) != vkvv::VkvvExportRole::PredecodeBacking ||
+                vkvv::export_resource_fd_may_be_sampled_by_client(&late_resource->export_resource)) {
+                std::fprintf(stderr, "pixel-proof mode accepted an unproven structural seed\n");
+                cleanup();
+                return false;
+            }
             cleanup();
-            return false;
+            return true;
         }
-        if (late_resource->export_resource.presentable || late_resource->export_resource.present_pinned || late_resource->export_resource.present_generation != 0) {
-            std::fprintf(stderr, "export-time predecode seed should remain non-presentable\n");
-            cleanup();
-            return false;
-        }
-
-        const vkvv::DecodeImageKey newer_decode_key = h264_decode_key(typed_session, &newer_visible, {non_thumbnail_seed_width, non_thumbnail_seed_height});
-        if (!vkvv::ensure_surface_resource(runtime, &newer_visible, newer_decode_key, reason, sizeof(reason))) {
-            std::fprintf(stderr, "%s\n", reason);
-            cleanup();
-            return false;
-        }
-        auto* newer_resource  = static_cast<vkvv::SurfaceResource*>(newer_visible.vulkan);
-        newer_visible.decoded = true;
-        newer_resource->content_generation++;
-        status = vkvv_vulkan_refresh_surface_export(runtime, &newer_visible, true, reason, sizeof(reason));
-        if (reason[0] != '\0') {
-            std::printf("%s\n", reason);
-        }
-        if (status != VA_STATUS_SUCCESS) {
-            cleanup();
-            return false;
-        }
-        if (!late_resource->export_resource.predecode_exported || late_resource->export_resource.predecode_seeded ||
-            late_resource->export_resource.seed_source_surface_id != VA_INVALID_ID || late_resource->export_resource.seed_source_generation != 0 ||
-            late_resource->export_resource.content_generation != 0) {
-            std::fprintf(stderr, "predecode placeholder was seeded by a newer visible frame\n");
+        if (status != VA_STATUS_SUCCESS || descriptor.objects[0].fd < 0 || late_resource == nullptr || !late_resource->export_resource.predecode_exported ||
+            !late_resource->export_resource.predecode_seeded || late_resource->export_resource.black_placeholder ||
+            late_resource->export_resource.seed_source_surface_id != decoded.id ||
+            late_resource->export_resource.seed_source_generation != decoded_resource->content_generation ||
+            late_resource->export_resource.content_generation != decoded_resource->content_generation ||
+            vkvv::export_resource_fd_content_generation(&late_resource->export_resource) != decoded_resource->content_generation ||
+            !vkvv::export_resource_fd_may_be_sampled_by_client(&late_resource->export_resource) ||
+            vkvv::export_resource_fd_role(&late_resource->export_resource) != vkvv::VkvvExportRole::PixelProvenSeed ||
+            late_resource->export_resource.presentable || late_resource->export_resource.present_pinned || late_resource->export_resource.present_generation != 0) {
+            std::fprintf(stderr, "non-thumbnail predecode export did not seed from a structurally valid visible source\n");
             cleanup();
             return false;
         }
@@ -1308,6 +1335,10 @@ int main(void) {
         return 1;
     }
     if (!check_cross_codec_import_does_not_attach_retained_backing(typed_runtime)) {
+        vkvv_vulkan_runtime_destroy(runtime);
+        return 1;
+    }
+    if (!check_export_time_last_good_structural_seed(typed_runtime)) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
