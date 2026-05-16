@@ -1,5 +1,4 @@
 #include "va/driver.h"
-#include "codecs/av1/av1.h"
 
 #include <array>
 #include <cstdio>
@@ -250,12 +249,6 @@ namespace {
 
         if (capabilities.video.maxDpbSlots == 0 || capabilities.video.maxActiveReferencePictures == 0) {
             std::snprintf(reason, reason_size, "dpb=%u refs=%u", capabilities.video.maxDpbSlots, capabilities.video.maxActiveReferencePictures);
-            return false;
-        }
-        if (probe.operation == VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR &&
-            (capabilities.video.maxDpbSlots < VKVV_AV1_MIN_DPB_SLOTS || capabilities.video.maxActiveReferencePictures < VKVV_AV1_MIN_ACTIVE_REFERENCES)) {
-            std::snprintf(reason, reason_size, "av1-dpb=%u refs=%u min_dpb=%u min_refs=%u", capabilities.video.maxDpbSlots, capabilities.video.maxActiveReferencePictures,
-                          VKVV_AV1_MIN_DPB_SLOTS, VKVV_AV1_MIN_ACTIVE_REFERENCES);
             return false;
         }
 

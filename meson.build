@@ -16,14 +16,6 @@ project(
 cpp = meson.get_compiler('cpp')
 python3 = find_program('python3')
 
-trace_telemetry_option = get_option('trace_telemetry')
-trace_telemetry_enabled = trace_telemetry_option.enabled() or (trace_telemetry_option.auto() and get_option('debug'))
-trace_telemetry_define = '-DVKVV_ENABLE_TRACE_TELEMETRY=0'
-if trace_telemetry_enabled
-  trace_telemetry_define = '-DVKVV_ENABLE_TRACE_TELEMETRY=1'
-endif
-add_project_arguments(trace_telemetry_define, language: 'cpp')
-
 libva_dep = dependency('libva')
 libva_drm_dep = dependency('libva-drm')
 libdrm_dep = dependency('libdrm')
@@ -45,7 +37,6 @@ vulkan_runtime_sources = files(
   'src/vulkan/export/formats.cpp',
   'src/vulkan/export/retained.cpp',
   'src/vulkan/export/shadow_image.cpp',
-  'src/vulkan/export/state.cpp',
   'src/vulkan/formats.cpp',
   'src/vulkan/session.cpp',
   'src/vulkan/resources/surface.cpp',
@@ -236,18 +227,6 @@ capability_smoke = executable(
   install: false,
 )
 
-domain_smoke = executable(
-  'vkvv-domain-smoke',
-  files(
-    'tests/smoke/generic/domain_smoke.cpp',
-    'src/telemetry.cpp',
-    'src/va/domain.cpp',
-  ),
-  include_directories: src_inc,
-  dependencies: [libva_dep, vulkan_dep],
-  install: false,
-)
-
 surface_import_smoke = executable(
   'vkvv-surface-import-smoke',
   files(
@@ -263,10 +242,7 @@ retained_export_smoke = executable(
   'vkvv-retained-export-smoke',
   files(
     'tests/smoke/generic/retained_export_smoke.cpp',
-    'src/telemetry.cpp',
-    'src/va/surface_import.cpp',
     'src/vulkan/export/retained.cpp',
-    'src/vulkan/export/state.cpp',
   ),
   include_directories: src_inc,
   dependencies: [libva_dep, vulkan_dep],
@@ -283,6 +259,14 @@ telemetry_smoke = executable(
   install: false,
 )
 
+perf_counters_smoke = executable(
+  'vkvv-perf-counters-smoke',
+  files('tests/smoke/generic/perf_counters_smoke.cpp'),
+  include_directories: src_inc,
+  dependencies: [libva_dep, vulkan_dep],
+  install: false,
+)
+
 driver_test_env = environment()
 driver_test_env.set('LIBVA_DRIVER_NAME', 'nvidia_vulkan')
 driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
@@ -290,40 +274,43 @@ driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
 telemetry_trace_off_env = environment()
 telemetry_trace_off_env.set('VKVV_TRACE', '0')
 telemetry_trace_off_env.set('VKVV_EXPECT_TRACE', '0')
-telemetry_trace_off_env.set('VKVV_EXPECT_TRACE_COMPILED', trace_telemetry_enabled ? '1' : '0')
 telemetry_trace_off_env.set('VKVV_LOG', '0')
 telemetry_trace_off_env.set('VKVV_EXPECT_LOG', '0')
+telemetry_trace_off_env.set('VKVV_PERF', '0')
+telemetry_trace_off_env.set('VKVV_EXPECT_PERF', '0')
 
 telemetry_trace_on_env = environment()
 telemetry_trace_on_env.set('VKVV_TRACE', '1')
-telemetry_trace_on_env.set('VKVV_EXPECT_TRACE', trace_telemetry_enabled ? '1' : '0')
-telemetry_trace_on_env.set('VKVV_EXPECT_TRACE_COMPILED', trace_telemetry_enabled ? '1' : '0')
+telemetry_trace_on_env.set('VKVV_EXPECT_TRACE', '1')
 telemetry_trace_on_env.set('VKVV_LOG', '1')
 telemetry_trace_on_env.set('VKVV_EXPECT_LOG', '1')
+telemetry_trace_on_env.set('VKVV_PERF', '0')
+telemetry_trace_on_env.set('VKVV_EXPECT_PERF', '0')
 
 telemetry_log_on_env = environment()
 telemetry_log_on_env.set('VKVV_TRACE', '0')
 telemetry_log_on_env.set('VKVV_EXPECT_TRACE', '0')
-telemetry_log_on_env.set('VKVV_EXPECT_TRACE_COMPILED', trace_telemetry_enabled ? '1' : '0')
 telemetry_log_on_env.set('VKVV_LOG', '1')
 telemetry_log_on_env.set('VKVV_EXPECT_LOG', '1')
+telemetry_log_on_env.set('VKVV_PERF', '0')
+telemetry_log_on_env.set('VKVV_EXPECT_PERF', '0')
 
 telemetry_trace_deep_env = environment()
 telemetry_trace_deep_env.set('VKVV_TRACE', 'deep')
-telemetry_trace_deep_env.set('VKVV_EXPECT_TRACE', trace_telemetry_enabled ? '1' : '0')
-telemetry_trace_deep_env.set('VKVV_EXPECT_TRACE_DEEP', trace_telemetry_enabled ? '1' : '0')
-telemetry_trace_deep_env.set('VKVV_EXPECT_TRACE_COMPILED', trace_telemetry_enabled ? '1' : '0')
+telemetry_trace_deep_env.set('VKVV_EXPECT_TRACE', '1')
+telemetry_trace_deep_env.set('VKVV_EXPECT_TRACE_DEEP', '1')
 telemetry_trace_deep_env.set('VKVV_LOG', '0')
 telemetry_trace_deep_env.set('VKVV_EXPECT_LOG', '0')
+telemetry_trace_deep_env.set('VKVV_PERF', '0')
+telemetry_trace_deep_env.set('VKVV_EXPECT_PERF', '0')
 
-telemetry_log_file_env = environment()
-telemetry_log_file_env.set('VKVV_TRACE', '1')
-telemetry_log_file_env.set('VKVV_EXPECT_TRACE', trace_telemetry_enabled ? '1' : '0')
-telemetry_log_file_env.set('VKVV_EXPECT_TRACE_COMPILED', trace_telemetry_enabled ? '1' : '0')
-telemetry_log_file_env.set('VKVV_LOG', '1')
-telemetry_log_file_env.set('VKVV_EXPECT_LOG', '1')
-telemetry_log_file_env.set('VKVV_LOG_FILE', '/tmp/vkvv-telemetry-smoke.log')
-telemetry_log_file_env.set('VKVV_EXPECT_LOG_FILE', '1')
+telemetry_perf_on_env = environment()
+telemetry_perf_on_env.set('VKVV_TRACE', '0')
+telemetry_perf_on_env.set('VKVV_EXPECT_TRACE', '0')
+telemetry_perf_on_env.set('VKVV_LOG', '0')
+telemetry_perf_on_env.set('VKVV_EXPECT_LOG', '0')
+telemetry_perf_on_env.set('VKVV_PERF', '1')
+telemetry_perf_on_env.set('VKVV_EXPECT_PERF', '1')
 
 test('smoke-session', session_smoke, is_parallel: false, timeout: 30)
 test('smoke-hevc-session', hevc_session_smoke, is_parallel: false, timeout: 30)
@@ -336,14 +323,14 @@ test('smoke-lifetime', lifetime_smoke, env: driver_test_env, is_parallel: false,
 test('smoke-multi-context', multi_context_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-sync', sync_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
 test('smoke-capability', capability_smoke, env: driver_test_env, is_parallel: false, timeout: 30)
-test('smoke-domain', domain_smoke, is_parallel: false, timeout: 30)
 test('smoke-surface-import', surface_import_smoke, is_parallel: false, timeout: 30)
 test('smoke-retained-export', retained_export_smoke, is_parallel: false, timeout: 30)
+test('smoke-perf-summary', python3, args: [files('tests/smoke/generic/perf_summary_smoke.py'), meson.current_build_dir() / 'vkvv-lifetime-smoke'], env: driver_test_env,
+     is_parallel: false, timeout: 30)
 test('smoke-telemetry-off', telemetry_smoke, env: telemetry_trace_off_env, is_parallel: false, timeout: 30)
 test('smoke-telemetry-on', telemetry_smoke, env: telemetry_trace_on_env, is_parallel: false, timeout: 30)
 test('smoke-telemetry-log-on', telemetry_smoke, env: telemetry_log_on_env, is_parallel: false, timeout: 30)
 test('smoke-telemetry-deep', telemetry_smoke, env: telemetry_trace_deep_env, is_parallel: false, timeout: 30)
-test('smoke-telemetry-log-file', telemetry_smoke, env: telemetry_log_file_env, is_parallel: false, timeout: 30)
+test('smoke-telemetry-perf-on', telemetry_smoke, env: telemetry_perf_on_env, is_parallel: false, timeout: 30)
+test('smoke-perf-counters', perf_counters_smoke, is_parallel: false, timeout: 30)
 test('smoke-telemetry-patterns', python3, args: [files('tests/smoke/generic/telemetry_patterns.py'), meson.current_source_dir()], is_parallel: false, timeout: 30)
-test('smoke-trace-log-profiler', python3, args: [files('tests/smoke/generic/trace_log_profiler_smoke.py'), meson.current_source_dir()], is_parallel: false,
-     timeout: 30)

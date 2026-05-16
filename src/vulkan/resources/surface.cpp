@@ -11,6 +11,97 @@
 
 namespace vkvv {
 
+    namespace {
+
+        uint64_t perf_value(const std::atomic<uint64_t>& value) {
+            return value.load(std::memory_order_relaxed);
+        }
+
+        void perf_mix(uint64_t* hash, uint64_t value) {
+            if (value == 0) {
+                return;
+            }
+            *hash ^= value + 0x9e3779b97f4a7c15ull + (*hash << 6U) + (*hash >> 2U);
+        }
+
+        uint64_t perf_summary_fingerprint(VulkanRuntime* runtime, const RetainedExportStats& retained) {
+            uint64_t hash = 0;
+            perf_mix(&hash, perf_value(runtime->perf.decode_submitted));
+            perf_mix(&hash, perf_value(runtime->perf.decode_completed));
+            perf_mix(&hash, perf_value(runtime->perf.command_fence_polls));
+            perf_mix(&hash, perf_value(runtime->perf.command_fence_waits));
+            perf_mix(&hash, perf_value(runtime->perf.command_fence_wait_ns));
+            perf_mix(&hash, perf_value(runtime->perf.upload_bytes));
+            perf_mix(&hash, perf_value(runtime->perf.upload_high_water));
+            perf_mix(&hash, perf_value(runtime->perf.pending_high_water));
+            perf_mix(&hash, perf_value(runtime->perf.decode_image_high_water));
+            perf_mix(&hash, perf_value(runtime->perf.export_image_high_water));
+            perf_mix(&hash, perf_value(runtime->perf.video_session_high_water));
+            perf_mix(&hash, perf_value(runtime->perf.export_refresh_requested));
+            perf_mix(&hash, perf_value(runtime->perf.export_refresh_skipped));
+            perf_mix(&hash, perf_value(runtime->perf.export_refresh_no_backing));
+            perf_mix(&hash, perf_value(runtime->perf.export_copy_count));
+            perf_mix(&hash, perf_value(runtime->perf.export_copy_targets));
+            perf_mix(&hash, perf_value(runtime->perf.export_copy_bytes));
+            perf_mix(&hash, perf_value(runtime->perf.export_copy_wait_ns));
+            perf_mix(&hash, perf_value(runtime->perf.retained_export_pruned));
+            perf_mix(&hash, perf_value(runtime->perf.retained_export_removed));
+            perf_mix(&hash, perf_value(runtime->perf.h264_decode.submitted));
+            perf_mix(&hash, perf_value(runtime->perf.h264_decode.completed));
+            perf_mix(&hash, perf_value(runtime->perf.h265_decode.submitted));
+            perf_mix(&hash, perf_value(runtime->perf.h265_decode.completed));
+            perf_mix(&hash, perf_value(runtime->perf.vp9_decode.submitted));
+            perf_mix(&hash, perf_value(runtime->perf.vp9_decode.completed));
+            perf_mix(&hash, perf_value(runtime->perf.av1_decode.submitted));
+            perf_mix(&hash, perf_value(runtime->perf.av1_decode.completed));
+            perf_mix(&hash, static_cast<uint64_t>(retained.count));
+            perf_mix(&hash, static_cast<uint64_t>(retained.bytes));
+            return hash;
+        }
+
+        void emit_perf_summary(VulkanRuntime* runtime) {
+            if (runtime == nullptr || !vkvv_perf_enabled()) {
+                return;
+            }
+
+            const RetainedExportStats retained    = runtime_retained_export_stats(runtime);
+            const uint64_t            fingerprint = perf_summary_fingerprint(runtime, retained);
+            if (fingerprint == 0) {
+                return;
+            }
+            uint64_t previous = runtime->perf.summary_fingerprint.load(std::memory_order_relaxed);
+            if (previous == fingerprint ||
+                !runtime->perf.summary_fingerprint.compare_exchange_strong(previous, fingerprint, std::memory_order_relaxed, std::memory_order_relaxed)) {
+                return;
+            }
+            std::fprintf(
+                stderr,
+                "nvidia-vulkan-vaapi: perf decode_submitted=%llu decode_completed=%llu h264=%llu/%llu h265=%llu/%llu vp9=%llu/%llu av1=%llu/%llu "
+                "fence_polls=%llu fence_waits=%llu fence_wait_ns=%llu upload_bytes=%llu upload_high=%llu pending_high=%llu decode_image_high=%llu "
+                "export_image_high=%llu session_high=%llu export_refresh=%llu export_skip=%llu export_no_backing=%llu export_copies=%llu export_targets=%llu "
+                "export_copy_bytes=%llu export_copy_wait_ns=%llu retained=%zu retained_mem=%llu retained_pruned=%llu retained_removed=%llu\n",
+                static_cast<unsigned long long>(perf_value(runtime->perf.decode_submitted)), static_cast<unsigned long long>(perf_value(runtime->perf.decode_completed)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.h264_decode.submitted)), static_cast<unsigned long long>(perf_value(runtime->perf.h264_decode.completed)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.h265_decode.submitted)), static_cast<unsigned long long>(perf_value(runtime->perf.h265_decode.completed)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.vp9_decode.submitted)), static_cast<unsigned long long>(perf_value(runtime->perf.vp9_decode.completed)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.av1_decode.submitted)), static_cast<unsigned long long>(perf_value(runtime->perf.av1_decode.completed)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.command_fence_polls)), static_cast<unsigned long long>(perf_value(runtime->perf.command_fence_waits)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.command_fence_wait_ns)), static_cast<unsigned long long>(perf_value(runtime->perf.upload_bytes)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.upload_high_water)), static_cast<unsigned long long>(perf_value(runtime->perf.pending_high_water)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.decode_image_high_water)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.export_image_high_water)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.video_session_high_water)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.export_refresh_requested)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.export_refresh_skipped)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.export_refresh_no_backing)), static_cast<unsigned long long>(perf_value(runtime->perf.export_copy_count)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.export_copy_targets)), static_cast<unsigned long long>(perf_value(runtime->perf.export_copy_bytes)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.export_copy_wait_ns)), retained.count, static_cast<unsigned long long>(retained.bytes),
+                static_cast<unsigned long long>(perf_value(runtime->perf.retained_export_pruned)),
+                static_cast<unsigned long long>(perf_value(runtime->perf.retained_export_removed)));
+        }
+
+    } // namespace
+
     VulkanRuntime::~VulkanRuntime() {
         if (device != VK_NULL_HANDLE && runtime_pending_work_count(this) > 0) {
             char     reason[512] = {};
@@ -20,6 +111,7 @@ namespace vkvv {
                 discard_pending_work_for_teardown(this, status, reason);
             }
         }
+        emit_perf_summary(this);
         destroy_command_resources();
         destroy_detached_export_resources();
         if (device != VK_NULL_HANDLE) {
@@ -76,16 +168,6 @@ namespace vkvv {
         if (resource == nullptr) {
             return;
         }
-        if (resource->predecode_quarantined) {
-            trace_predecode_quarantine_outcome(nullptr, resource, "destroyed", "surface-destroy", false);
-            VKVV_TRACE("export-resource-destroy",
-                       "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx fd_dev=%llu fd_ino=%llu content_gen=%llu predecode_quarantined=1 export_role=%s",
-                       resource->owner_surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
-                       resource->codec_operation, vkvv_trace_handle(resource->memory), static_cast<unsigned long long>(resource->predecode_fd_dev),
-                       static_cast<unsigned long long>(resource->predecode_fd_ino), static_cast<unsigned long long>(resource->predecode_generation),
-                       vkvv_export_role_name(export_resource_fd_role(resource)));
-        }
-        trace_export_fd_lifetime(nullptr, resource, "destroy", resource->content_generation, export_resource_fd_may_be_sampled_by_client(resource));
         if (resource->image != VK_NULL_HANDLE) {
             vkDestroyImage(runtime->device, resource->image, nullptr);
             resource->image = VK_NULL_HANDLE;
@@ -94,44 +176,30 @@ namespace vkvv {
             vkFreeMemory(runtime->device, resource->memory, nullptr);
             resource->memory = VK_NULL_HANDLE;
         }
-        resource->driver_instance_id           = 0;
-        resource->stream_id                    = 0;
-        resource->codec_operation              = 0;
-        resource->owner_surface_id             = VA_INVALID_ID;
-        resource->extent                       = {};
-        resource->format                       = VK_FORMAT_UNDEFINED;
-        resource->va_fourcc                    = 0;
-        resource->allocation_size              = 0;
-        resource->plane_layouts[0]             = {};
-        resource->plane_layouts[1]             = {};
-        resource->plane_count                  = 0;
-        resource->drm_format_modifier          = 0;
-        resource->has_drm_format_modifier      = false;
-        resource->exported                     = false;
-        resource->predecode_exported           = false;
-        resource->predecode_seeded             = false;
-        resource->predecode_quarantined        = false;
-        resource->predecode_fd_dev             = 0;
-        resource->predecode_fd_ino             = 0;
-        resource->predecode_generation         = 0;
-        resource->predecode_quarantine_enter_ms = 0;
-        resource->predecode_had_va_begin       = false;
-        resource->predecode_had_decode_submit  = false;
-        resource->predecode_had_visible_decode = false;
-        resource->neutral_backing            = false;
-        resource->seed_source_surface_id       = VA_INVALID_ID;
-        resource->seed_source_generation       = 0;
-        resource->seed_pixel_proof_valid       = false;
-        resource->content_generation           = 0;
-        resource->decode_shadow_generation     = 0;
-        resource->decode_shadow_private_active = false;
-        resource->fd_stat_valid                = false;
-        resource->fd_dev                       = 0;
-        resource->fd_ino                       = 0;
-        resource->exported_fd                  = {};
-        resource->external_sync                = {};
-        clear_export_present_state(resource);
-        resource->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        resource->driver_instance_id      = 0;
+        resource->stream_id               = 0;
+        resource->codec_operation         = 0;
+        resource->owner_surface_id        = VA_INVALID_ID;
+        resource->extent                  = {};
+        resource->format                  = VK_FORMAT_UNDEFINED;
+        resource->va_fourcc               = 0;
+        resource->allocation_size         = 0;
+        resource->plane_layouts[0]        = {};
+        resource->plane_layouts[1]        = {};
+        resource->plane_count             = 0;
+        resource->drm_format_modifier     = 0;
+        resource->has_drm_format_modifier = false;
+        resource->exported                = false;
+        resource->predecode_exported      = false;
+        resource->predecode_seeded        = false;
+        resource->black_placeholder       = false;
+        resource->seed_source_surface_id  = VA_INVALID_ID;
+        resource->seed_source_generation  = 0;
+        resource->content_generation      = 0;
+        resource->fd_stat_valid           = false;
+        resource->fd_dev                  = 0;
+        resource->fd_ino                  = 0;
+        resource->layout                  = VK_IMAGE_LAYOUT_UNDEFINED;
     }
 
     VkDeviceSize export_memory_bytes(const SurfaceResource* resource) {
@@ -362,6 +430,9 @@ namespace vkvv {
             destroy_export_resource(runtime, &oldest);
             runtime->retained_exports.erase(runtime->retained_exports.begin() + static_cast<std::ptrdiff_t>(victim_index));
             runtime->retained_export_memory_bytes = runtime->retained_export_memory_bytes > bytes ? runtime->retained_export_memory_bytes - bytes : 0;
+            if (vkvv_perf_enabled()) {
+                runtime->perf.retained_export_pruned.fetch_add(1, std::memory_order_relaxed);
+            }
             refresh_transition_retention_window_locked(runtime, nullptr, "prune");
         }
     }
@@ -393,17 +464,13 @@ namespace vkvv {
         RetainedExportBacking& backing  = runtime->retained_exports[index];
         ExportResource&        resource = backing.resource;
         const VkDeviceSize     bytes    = resource.allocation_size;
-        const VASurfaceID      owner    = resource.owner_surface_id;
-        const uint64_t         driver   = resource.driver_instance_id;
-        const uint64_t         stream   = resource.stream_id;
-        const auto             codec    = resource.codec_operation;
         backing.state                   = RetainedExportState::Expired;
         destroy_export_resource(runtime, &resource);
         runtime->retained_exports.erase(runtime->retained_exports.begin() + static_cast<std::ptrdiff_t>(index));
         runtime->retained_export_memory_bytes = runtime->retained_export_memory_bytes > bytes ? runtime->retained_export_memory_bytes - bytes : 0;
-        VKVV_TRACE("retained-export-remove", "owner=%u driver=%llu stream=%llu codec=0x%x bytes=%llu retained=%zu retained_mem=%llu", owner,
-                   static_cast<unsigned long long>(driver), static_cast<unsigned long long>(stream), codec, static_cast<unsigned long long>(bytes),
-                   runtime->retained_exports.size(), static_cast<unsigned long long>(runtime->retained_export_memory_bytes));
+        if (vkvv_perf_enabled()) {
+            runtime->perf.retained_export_removed.fetch_add(1, std::memory_order_relaxed);
+        }
         refresh_transition_retention_window_locked(runtime, nullptr, "remove");
     }
 
@@ -445,15 +512,7 @@ namespace vkvv {
             return;
         }
 
-        const bool role_retainable = export_resource_has_valid_retained_presentation(&resource->export_resource);
-        if (resource->export_resource.private_nondisplay_shadow || (resource->export_resource.exported && !role_retainable)) {
-            VKVV_TRACE("retained-role-mismatch-drop", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx exported=%u client_visible=%u private_only=%u export_role=%s",
-                       resource->export_resource.owner_surface_id, static_cast<unsigned long long>(resource->export_resource.driver_instance_id),
-                       static_cast<unsigned long long>(resource->export_resource.stream_id), resource->export_resource.codec_operation,
-                       vkvv_trace_handle(resource->export_resource.memory), resource->export_resource.exported ? 1U : 0U, resource->export_resource.client_visible_shadow ? 1U : 0U,
-                       resource->export_resource.private_nondisplay_shadow ? 1U : 0U, vkvv_export_role_name(export_resource_fd_role(&resource->export_resource)));
-        }
-        const bool                   retainable = role_retainable && resource->export_resource.allocation_size != 0 && !runtime->device_lost;
+        const bool                   retainable = resource->export_resource.exported && resource->export_resource.allocation_size != 0 && !runtime->device_lost;
         std::unique_lock<std::mutex> lock(runtime->export_mutex);
         if (retainable) {
             try {
@@ -475,21 +534,14 @@ namespace vkvv {
 
         unregister_predecode_export_resource_locked(runtime, &resource->export_resource);
         resource->exported = false;
-        clear_surface_export_attach_state(resource);
         RetainedExportBacking backing{};
-        ExportResource&       detached        = backing.resource;
-        detached                              = resource->export_resource;
-        resource->export_resource             = {};
-        detached.driver_instance_id           = resource->driver_instance_id;
-        detached.stream_id                    = resource->stream_id;
-        detached.codec_operation              = resource->codec_operation;
-        detached.owner_surface_id             = resource->surface_id;
-        detached.client_visible_shadow        = detached.exported;
-        detached.private_nondisplay_shadow    = false;
-        detached.decode_shadow_private_active = false;
-        detached.decode_shadow_generation     = detached.content_generation;
-        mark_export_fd_detached(&detached);
-        trace_export_fd_lifetime(resource, &detached, "retained-detach", detached.content_generation, false);
+        ExportResource&       detached = backing.resource;
+        detached                       = resource->export_resource;
+        resource->export_resource      = {};
+        detached.driver_instance_id    = resource->driver_instance_id;
+        detached.stream_id             = resource->stream_id;
+        detached.codec_operation       = resource->codec_operation;
+        detached.owner_surface_id      = resource->surface_id;
         if (!retainable) {
             lock.unlock();
             destroy_export_resource(runtime, &detached);
@@ -519,12 +571,6 @@ namespace vkvv {
                        static_cast<unsigned long long>(detached_bytes), retained.fd.valid ? 1U : 0U, static_cast<unsigned long long>(retained.fd.dev),
                        static_cast<unsigned long long>(retained.fd.ino), runtime->retained_exports.size(), static_cast<unsigned long long>(runtime->retained_export_memory_bytes),
                        static_cast<unsigned long long>(retained.retained_sequence));
-            VKVV_TRACE("retained-present-shadow-attach",
-                       "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx content_gen=%llu present_gen=%llu client_visible=1 private_only=0 retained=%zu seq=%llu",
-                       retained.resource.owner_surface_id, static_cast<unsigned long long>(retained.resource.driver_instance_id),
-                       static_cast<unsigned long long>(retained.resource.stream_id), retained.resource.codec_operation, vkvv_trace_handle(retained.resource.memory),
-                       static_cast<unsigned long long>(retained.resource.content_generation), static_cast<unsigned long long>(retained.resource.present_generation),
-                       runtime->retained_exports.size(), static_cast<unsigned long long>(retained.retained_sequence));
             refresh_transition_retention_window_locked(runtime, &retained.resource, "detach");
             prune_detached_export_resources_locked(runtime);
         } catch (...) { destroy_export_resource(runtime, &detached); }
@@ -561,10 +607,6 @@ namespace vkvv {
         resource->last_nondisplay_skip_shadow_generation = 0;
         resource->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
         resource->last_display_refresh_generation        = 0;
-        destroy_export_resource(runtime, &resource->private_decode_shadow);
-        clear_surface_export_attach_state(resource);
-        clear_surface_direct_import_present_state(resource);
-        clear_surface_visible_output_trace(resource);
     }
 
     void destroy_surface_resource_raw(VulkanRuntime* runtime, SurfaceResource* resource) {
@@ -572,11 +614,6 @@ namespace vkvv {
             return;
         }
 
-        const bool unused_predecode_backing = export_resource_fd_role(&resource->export_resource) == VkvvExportRole::PredecodeBacking &&
-            resource->export_resource.content_generation == 0 && !resource->export_resource.predecode_had_decode_submit;
-        trace_export_role_lifecycle(resource, &resource->export_resource, unused_predecode_backing ? "predecode-backing-unused-destroy" : "surface-destroy", false);
-        trace_export_fd_lifetime(resource, &resource->export_resource, unused_predecode_backing ? "predecode-backing-unused-destroy" : "surface-destroy", resource->content_generation,
-                                 export_resource_fd_may_be_sampled_by_client(&resource->export_resource));
         unregister_export_seed_resource(runtime, resource);
         detach_export_resource(runtime, resource);
         destroy_decode_resource_handles(runtime, resource);
@@ -622,9 +659,6 @@ namespace vkvv {
                 existing->last_nondisplay_skip_shadow_generation = 0;
                 existing->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
                 existing->last_display_refresh_generation        = 0;
-                destroy_export_resource(runtime, &existing->private_decode_shadow);
-                clear_surface_direct_import_present_state(existing);
-                clear_surface_visible_output_trace(existing);
             }
             existing->driver_instance_id = surface->driver_instance_id;
             existing->stream_id          = stream_id;
@@ -632,8 +666,6 @@ namespace vkvv {
             existing->surface_id         = surface->id;
             existing->visible_extent     = {surface->width, surface->height};
             existing->import             = surface->import;
-            clear_surface_direct_import_present_state(existing);
-            clear_surface_visible_output_trace(existing);
             VKVV_TRACE("surface-resource-reuse",
                        "surface=%u driver=%llu stream=%llu surface_codec=0x%x key_codec=0x%x resource_codec=0x%x content_gen=%llu shadow_gen=%llu predecode=%u imported=%u "
                        "import_fd_stat=%u import_fd_dev=%llu import_fd_ino=%llu",
@@ -820,8 +852,9 @@ namespace vkvv {
         resource->last_nondisplay_skip_shadow_generation = 0;
         resource->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
         resource->last_display_refresh_generation        = 0;
-        clear_surface_direct_import_present_state(resource);
-        clear_surface_visible_output_trace(resource);
+        if (vkvv_perf_enabled()) {
+            perf_update_high_water(runtime->perf.decode_image_high_water, static_cast<uint64_t>(resource->allocation_size));
+        }
         if (request_exportable) {
             VkImageSubresource plane0{};
             plane0.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT;
@@ -904,20 +937,14 @@ namespace vkvv {
 
 using namespace vkvv;
 
+void vkvv_vulkan_flush_perf_summary(void* runtime_ptr) {
+    emit_perf_summary(static_cast<VulkanRuntime*>(runtime_ptr));
+}
+
 void vkvv_vulkan_surface_destroy(void* runtime_ptr, VkvvSurface* surface) {
     auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
     if (runtime == nullptr) {
         return;
     }
     destroy_surface_resource(runtime, surface);
-}
-
-size_t vkvv_vulkan_retained_export_count(void* runtime_ptr) {
-    auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
-    return runtime_retained_export_count(runtime);
-}
-
-uint64_t vkvv_vulkan_retained_export_memory_bytes(void* runtime_ptr) {
-    auto* runtime = static_cast<VulkanRuntime*>(runtime_ptr);
-    return static_cast<uint64_t>(runtime_retained_export_memory_bytes(runtime));
 }

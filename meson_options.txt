@@ -1,6 +1,0 @@
-option(
-  'trace_telemetry',
-  type: 'feature',
-  value: 'auto',
-  description: 'Compile runtime diagnostic trace telemetry support. auto enables it for debug builds only.',
-)

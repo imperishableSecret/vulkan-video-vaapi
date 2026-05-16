@@ -1,5 +1,4 @@
 #include "va/private.h"
-#include "va/surface_import.h"
 
 #include <mutex>
 #include <new>
@@ -31,7 +30,6 @@ namespace {
                 auto*                        surface = static_cast<VkvvSurface*>(object->payload);
                 std::unique_lock<std::mutex> lock(surface->mutex);
                 lock.unlock();
-                vkvv_surface_import_close(&surface->import);
                 delete surface;
                 break;
             }

@@ -11,19 +11,17 @@ extern "C" {
 
 void*    vkvv_vulkan_runtime_create(char* reason, size_t reason_size);
 void     vkvv_vulkan_runtime_destroy(void* runtime);
+void     vkvv_vulkan_flush_perf_summary(void* runtime);
 bool     vkvv_vulkan_supports_surface_export(void* runtime);
 bool     vkvv_vulkan_surface_has_exported_backing(const VkvvSurface* surface);
 bool     vkvv_vulkan_surface_has_predecode_export(const VkvvSurface* surface);
 bool     vkvv_vulkan_surface_has_pending_export_refresh_work(void* runtime, const VkvvSurface* surface);
-size_t   vkvv_vulkan_retained_export_count(void* runtime);
-uint64_t vkvv_vulkan_retained_export_memory_bytes(void* runtime);
 VAStatus vkvv_vulkan_prepare_surface_export(void* runtime, VkvvSurface* surface, char* reason, size_t reason_size);
 VAStatus vkvv_vulkan_refresh_surface_export(void* runtime, VkvvSurface* surface, bool refresh_export, char* reason, size_t reason_size);
 VAStatus vkvv_vulkan_complete_surface_work(void* runtime, VkvvSurface* surface, uint64_t timeout_ns, char* reason, size_t reason_size);
 VAStatus vkvv_vulkan_drain_pending_work(void* runtime, char* reason, size_t reason_size);
 VAStatus vkvv_vulkan_export_surface(void* runtime, const VkvvSurface* surface, uint32_t flags, VADRMPRIMESurfaceDescriptor* descriptor, char* reason, size_t reason_size);
 void     vkvv_vulkan_note_surface_created(void* runtime, const VkvvSurface* surface);
-void     vkvv_vulkan_note_surface_decode_begin(const VkvvSurface* surface);
 void     vkvv_vulkan_prune_driver_exports(void* runtime, uint64_t driver_instance_id);
 void     vkvv_vulkan_surface_destroy(void* runtime, VkvvSurface* surface);
 

@@ -17,95 +17,6 @@ namespace vkvv {
     inline constexpr uint32_t invalid_queue_family = UINT32_MAX;
     inline constexpr size_t   command_slot_count   = 4;
 
-    enum class VkvvExportPresentSource {
-        None,
-        VisibleRefresh,
-        ShowExisting,
-        PredecodeBacking,
-        PrivateNondisplay,
-    };
-
-    const char* vkvv_export_present_source_name(VkvvExportPresentSource source);
-
-    enum class VkvvExternalReleaseMode {
-        NoneRequired,
-        ConcurrentSharing,
-        QueueFamilyOwnershipTransfer,
-        ImplicitSyncOnly,
-        ExplicitSyncFile,
-        ForceBarrierDebug,
-        NoSyncDebug,
-    };
-
-    const char* vkvv_external_release_mode_name(VkvvExternalReleaseMode mode);
-
-    enum class VkvvExportPixelSource {
-        None = 0,
-        DecodedContent,
-        StreamLocalSeed,
-        Placeholder,
-        RetainedUnknown,
-    };
-
-    const char* vkvv_export_pixel_source_name(VkvvExportPixelSource source);
-
-    enum class VkvvExportRole {
-        None = 0,
-        PredecodeBacking,
-        DecodedPixels,
-        PixelProvenSeed,
-        TransitionHold,
-    };
-
-    const char* vkvv_export_role_name(VkvvExportRole role);
-
-    struct VkvvReturnedFdProof {
-        bool                          returned_fd              = false;
-        int                           fd                       = -1;
-        uint64_t                      fd_dev                   = 0;
-        uint64_t                      fd_ino                   = 0;
-        bool                          may_be_sampled_by_client = false;
-        uint64_t                      surface_id               = VA_INVALID_ID;
-        uint64_t                      stream_id                = 0;
-        VkVideoCodecOperationFlagsKHR codec_operation          = 0;
-        uint64_t                      content_generation       = 0;
-        uint64_t                      fd_content_generation    = 0;
-        VkvvExportPixelSource         pixel_source             = VkvvExportPixelSource::None;
-        VkvvExportRole                export_role              = VkvvExportRole::None;
-        bool                          decoded_pixels_valid     = false;
-        bool                          seed_pixels_valid        = false;
-        bool                          placeholder_pixels       = false;
-        bool                          pixel_proof_valid        = false;
-        uint64_t                      pixel_crc                = 0;
-        uint64_t                      black_crc                = 0;
-        uint64_t                      zero_crc                 = 0;
-    };
-
-    struct ExternalSyncState {
-        bool                    external_release_required = false;
-        bool                    external_release_done     = false;
-        bool                    external_acquire_required = false;
-        bool                    external_acquire_done     = false;
-        uint32_t                src_queue_family          = invalid_queue_family;
-        uint32_t                dst_queue_family          = invalid_queue_family;
-        VkImageLayout           last_internal_layout      = VK_IMAGE_LAYOUT_UNDEFINED;
-        VkImageLayout           external_layout           = VK_IMAGE_LAYOUT_UNDEFINED;
-        uint64_t                released_generation       = 0;
-        uint64_t                acquired_generation       = 0;
-        VkvvExternalReleaseMode release_mode              = VkvvExternalReleaseMode::NoneRequired;
-    };
-
-    struct ExportedFdState {
-        bool     fd_exported                     = false;
-        uint64_t fd_dev                          = 0;
-        uint64_t fd_ino                          = 0;
-        bool     may_be_sampled_by_client        = false;
-        uint64_t fd_content_generation           = 0;
-        uint64_t last_written_content_generation = 0;
-        bool     detached_from_surface           = false;
-        VkvvExportRole role                       = VkvvExportRole::None;
-    };
-
     struct ExportResource {
         VkImage                       image              = VK_NULL_HANDLE;
         VkDeviceMemory                memory             = VK_NULL_HANDLE;
@@ -118,56 +29,21 @@ namespace vkvv {
         unsigned int                  va_fourcc       = 0;
         VkDeviceSize                  allocation_size = 0;
         VkSubresourceLayout           plane_layouts[2]{};
-        uint32_t                      plane_count                  = 0;
-        uint64_t                      drm_format_modifier          = 0;
-        bool                          has_drm_format_modifier      = false;
-        bool                          exported                     = false;
-        bool                          predecode_exported           = false;
-        bool                          predecode_seeded             = false;
-        bool                          predecode_quarantined        = false;
-        uint64_t                      predecode_fd_dev             = 0;
-        uint64_t                      predecode_fd_ino             = 0;
-        uint64_t                      predecode_generation         = 0;
-        uint64_t                      predecode_quarantine_enter_ms = 0;
-        bool                          predecode_had_va_begin       = false;
-        bool                          predecode_had_decode_submit  = false;
-        bool                          predecode_had_visible_decode = false;
-        bool                          neutral_backing            = false;
-        VASurfaceID                   seed_source_surface_id       = VA_INVALID_ID;
-        uint64_t                      seed_source_generation       = 0;
-        bool                          seed_pixel_proof_valid       = false;
-        uint64_t                      content_generation           = 0;
-        uint64_t                      decode_shadow_generation     = 0;
-        bool                          decode_shadow_private_active = false;
-        bool                          fd_stat_valid                = false;
-        uint64_t                      fd_dev                       = 0;
-        uint64_t                      fd_ino                       = 0;
-        ExportedFdState               exported_fd{};
-        bool                          present_pinned            = false;
-        bool                          presentable               = false;
-        bool                          published_visible         = false;
-        uint64_t                      present_generation        = 0;
-        uint64_t                      present_fd_dev            = 0;
-        uint64_t                      present_fd_ino            = 0;
-        VASurfaceID                   present_surface_id        = VA_INVALID_ID;
-        uint64_t                      present_stream_id         = 0;
-        VkVideoCodecOperationFlagsKHR present_codec_operation   = 0;
-        VkvvExportPresentSource       present_source            = VkvvExportPresentSource::None;
-        bool                          client_visible_shadow     = false;
-        bool                          private_nondisplay_shadow = false;
-        ExternalSyncState             external_sync{};
-        VkImageLayout                 layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        uint32_t                      plane_count             = 0;
+        uint64_t                      drm_format_modifier     = 0;
+        bool                          has_drm_format_modifier = false;
+        bool                          exported                = false;
+        bool                          predecode_exported      = false;
+        bool                          predecode_seeded        = false;
+        bool                          black_placeholder       = false;
+        VASurfaceID                   seed_source_surface_id  = VA_INVALID_ID;
+        uint64_t                      seed_source_generation  = 0;
+        uint64_t                      content_generation      = 0;
+        bool                          fd_stat_valid           = false;
+        uint64_t                      fd_dev                  = 0;
+        uint64_t                      fd_ino                  = 0;
+        VkImageLayout                 layout                  = VK_IMAGE_LAYOUT_UNDEFINED;
     };
-
-    enum class VkvvExportCopyReason {
-        VisibleRefresh,
-        PredecodeBackingSeed,
-        ImportOutput,
-        NondisplayCurrentRefresh,
-        NondisplayPrivateRefresh,
-    };
-
-    const char* vkvv_export_copy_reason_name(VkvvExportCopyReason reason);
 
     struct PredecodeExportRecord {
         ExportResource*               resource           = nullptr;
@@ -221,14 +97,9 @@ namespace vkvv {
         MissingImport,
         MissingFd,
         FdMismatch,
-        DriverMismatch,
-        StreamMismatch,
-        CodecMismatch,
         FourccMismatch,
-        ModifierMismatch,
         FormatMismatch,
         ExtentMismatch,
-        RoleMismatch,
     };
 
     struct RetainedExportBudget {
@@ -283,18 +154,6 @@ namespace vkvv {
         VkVideoComponentBitDepthFlagsKHR chroma_bit_depth   = 0;
     };
 
-    struct CodecVisibleOutputTrace {
-        bool        valid                     = false;
-        bool        visible_output            = false;
-        bool        show_existing             = false;
-        uint64_t    frame_sequence            = 0;
-        uint64_t    display_order             = 0;
-        uint32_t    frame_type                = 0;
-        uint32_t    refresh_flags             = 0;
-        int32_t     displayed_reference_index = -1;
-        const char* tile_or_slice_source      = "unknown";
-    };
-
     struct SurfaceResource {
         VkImage                       image              = VK_NULL_HANDLE;
         VkImageView                   view               = VK_NULL_HANDLE;
@@ -322,152 +181,10 @@ namespace vkvv {
         uint64_t                      last_nondisplay_skip_shadow_generation = 0;
         VkDeviceMemory                last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
         uint64_t                      last_display_refresh_generation        = 0;
-        bool                          export_retained_attached               = false;
-        bool                          export_import_attached                 = false;
-        bool                          import_output_copy_target              = false;
-        bool                          import_output_copy_done                = false;
-        bool                          direct_import_presentable              = false;
-        bool                          decode_image_is_imported_image         = false;
-        bool                          import_present_barrier_done            = false;
-        bool                          import_fd_stat_valid                   = false;
-        uint64_t                      import_present_generation              = 0;
-        uint64_t                      import_fd_dev                          = 0;
-        uint64_t                      import_fd_ino                          = 0;
-        uint64_t                      import_driver_instance_id              = 0;
-        uint64_t                      import_stream_id                       = 0;
-        VkVideoCodecOperationFlagsKHR import_codec_operation                 = 0;
-        CodecVisibleOutputTrace       visible_output_trace{};
-        uint64_t                      av1_frame_sequence                     = 0;
-        uint32_t                      av1_order_hint                         = 0;
-        uint32_t                      av1_frame_type                         = 0;
-        uint32_t                      av1_tile_count                         = 0;
-        uint32_t                      av1_tile_sum_size                      = 0;
-        bool                          av1_tile_ranges_valid                  = false;
-        int32_t                       av1_target_dpb_slot                    = -1;
-        int32_t                       av1_setup_slot                         = -1;
-        bool                          av1_references_valid                   = false;
-        uint32_t                      av1_reference_count                    = 0;
-        uint64_t                      av1_decode_fingerprint                 = 0;
-        uint64_t                      av1_previous_visible_fingerprint       = 0;
-        uint64_t                      av1_publish_fingerprint                = 0;
-        const char*                   av1_tile_source                        = "unknown";
-        bool                          decode_pixel_proof_valid               = false;
-        bool                          decode_pixel_content_valid             = false;
-        bool                          present_pixel_proof_valid              = false;
-        bool                          private_shadow_pixel_proof_valid       = false;
-        bool                          present_pixel_matches_decode           = false;
-        bool                          private_shadow_pixel_matches_decode    = false;
-        bool                          present_pixel_matches_previous         = false;
-        uint64_t                      decode_pixel_crc                       = 0;
-        uint64_t                      decode_pixel_proof_generation          = 0;
-        uint64_t                      present_pixel_crc                      = 0;
-        uint64_t                      private_shadow_pixel_crc               = 0;
-        uint64_t                      previous_present_pixel_crc             = 0;
         ExportResource                export_resource{};
-        ExportResource                private_decode_shadow{};
         uint64_t                      content_generation     = 0;
         uint64_t                      export_seed_generation = 0;
         VkImageLayout                 layout                 = VK_IMAGE_LAYOUT_UNDEFINED;
-    };
-
-    inline constexpr uint32_t av1_pending_reference_trace_capacity = 8;
-
-    struct Av1PendingReferenceTrace {
-        SurfaceResource* resource           = nullptr;
-        VASurfaceID      surface_id         = VA_INVALID_ID;
-        int32_t          dpb_slot           = -1;
-        uint32_t         reference_name     = 0;
-        uint32_t         ref_frame_map_index = 0;
-        uint32_t         order_hint         = 0;
-        uint32_t         frame_type         = 0;
-        uint32_t         frame_id           = 0;
-        uint64_t         content_generation = 0;
-        bool             showable           = false;
-        bool             displayed          = false;
-        bool             valid              = false;
-    };
-
-    struct Av1PendingDecodeTrace {
-        bool                     valid                              = false;
-        uint64_t                 frame_sequence                     = 0;
-        uint32_t                 order_hint                         = 0;
-        uint32_t                 frame_type                         = 0;
-        uint32_t                 current_frame_id                   = 0;
-        bool                     show_frame                         = false;
-        bool                     showable_frame                     = false;
-        bool                     show_existing_frame                = false;
-        uint32_t                 refresh_frame_flags                = 0;
-        uint32_t                 primary_ref_frame                  = 0;
-        int32_t                  frame_to_show_map_idx              = -1;
-        int32_t                  target_dpb_slot                    = -1;
-        int32_t                  setup_slot                         = -1;
-        uint32_t                 reference_count                    = 0;
-        uint32_t                 bitstream_size                     = 0;
-        uint32_t                 tile_count                         = 0;
-        uint32_t                 tile_sum_size                      = 0;
-        uint64_t                 tile_bytes_hash                    = 0;
-        uint64_t                 bitstream_hash                     = 0;
-        const char*              tile_source                        = "unknown";
-        const char*              tile_selection_reason              = "unknown";
-        bool                     parser_used                        = false;
-        int32_t                  parser_status                      = 0;
-        uint32_t                 selected_obu_type                  = 0;
-        uint32_t                 tile_group_count                   = 0;
-        uint32_t                 va_tile_count                      = 0;
-        uint32_t                 parsed_tile_count                  = 0;
-        bool                     tile_ranges_equivalent             = false;
-        uint32_t                 base_q_idx                         = 0;
-        int32_t                  delta_q_y_dc                       = 0;
-        int32_t                  delta_q_u_dc                       = 0;
-        int32_t                  delta_q_u_ac                       = 0;
-        int32_t                  delta_q_v_dc                       = 0;
-        int32_t                  delta_q_v_ac                       = 0;
-        bool                     using_qmatrix                      = false;
-        bool                     diff_uv_delta                      = false;
-        uint32_t                 qm_y                               = 0;
-        uint32_t                 qm_u                               = 0;
-        uint32_t                 qm_v                               = 0;
-        bool                     error_resilient_mode               = false;
-        bool                     disable_cdf_update                 = false;
-        bool                     disable_frame_end_update_cdf       = false;
-        bool                     allow_intrabc                      = false;
-        bool                     allow_warped_motion                = false;
-        bool                     allow_high_precision_mv            = false;
-        bool                     is_motion_mode_switchable          = false;
-        bool                     use_ref_frame_mvs                  = false;
-        bool                     reference_select                   = false;
-        bool                     skip_mode_present                  = false;
-        uint32_t                 skip_mode_frame[2]                 = {};
-        uint32_t                 interpolation_filter               = 0;
-        uint32_t                 std_interpolation_filter           = 0;
-        uint32_t                 tx_mode                            = 0;
-        uint32_t                 std_tx_mode                        = 0;
-        bool                     segmentation_enabled               = false;
-        bool                     segmentation_update_map            = false;
-        bool                     segmentation_temporal_update       = false;
-        bool                     segmentation_update_data           = false;
-        uint32_t                 segmentation_feature_mask_or       = 0;
-        uint64_t                 segmentation_feature_data_hash     = 0;
-        bool                     loop_filter_delta_enabled          = false;
-        bool                     loop_filter_delta_update           = false;
-        uint32_t                 loop_filter_level[4]               = {};
-        bool                     cdef_enabled                       = false;
-        uint32_t                 cdef_damping_minus_3               = 0;
-        uint32_t                 cdef_bits                          = 0;
-        bool                     restoration_enabled                = false;
-        bool                     uses_lr                            = false;
-        bool                     uses_chroma_lr                     = false;
-        uint32_t                 restoration_type[3]                = {};
-        uint32_t                 restoration_size[3]                = {};
-        Av1PendingReferenceTrace references[av1_pending_reference_trace_capacity]{};
-    };
-
-    struct PendingDecodeTrace {
-        bool                  valid                  = false;
-        CodecVisibleOutputTrace visible{};
-        uint32_t              reference_count        = 0;
-        uint32_t              traced_reference_count = 0;
-        Av1PendingDecodeTrace av1_trace{};
     };
 
     struct UploadBuffer {
@@ -481,56 +198,15 @@ namespace vkvv {
         bool           coherent         = true;
     };
 
-    enum class CommandUse {
-        Idle,
-        Decode,
-        Export,
-        SessionReset,
-        Encode,
-    };
-
-    inline const char* command_use_name(CommandUse use) {
-        switch (use) {
-            case CommandUse::Idle: return "idle";
-            case CommandUse::Decode: return "decode";
-            case CommandUse::Export: return "export";
-            case CommandUse::SessionReset: return "session-reset";
-            case CommandUse::Encode: return "encode";
-            default: return "unknown";
-        }
-    }
-
-    struct PendingWork {
-        VkvvSurface*                surface                = nullptr;
-        VkVideoSessionParametersKHR parameters             = VK_NULL_HANDLE;
-        VkDeviceSize                upload_allocation_size = 0;
-        uint64_t                    submit_monotonic_us    = 0;
-        PendingDecodeTrace          decode_trace{};
-        bool                        refresh_export         = true;
-        CommandUse                  use                    = CommandUse::Idle;
-        char                        operation[64]{};
-    };
-
-    inline bool pending_work_has_payload(const PendingWork& work) {
-        return work.surface != nullptr || work.parameters != VK_NULL_HANDLE;
-    }
-
-    inline bool pending_work_surface_is_destroying(const PendingWork& work) {
-        return work.surface != nullptr && work.surface->destroying;
-    }
-
-    inline void reset_pending_work(PendingWork* work) {
-        if (work != nullptr) {
-            *work = {};
-        }
-    }
-
     struct CommandSlot {
-        VkCommandBuffer command_buffer = VK_NULL_HANDLE;
-        VkFence         fence          = VK_NULL_HANDLE;
-        PendingWork     pending{};
-        bool            submitted     = false;
-        CommandUse      submitted_use = CommandUse::Idle;
+        VkCommandBuffer             command_buffer                 = VK_NULL_HANDLE;
+        VkFence                     fence                          = VK_NULL_HANDLE;
+        VkvvSurface*                pending_surface                = nullptr;
+        VkVideoSessionParametersKHR pending_parameters             = VK_NULL_HANDLE;
+        VkDeviceSize                pending_upload_allocation_size = 0;
+        bool                        pending_export_refresh         = true;
+        bool                        submitted                      = false;
+        char                        pending_operation[64]{};
     };
 
     struct VideoSessionKey {
@@ -567,39 +243,56 @@ namespace vkvv {
         uint64_t                      content_generation = 0;
     };
 
-    struct Av1VisiblePublishCadence {
-        bool                          valid                 = false;
-        uint64_t                      monotonic_us          = 0;
-        uint64_t                      driver_instance_id    = 0;
-        uint64_t                      stream_id             = 0;
-        VkVideoCodecOperationFlagsKHR codec_operation       = 0;
-        VASurfaceID                   surface_id            = VA_INVALID_ID;
-        uint64_t                      frame_sequence        = 0;
-        uint32_t                      order_hint            = 0;
-        uint64_t                      content_generation    = 0;
-        uint64_t                      fd_dev                = 0;
-        uint64_t                      fd_ino                = 0;
-        uint64_t                      fd_content_generation = 0;
-        uint64_t                      present_generation    = 0;
-        uint64_t                      pixel_crc             = 0;
+    struct VkvvCodecPerfCounters {
+        std::atomic<uint64_t> submitted{0};
+        std::atomic<uint64_t> completed{0};
     };
 
-    struct VisiblePublishCadence {
-        bool                          valid                 = false;
-        uint64_t                      monotonic_us          = 0;
-        uint64_t                      driver_instance_id    = 0;
-        uint64_t                      stream_id             = 0;
-        VkVideoCodecOperationFlagsKHR codec_operation       = 0;
-        VASurfaceID                   surface_id            = VA_INVALID_ID;
-        uint64_t                      frame_sequence        = 0;
-        uint64_t                      display_order         = 0;
-        uint64_t                      content_generation    = 0;
-        uint64_t                      fd_dev                = 0;
-        uint64_t                      fd_ino                = 0;
-        uint64_t                      fd_content_generation = 0;
-        uint64_t                      present_generation    = 0;
-        uint64_t                      pixel_crc             = 0;
+    struct VkvvPerfCounters {
+        std::atomic<uint64_t> decode_submitted{0};
+        std::atomic<uint64_t> decode_completed{0};
+        std::atomic<uint64_t> command_fence_polls{0};
+        std::atomic<uint64_t> command_fence_waits{0};
+        std::atomic<uint64_t> command_fence_wait_ns{0};
+        std::atomic<uint64_t> upload_bytes{0};
+        std::atomic<uint64_t> upload_high_water{0};
+        std::atomic<uint64_t> pending_high_water{0};
+        std::atomic<uint64_t> decode_image_high_water{0};
+        std::atomic<uint64_t> export_image_high_water{0};
+        std::atomic<uint64_t> video_session_high_water{0};
+        std::atomic<uint64_t> export_refresh_requested{0};
+        std::atomic<uint64_t> export_refresh_skipped{0};
+        std::atomic<uint64_t> export_refresh_no_backing{0};
+        std::atomic<uint64_t> export_copy_count{0};
+        std::atomic<uint64_t> export_copy_targets{0};
+        std::atomic<uint64_t> export_copy_bytes{0};
+        std::atomic<uint64_t> export_copy_wait_ns{0};
+        std::atomic<uint64_t> retained_export_pruned{0};
+        std::atomic<uint64_t> retained_export_removed{0};
+        std::atomic<uint64_t> summary_fingerprint{0};
+        VkvvCodecPerfCounters h264_decode;
+        VkvvCodecPerfCounters h265_decode;
+        VkvvCodecPerfCounters vp9_decode;
+        VkvvCodecPerfCounters av1_decode;
     };
+
+    inline void perf_update_high_water(std::atomic<uint64_t>& high_water, uint64_t value) {
+        uint64_t current = high_water.load(std::memory_order_relaxed);
+        while (current < value && !high_water.compare_exchange_weak(current, value, std::memory_order_relaxed, std::memory_order_relaxed)) {}
+    }
+
+    inline VkvvCodecPerfCounters* perf_decode_codec_counters(VkvvPerfCounters* counters, VkVideoCodecOperationFlagsKHR codec_operation) {
+        if (counters == nullptr) {
+            return nullptr;
+        }
+        switch (codec_operation) {
+            case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR: return &counters->h264_decode;
+            case VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR: return &counters->h265_decode;
+            case VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR: return &counters->vp9_decode;
+            case VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR: return &counters->av1_decode;
+            default: return nullptr;
+        }
+    }
 
     class VulkanRuntime {
       public:
@@ -631,7 +324,6 @@ namespace vkvv {
         PFN_vkCmdControlVideoCodingKHR                  cmd_control_video_coding                 = nullptr;
         PFN_vkCmdDecodeVideoKHR                         cmd_decode_video                         = nullptr;
         PFN_vkGetMemoryFdKHR                            get_memory_fd                            = nullptr;
-        PFN_vkGetMemoryFdPropertiesKHR                  get_memory_fd_properties                 = nullptr;
         PFN_vkGetImageDrmFormatModifierPropertiesEXT    get_image_drm_format_modifier_properties = nullptr;
 
         bool                                            external_memory_fd        = false;
@@ -647,7 +339,12 @@ namespace vkvv {
         VkCommandBuffer                                 command_buffer = VK_NULL_HANDLE;
         VkFence                                         fence          = VK_NULL_HANDLE;
         CommandSlot                                     command_slots[command_slot_count];
-        size_t                                          active_command_slot = 0;
+        size_t                                          active_command_slot            = 0;
+        VkvvSurface*                                    pending_surface                = nullptr;
+        VkVideoSessionParametersKHR                     pending_parameters             = VK_NULL_HANDLE;
+        VkDeviceSize                                    pending_upload_allocation_size = 0;
+        bool                                            pending_export_refresh         = true;
+        char                                            pending_operation[64]{};
         // Locking model:
         // - command_mutex protects command slots and pending-work state.
         // - export_mutex protects retained/predecode/seed export registries.
@@ -664,8 +361,7 @@ namespace vkvv {
         size_t                             retained_export_count_limit   = 4;
         uint64_t                           retained_export_sequence      = 0;
         TransitionRetentionWindow          transition_retention{};
-        Av1VisiblePublishCadence           av1_visible_publish_cadence{};
-        VisiblePublishCadence              visible_publish_cadence{};
+        VkvvPerfCounters                   perf{};
 
         void                               destroy_command_resources() {
             for (CommandSlot& slot : command_slots) {
@@ -685,77 +381,25 @@ namespace vkvv {
         void destroy_detached_export_resources();
     };
 
-    bool                      extension_present(const std::vector<VkExtensionProperties>& extensions, const char* name);
-    uint32_t                  round_up_16(uint32_t value);
-    VkDeviceSize              align_up(VkDeviceSize value, VkDeviceSize alignment);
-    bool                      find_memory_type(const VkPhysicalDeviceMemoryProperties& properties, uint32_t type_bits, VkMemoryPropertyFlags required, uint32_t* type_index);
-    bool                      enumerate_drm_format_modifiers(VulkanRuntime* runtime, VkFormat format, VkFormatFeatureFlags2 required, std::vector<uint64_t>* modifiers);
+    bool                  extension_present(const std::vector<VkExtensionProperties>& extensions, const char* name);
+    uint32_t              round_up_16(uint32_t value);
+    VkDeviceSize          align_up(VkDeviceSize value, VkDeviceSize alignment);
+    bool                  find_memory_type(const VkPhysicalDeviceMemoryProperties& properties, uint32_t type_bits, VkMemoryPropertyFlags required, uint32_t* type_index);
+    bool                  enumerate_drm_format_modifiers(VulkanRuntime* runtime, VkFormat format, VkFormatFeatureFlags2 required, std::vector<uint64_t>* modifiers);
 
-    void                      destroy_video_session(VulkanRuntime* runtime, VideoSession* session);
-    bool                      bind_video_session_memory(VulkanRuntime* runtime, VideoSession* session, char* reason, size_t reason_size);
-    bool                      ensure_runtime_usable(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation);
-    bool                      record_vk_result(VulkanRuntime* runtime, VkResult result, const char* call, const char* operation, char* reason, size_t reason_size);
-    void                      destroy_export_resource(VulkanRuntime* runtime, ExportResource* resource);
-    VkDeviceSize              export_memory_bytes(const SurfaceResource* resource);
-    VkvvFdIdentity            retained_export_fd_identity(const ExportResource& resource);
-    VkvvExternalImageIdentity retained_export_image_identity(const ExportResource& resource);
-    RetainedExportMatch retained_export_match_import(const RetainedExportBacking& backing, const VkvvExternalSurfaceImport& import, uint64_t driver_instance_id, uint64_t stream_id,
-                                                     VkVideoCodecOperationFlagsKHR codec_operation, unsigned int va_fourcc, VkFormat format, VkExtent2D coded_extent);
-    const char*         retained_export_match_reason(RetainedExportMatch match);
-    bool                retained_export_matches_window(const ExportResource& resource, const TransitionRetentionWindow& window);
-    bool                retained_export_seed_can_replace_window(const TransitionRetentionWindow& window, const ExportResource& seed);
-    bool                surface_resource_uses_av1_decode(const SurfaceResource* resource);
-    bool                av1_non_display_export_refresh(const SurfaceResource* resource, bool refresh_export);
-    bool                surface_resource_export_shadow_stale(const SurfaceResource* resource);
-    bool                surface_resource_decode_shadow_stale(const SurfaceResource* resource);
-    bool                surface_resource_has_current_decode_shadow(const SurfaceResource* resource);
-    bool                surface_resource_has_visible_output_trace(const SurfaceResource* resource);
-    bool                surface_resource_visible_output_expected(const SurfaceResource* resource, bool refresh_export);
-    bool                surface_resource_visible_export_requires_copy(const SurfaceResource* resource);
-    bool                export_visible_release_satisfied(const ExportResource* resource);
-    bool                export_resource_fd_may_be_sampled_by_client(const ExportResource* resource);
-    uint64_t            export_resource_fd_content_generation(const ExportResource* resource);
-    VkvvExportRole      export_resource_fd_role(const ExportResource* resource);
-    bool                export_resource_has_valid_retained_presentation(const ExportResource* resource);
-    bool                export_resource_is_transition_hold_for_surface(const SurfaceResource* owner, const ExportResource* resource);
-    bool                export_resource_fd_fresh(const SurfaceResource* resource);
-    VkvvExportPixelSource export_pixel_source_for_resource(const SurfaceResource* owner, const ExportResource* resource);
-    bool                surface_resource_has_current_export_shadow(const SurfaceResource* resource);
-    bool                surface_resource_visible_publish_ready(const SurfaceResource* resource, bool display_visible, bool copy_done, bool pixel_proof_required);
-    bool                surface_resource_has_exported_shadow_output(const SurfaceResource* resource);
-    bool                surface_resource_has_direct_import_output(const SurfaceResource* resource);
-    bool                surface_resource_has_published_visible_output(const SurfaceResource* resource);
-    bool                surface_resource_requires_visible_publication(const SurfaceResource* resource, bool refresh_export);
-    void                clear_export_present_state(ExportResource* resource);
-    void                mark_export_fd_returned(ExportResource* resource, const VkvvFdIdentity& fd, uint64_t content_generation, VkvvExportRole role);
-    void                mark_export_fd_written(ExportResource* resource, uint64_t content_generation, VkvvExportRole role);
-    void                mark_export_fd_detached(ExportResource* resource);
-    void                mark_export_predecode_nonpresentable(ExportResource* resource);
-    void                mark_export_visible_acquire(const SurfaceResource* owner, ExportResource* resource);
-    void                mark_export_visible_release(const SurfaceResource* owner, ExportResource* resource, VkImageLayout old_layout, VkImageLayout new_layout);
-    void                exit_predecode_quarantine(const SurfaceResource* owner, ExportResource* resource, bool release_done);
-    void                pin_export_visible_present(SurfaceResource* owner, ExportResource* resource, VkvvExportPresentSource source);
-    ExportResource*     client_present_shadow(SurfaceResource* resource);
-    const ExportResource* client_present_shadow(const SurfaceResource* resource);
-    ExportResource*       current_decode_shadow(SurfaceResource* resource);
-    const ExportResource* current_decode_shadow(const SurfaceResource* resource);
-    void                  clear_private_decode_shadow_state(SurfaceResource* resource);
-    void                  trace_export_present_state(const SurfaceResource* owner, const ExportResource* resource, const char* action, bool refresh_export, bool display_visible);
-    void                  trace_exported_fd_freshness_check(const SurfaceResource* owner, const ExportResource* resource, bool refresh_export, bool display_visible,
-                                                            const char* action);
-    void                  trace_export_fd_lifetime(const SurfaceResource* owner, const ExportResource* resource, const char* action, uint64_t generation_at_action,
-                                                   bool may_be_sampled_by_client);
-    void                  trace_export_role_lifecycle(const SurfaceResource* owner, const ExportResource* resource, const char* action, bool refresh_export);
-    void                  trace_predecode_quarantine_outcome(const SurfaceResource* owner, const ExportResource* resource, const char* outcome, const char* reason,
-                                                             bool returned_fd);
-    bool                  predecode_seed_source_safe_for_client(const SurfaceResource* source);
-    void                  clear_predecode_export_state(ExportResource* resource);
-    void                  clear_nondisplay_predecode_presentation_state(SurfaceResource* resource);
-    void                  clear_surface_export_attach_state(SurfaceResource* resource);
-    void                  clear_surface_direct_import_present_state(SurfaceResource* resource);
-    void                  set_surface_visible_output_trace(SurfaceResource* resource, const CodecVisibleOutputTrace& trace);
-    void                  clear_surface_visible_output_trace(SurfaceResource* resource);
-    VkDeviceSize retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties& properties);
+    void                  destroy_video_session(VulkanRuntime* runtime, VideoSession* session);
+    bool                  bind_video_session_memory(VulkanRuntime* runtime, VideoSession* session, char* reason, size_t reason_size);
+    bool                  ensure_runtime_usable(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation);
+    bool                  record_vk_result(VulkanRuntime* runtime, VkResult result, const char* call, const char* operation, char* reason, size_t reason_size);
+    void                  destroy_export_resource(VulkanRuntime* runtime, ExportResource* resource);
+    VkDeviceSize          export_memory_bytes(const SurfaceResource* resource);
+    VkvvFdIdentity        retained_export_fd_identity(const ExportResource& resource);
+    RetainedExportMatch   retained_export_match_import(const RetainedExportBacking& backing, const VkvvExternalSurfaceImport& import, unsigned int va_fourcc, VkFormat format,
+                                                       VkExtent2D coded_extent);
+    const char*           retained_export_match_reason(RetainedExportMatch match);
+    bool                  retained_export_matches_window(const ExportResource& resource, const TransitionRetentionWindow& window);
+    bool                  retained_export_seed_can_replace_window(const TransitionRetentionWindow& window, const ExportResource& seed);
+    VkDeviceSize          retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties& properties);
     RetainedExportBudget  retained_export_budget_from_expected(size_t expected_count, VkDeviceSize expected_bytes, VkDeviceSize global_cap_bytes);
     size_t                runtime_retained_export_count(VulkanRuntime* runtime);
     VkDeviceSize          runtime_retained_export_memory_bytes(VulkanRuntime* runtime);
@@ -778,20 +422,16 @@ namespace vkvv {
     void                  remember_export_seed_resource(VulkanRuntime* runtime, SurfaceResource* resource);
     void                  unregister_export_seed_resource(VulkanRuntime* runtime, SurfaceResource* resource);
     void                  destroy_surface_resource(VulkanRuntime* runtime, VkvvSurface* surface);
-    void                  destroy_surface_resource_raw(VulkanRuntime* runtime, SurfaceResource* resource);
-    bool                  decode_image_key_matches(const DecodeImageKey& existing, const DecodeImageKey& requested);
     bool                  ensure_surface_resource(VulkanRuntime* runtime, VkvvSurface* surface, const DecodeImageKey& key, char* reason, size_t reason_size);
     void                  destroy_upload_buffer(VulkanRuntime* runtime, UploadBuffer* upload);
     bool     ensure_bitstream_upload_buffer(VulkanRuntime* runtime, const VideoProfileSpec& profile_spec, const void* data, size_t data_size, VkDeviceSize size_alignment,
                                             VkBufferUsageFlags usage, UploadBuffer* upload, const char* label, char* reason, size_t reason_size);
     bool     ensure_command_resources(VulkanRuntime* runtime, char* reason, size_t reason_size);
-    bool     submit_command_buffer(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation, CommandUse use = CommandUse::Decode);
+    bool     submit_command_buffer(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation);
     bool     wait_for_command_fence(VulkanRuntime* runtime, uint64_t timeout_ns, char* reason, size_t reason_size, const char* operation);
-    bool     submit_command_buffer_and_wait(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation, CommandUse use = CommandUse::Decode);
+    bool     submit_command_buffer_and_wait(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation);
     void     track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool refresh_export,
-                                  const char* operation, const PendingDecodeTrace* decode_trace = nullptr);
-    void     trace_pending_decode_pixel_proof(VulkanRuntime* runtime, const PendingWork* completed);
-    void     trace_av1_pending_decode_pixel_proof(VulkanRuntime* runtime, const PendingWork* completed);
+                                  const char* operation);
     size_t   runtime_pending_work_count(VulkanRuntime* runtime);
     bool     runtime_surface_has_pending_work(VulkanRuntime* runtime, const VkvvSurface* surface);
     bool     runtime_surface_has_pending_export_refresh_work(VulkanRuntime* runtime, const VkvvSurface* surface);

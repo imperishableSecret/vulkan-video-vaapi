@@ -10,12 +10,7 @@ extern "C" {
 void                         vkvv_init_profile_capabilities(VkvvDriver* drv);
 const VkvvProfileCapability* vkvv_profile_capability(const VkvvDriver* drv, VAProfile profile);
 const VkvvProfileCapability* vkvv_profile_capability_for_entrypoint(const VkvvDriver* drv, VAProfile profile, VAEntrypoint entrypoint);
-const VkvvProfileCapability* vkvv_profile_capability_for_config(const VkvvDriver* drv, VAProfile profile, VAEntrypoint entrypoint, VAStatus* status);
 const VkvvProfileCapability* vkvv_profile_capability_record(const VkvvDriver* drv, VAProfile profile, VAEntrypoint entrypoint, VkvvCodecDirection direction);
-VAStatus                     vkvv_profile_entrypoint_status(const VkvvDriver* drv, VAProfile profile, VAEntrypoint entrypoint);
-VkvvProfileCapabilityStage   vkvv_profile_capability_stage(const VkvvProfileCapability* cap);
-const char*                  vkvv_profile_capability_stage_name(VkvvProfileCapabilityStage stage);
-void                         vkvv_profile_capability_debug_string(const VkvvProfileCapability* cap, char* out, size_t out_size);
 const VkvvFormatVariant*     vkvv_profile_format_variant(const VkvvProfileCapability* cap, unsigned int rt_format, bool require_advertised);
 bool                         vkvv_profile_supported(const VkvvDriver* drv, VAProfile profile);
 unsigned int                 vkvv_surface_fourcc_for_format(unsigned int rt_format);
