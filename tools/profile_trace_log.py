@@ -138,7 +138,7 @@ class StreamStats:
     nondisplay_exported_fd_refreshes: int = 0
     predecode_export_policy_events: int = 0
     predecode_stream_local_seeds: int = 0
-    predecode_neutral_placeholders: int = 0
+    predecode_allocation_only_backings: int = 0
     predecode_failed_no_valid_source: int = 0
     predecode_drained_exports: int = 0
     export_validity_gates: int = 0
@@ -149,7 +149,7 @@ class StreamStats:
     returned_fd_pixel_proofs: int = 0
     returned_fd_placeholder_black: int = 0
     predecode_quarantine_timeouts: int = 0
-    predecode_quarantine_placeholder_returns: int = 0
+    predecode_quarantine_backing_returns: int = 0
     decode_pixel_black: int = 0
     external_sync_proofs: int = 0
     external_sync_implicit: int = 0
@@ -257,7 +257,7 @@ class TraceProfile:
         self.nondisplay_exported_fd_refreshes = 0
         self.predecode_export_policy_events = 0
         self.predecode_stream_local_seeds = 0
-        self.predecode_neutral_placeholders = 0
+        self.predecode_allocation_only_backings = 0
         self.predecode_failed_no_valid_source = 0
         self.predecode_drained_exports = 0
         self.export_validity_gates = 0
@@ -268,7 +268,7 @@ class TraceProfile:
         self.returned_fd_pixel_proofs = 0
         self.returned_fd_placeholder_black = 0
         self.predecode_quarantine_timeouts = 0
-        self.predecode_quarantine_placeholder_returns = 0
+        self.predecode_quarantine_backing_returns = 0
         self.decode_pixel_black = 0
         self.external_sync_proofs = 0
         self.external_sync_implicit = 0
@@ -459,8 +459,8 @@ class TraceProfile:
             action = fields.get("action")
             if action == "stream-local-seed":
                 stream.predecode_stream_local_seeds += 1
-            elif action == "neutral-placeholder":
-                stream.predecode_neutral_placeholders += 1
+            elif action == "allocation-only-backing":
+                stream.predecode_allocation_only_backings += 1
             elif action == "failed-no-valid-source":
                 stream.predecode_failed_no_valid_source += 1
             elif action == "drained-and-exported":
@@ -488,8 +488,8 @@ class TraceProfile:
             outcome = fields.get("outcome")
             if outcome == "timeout":
                 stream.predecode_quarantine_timeouts += 1
-            elif outcome == "placeholder-returned":
-                stream.predecode_quarantine_placeholder_returns += 1
+            elif outcome == "allocation-only-backing-returned":
+                stream.predecode_quarantine_backing_returns += 1
         elif event == "external-sync-proof" and stream is not None:
             stream.external_sync_proofs += 1
             self.add_external_sync_mode(fields, stream)
@@ -658,8 +658,8 @@ class TraceProfile:
             action = fields.get("action")
             if action == "stream-local-seed":
                 self.predecode_stream_local_seeds += 1
-            elif action == "neutral-placeholder":
-                self.predecode_neutral_placeholders += 1
+            elif action == "allocation-only-backing":
+                self.predecode_allocation_only_backings += 1
             elif action == "failed-no-valid-source":
                 self.predecode_failed_no_valid_source += 1
             elif action == "drained-and-exported":
@@ -687,8 +687,8 @@ class TraceProfile:
             outcome = fields.get("outcome")
             if outcome == "timeout":
                 self.predecode_quarantine_timeouts += 1
-            elif outcome == "placeholder-returned":
-                self.predecode_quarantine_placeholder_returns += 1
+            elif outcome == "allocation-only-backing-returned":
+                self.predecode_quarantine_backing_returns += 1
         elif event == "external-sync-proof":
             self.external_sync_proofs += 1
             self.add_external_sync_mode(fields, None)
@@ -859,7 +859,7 @@ class TraceProfile:
             "nondisplay_exported_fd_refreshes": self.nondisplay_exported_fd_refreshes,
             "predecode_export_policy_events": self.predecode_export_policy_events,
             "predecode_stream_local_seeds": self.predecode_stream_local_seeds,
-            "predecode_neutral_placeholders": self.predecode_neutral_placeholders,
+            "predecode_allocation_only_backings": self.predecode_allocation_only_backings,
             "predecode_failed_no_valid_source": self.predecode_failed_no_valid_source,
             "predecode_drained_exports": self.predecode_drained_exports,
             "export_validity_gates": self.export_validity_gates,
@@ -870,7 +870,7 @@ class TraceProfile:
             "returned_fd_pixel_proofs": self.returned_fd_pixel_proofs,
             "returned_fd_placeholder_black": self.returned_fd_placeholder_black,
             "predecode_quarantine_timeouts": self.predecode_quarantine_timeouts,
-            "predecode_quarantine_placeholder_returns": self.predecode_quarantine_placeholder_returns,
+            "predecode_quarantine_backing_returns": self.predecode_quarantine_backing_returns,
             "decode_pixel_black": self.decode_pixel_black,
             "external_sync_proofs": self.external_sync_proofs,
             "external_sync_implicit": self.external_sync_implicit,
@@ -947,7 +947,7 @@ class TraceProfile:
             total["nondisplay_exported_fd_refreshes"] += stream.nondisplay_exported_fd_refreshes
             total["predecode_export_policy_events"] += stream.predecode_export_policy_events
             total["predecode_stream_local_seeds"] += stream.predecode_stream_local_seeds
-            total["predecode_neutral_placeholders"] += stream.predecode_neutral_placeholders
+            total["predecode_allocation_only_backings"] += stream.predecode_allocation_only_backings
             total["predecode_failed_no_valid_source"] += stream.predecode_failed_no_valid_source
             total["predecode_drained_exports"] += stream.predecode_drained_exports
             total["export_validity_gates"] += stream.export_validity_gates
@@ -958,7 +958,7 @@ class TraceProfile:
             total["returned_fd_pixel_proofs"] += stream.returned_fd_pixel_proofs
             total["returned_fd_placeholder_black"] += stream.returned_fd_placeholder_black
             total["predecode_quarantine_timeouts"] += stream.predecode_quarantine_timeouts
-            total["predecode_quarantine_placeholder_returns"] += stream.predecode_quarantine_placeholder_returns
+            total["predecode_quarantine_backing_returns"] += stream.predecode_quarantine_backing_returns
             total["decode_pixel_black"] += stream.decode_pixel_black
             total["external_sync_proofs"] += stream.external_sync_proofs
             total["external_sync_implicit"] += stream.external_sync_implicit
@@ -1078,7 +1078,7 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "nondisplay_exported_fd_refreshes": stream.nondisplay_exported_fd_refreshes,
         "predecode_export_policy_events": stream.predecode_export_policy_events,
         "predecode_stream_local_seeds": stream.predecode_stream_local_seeds,
-        "predecode_neutral_placeholders": stream.predecode_neutral_placeholders,
+        "predecode_allocation_only_backings": stream.predecode_allocation_only_backings,
         "predecode_failed_no_valid_source": stream.predecode_failed_no_valid_source,
         "predecode_drained_exports": stream.predecode_drained_exports,
         "export_validity_gates": stream.export_validity_gates,
@@ -1089,7 +1089,7 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "returned_fd_pixel_proofs": stream.returned_fd_pixel_proofs,
         "returned_fd_placeholder_black": stream.returned_fd_placeholder_black,
         "predecode_quarantine_timeouts": stream.predecode_quarantine_timeouts,
-        "predecode_quarantine_placeholder_returns": stream.predecode_quarantine_placeholder_returns,
+        "predecode_quarantine_backing_returns": stream.predecode_quarantine_backing_returns,
         "decode_pixel_black": stream.decode_pixel_black,
         "external_sync_proofs": stream.external_sync_proofs,
         "external_sync_implicit": stream.external_sync_implicit,
@@ -1208,14 +1208,14 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         f"invalid_stale_exported_fds={totals['invalid_stale_exported_fds']} "
         f"nondisplay_exported_fd_refreshes={totals['nondisplay_exported_fd_refreshes']} "
         f"predecode_export_policy_events={totals['predecode_export_policy_events']} predecode_stream_local_seeds={totals['predecode_stream_local_seeds']} "
-        f"predecode_neutral_placeholders={totals['predecode_neutral_placeholders']} predecode_failed_no_valid_source={totals['predecode_failed_no_valid_source']} "
+        f"predecode_allocation_only_backings={totals['predecode_allocation_only_backings']} predecode_failed_no_valid_source={totals['predecode_failed_no_valid_source']} "
         f"predecode_drained_exports={totals['predecode_drained_exports']} "
         f"export_validity_gates={totals['export_validity_gates']} generic_export_summaries={totals['generic_export_summaries']} "
         f"generic_export_placeholder_black_sampled={totals['generic_export_placeholder_black_sampled']} "
         f"generic_export_seed_invalid={totals['generic_export_seed_invalid']} generic_export_decoded_invalid={totals['generic_export_decoded_invalid']} "
         f"returned_fd_pixel_proofs={totals['returned_fd_pixel_proofs']} returned_fd_placeholder_black={totals['returned_fd_placeholder_black']} "
         f"predecode_quarantine_timeouts={totals['predecode_quarantine_timeouts']} "
-        f"predecode_quarantine_placeholder_returns={totals['predecode_quarantine_placeholder_returns']} decode_pixel_black={totals['decode_pixel_black']} "
+        f"predecode_quarantine_backing_returns={totals['predecode_quarantine_backing_returns']} decode_pixel_black={totals['decode_pixel_black']} "
         f"external_sync_proofs={totals['external_sync_proofs']} external_sync_implicit={totals['external_sync_implicit']} "
         f"external_sync_force_barrier={totals['external_sync_force_barrier']} external_sync_explicit={totals['external_sync_explicit']} external_sync_none={totals['external_sync_none']} "
         f"decode_pixel_proofs={totals['decode_pixel_proofs']} present_pixel_proofs={totals['present_pixel_proofs']} "
@@ -1266,14 +1266,14 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"invalid_stale_exported_fds={values['invalid_stale_exported_fds']} "
             f"nondisplay_exported_fd_refreshes={values['nondisplay_exported_fd_refreshes']} "
             f"predecode_export_policy_events={values['predecode_export_policy_events']} predecode_stream_local_seeds={values['predecode_stream_local_seeds']} "
-            f"predecode_neutral_placeholders={values['predecode_neutral_placeholders']} predecode_failed_no_valid_source={values['predecode_failed_no_valid_source']} "
+            f"predecode_allocation_only_backings={values['predecode_allocation_only_backings']} predecode_failed_no_valid_source={values['predecode_failed_no_valid_source']} "
             f"predecode_drained_exports={values['predecode_drained_exports']} "
             f"export_validity_gates={values['export_validity_gates']} generic_export_summaries={values['generic_export_summaries']} "
             f"generic_export_placeholder_black_sampled={values['generic_export_placeholder_black_sampled']} "
             f"generic_export_seed_invalid={values['generic_export_seed_invalid']} generic_export_decoded_invalid={values['generic_export_decoded_invalid']} "
             f"returned_fd_pixel_proofs={values['returned_fd_pixel_proofs']} returned_fd_placeholder_black={values['returned_fd_placeholder_black']} "
             f"predecode_quarantine_timeouts={values['predecode_quarantine_timeouts']} "
-            f"predecode_quarantine_placeholder_returns={values['predecode_quarantine_placeholder_returns']} decode_pixel_black={values['decode_pixel_black']} "
+            f"predecode_quarantine_backing_returns={values['predecode_quarantine_backing_returns']} decode_pixel_black={values['decode_pixel_black']} "
             f"external_sync_proofs={values['external_sync_proofs']} external_sync_implicit={values['external_sync_implicit']} "
             f"external_sync_force_barrier={values['external_sync_force_barrier']} external_sync_explicit={values['external_sync_explicit']} external_sync_none={values['external_sync_none']} "
             f"decode_pixel_proofs={values['decode_pixel_proofs']} present_pixel_proofs={values['present_pixel_proofs']} "
@@ -1327,7 +1327,7 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"invalid_stale_exported_fds={stream.invalid_stale_exported_fds} "
             f"nondisplay_exported_fd_refreshes={stream.nondisplay_exported_fd_refreshes} "
             f"predecode_export_policy_events={stream.predecode_export_policy_events} predecode_stream_local_seeds={stream.predecode_stream_local_seeds} "
-            f"predecode_neutral_placeholders={stream.predecode_neutral_placeholders} predecode_failed_no_valid_source={stream.predecode_failed_no_valid_source} "
+            f"predecode_allocation_only_backings={stream.predecode_allocation_only_backings} predecode_failed_no_valid_source={stream.predecode_failed_no_valid_source} "
             f"predecode_drained_exports={stream.predecode_drained_exports} "
             f"decode_pixel_proofs={stream.decode_pixel_proofs} present_pixel_proofs={stream.present_pixel_proofs} "
             f"present_pixel_mismatches={stream.present_pixel_mismatches} private_shadow_pixel_proofs={stream.private_shadow_pixel_proofs} "

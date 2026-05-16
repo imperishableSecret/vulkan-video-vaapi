@@ -15,7 +15,7 @@ Keep these core rules:
 
 - `PredecodeBacking` may be returned only as non-presentable, unpublished, generation-zero backing with `may_be_sampled_by_client=0`.
 - Sampleable exports must contain decoded pixels, pixel-proven seed pixels, or a valid transition hold.
-- Placeholder/predecode backing must upgrade after decode by copying decoded content into the exported FD, updating FD content generation, and exiting quarantine.
+- Placeholder pixels/predecode backing must upgrade after decode by copying decoded content into the exported FD, updating FD content generation, and exiting quarantine.
 - Retained transition hold is valid only for previously visible, released, same-domain presentation content.
 
 ## Cleanup targets
@@ -159,13 +159,13 @@ Validation:
 
 ### 5. Rename "placeholder" terminology where it now means "allocation-only backing"
 
-Current state:
+Post-cleanup state:
 
 - `VkvvExportPixelSource::Placeholder`
-- `VkvvExportPresentSource::PredecodePlaceholder`
-- `VkvvExportCopyReason::PredecodePlaceholderSeed`
-- `ExportResource::black_placeholder`
-- Trace strings like `neutral-placeholder`, `predecode-placeholder`, and `return-placeholder`.
+- `VkvvExportPresentSource::PredecodeBacking`
+- `VkvvExportCopyReason::PredecodeBackingSeed`
+- `ExportResource::neutral_backing`
+- Trace strings like `allocation-only-backing`, `predecode-backing`, and `return-placeholder`.
 
 Why it is prototype residue:
 
@@ -176,9 +176,9 @@ Why it is prototype residue:
 Cleanup:
 
 - Keep `Placeholder` only for actual invalid placeholder pixels.
-- Rename the valid allocation role/state to `PredecodeBacking` or `AllocationOnlyBacking`.
-- Rename `black_placeholder` to something that distinguishes initialized neutral allocation from a client-visible pixel source.
-- Rename trace actions from `neutral-placeholder` to `allocation-only-backing` where no pixels are valid for presentation.
+- Keep the valid allocation role/state named `PredecodeBacking`.
+- Keep the initialized allocation-only state named `neutral_backing`, distinct from client-visible `Placeholder` pixels.
+- Use `allocation-only-backing` where no pixels are valid for presentation.
 - Keep old trace aliases only if needed for one release of tooling compatibility, then remove.
 
 Validation:
