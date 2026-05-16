@@ -42,10 +42,10 @@ nvidia-vulkan-vaapi: trace seq=31 event=av1-tile-submit-map scope=frame frame_se
 nvidia-vulkan-vaapi: trace seq=32 event=av1-dpb-map-before-submit scope=frame frame_seq=1 driver=2 stream=2 surface=8 target_dpb_slot=1 references_valid=1 reference_count=0 codec=0x4
 nvidia-vulkan-vaapi: trace seq=33 event=av1-dpb-map-after-submit scope=frame frame_seq=1 driver=2 stream=2 surface=8 target_dpb_slot=1 references_valid=1 reference_count=0 codec=0x4
 nvidia-vulkan-vaapi: trace seq=34 event=av1-dpb-map-after-refresh scope=frame frame_seq=1 driver=2 stream=2 surface=8 target_dpb_slot=1 references_valid=1 reference_count=0 codec=0x4
-nvidia-vulkan-vaapi: trace seq=35 event=av1-visible-frame-audit frame_seq=1 surface=8 stream=2 codec=0x4 order_hint=2 frame_type=1 show_frame=1 show_existing_frame=0 refresh_frame_flags=0x01 content_generation=1 tile_source=va-slice tile_count=1 tile_ranges_valid=1 tile_sum_size=64 setup_slot=1 target_dpb_slot=1 references_valid=1 reference_count=0 decode_crc_valid=1 decode_crc=0x1 published_path=exported-shadow published_crc_valid=1 published_crc=0x1 published_matches_decode=1 published_matches_previous_visible=0 output_published=1 failure_stage=none failure_reason=none
+nvidia-vulkan-vaapi: trace seq=35 event=visible-frame-audit frame_sequence=1 surface=8 stream=2 codec=0x4 display_order=2 frame_type=1 visible_output=1 show_existing=0 refresh_flags=0x01 content_generation=1 tile_or_slice_source=va-slice tile_count=1 tile_ranges_valid=1 tile_sum_size=64 setup_slot=1 target_dpb_slot=1 references_valid=1 reference_count=0 decode_crc_valid=1 decode_crc=0x1 published_path=exported-shadow published_crc_valid=1 published_crc=0x1 published_matches_decode=1 published_matches_previous_visible=0 output_published=1 failure_stage=none failure_reason=none
 nvidia-vulkan-vaapi: trace seq=36 event=export-copy-proof codec=0x8 surface=7 source_surface=7 target_surface=7 source_content_gen=1 target_content_gen_before=0 target_content_gen_after=1 source_shadow_gen=0 target_shadow_gen_before=0 target_shadow_gen_after=1 copy_reason=visible-refresh refresh_export=1
 nvidia-vulkan-vaapi: trace seq=37 event=export-present-state action=visible-present-pin surface=7 codec=0x8 stream=1 fd_dev=11 fd_ino=22 content_gen=1 shadow_gen=1 present_gen=1 presentable=1 present_pinned=1 published_visible=1 predecode=0 seeded=0 neutral_backing=0 refresh_export=1 display_visible=1 present_source=visible-refresh client_visible_shadow=1
-nvidia-vulkan-vaapi: trace seq=38 event=visible-output-proof codec=0x8 surface=7 content_gen=1 order_hint_or_frame_num=1 published_path=exported-shadow published_gen=1 previous_visible_surface=4294967295 previous_visible_gen=0 published_matches_previous=0
+nvidia-vulkan-vaapi: trace seq=38 event=visible-output-proof codec=0x8 surface=7 content_gen=1 display_order=1 published_path=exported-shadow published_gen=1 previous_visible_surface=4294967295 previous_visible_gen=0 published_matches_previous=0
 nvidia-vulkan-vaapi: trace seq=39 event=export-seed-register codec=0x8 stream=1 source_surface=7 source_content_gen=1 source_shadow_gen=1 visible=1 refresh_export=1 published=1
 nvidia-vulkan-vaapi: trace seq=40 event=export-present-state action=nondisplay-private-shadow-refresh surface=7 codec=0x8 stream=1 fd_dev=11 fd_ino=22 content_gen=3 present_shadow_gen=2 private_shadow_gen=3 decode_shadow_gen=3 present_gen=2 presentable=1 present_pinned=1 published_visible=1 decode_shadow_private_active=1 predecode=0 seeded=0 neutral_backing=0 refresh_export=0 display_visible=0 present_source=visible-refresh mutation_action=none client_visible_shadow_mutated=0 client_visible_shadow=1 private_only=0
 nvidia-vulkan-vaapi: trace seq=41 event=decode-shadow-coherence-check surface=7 driver=2 stream=1 codec=0x8 content_gen=3 refresh_export=0 display_visible=0 present_pinned=1 present_shadow_gen=2 private_shadow_gen=3 decode_shadow_gen=3 coherent=1 action=private-shadow-refresh
@@ -54,7 +54,7 @@ nvidia-vulkan-vaapi: trace seq=43 event=predecode-quarantine-enter surface=7 dri
 nvidia-vulkan-vaapi: trace seq=44 event=predecode-quarantine-exit surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 content_gen=1 present_gen=1 release_done=1 predecode_quarantined=0
 nvidia-vulkan-vaapi: trace seq=45 event=export-visible-acquire surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 acquired_generation=0 acquire_required=0 acquire_done=1 acquire_mode=implicit-sync-only src_queue_family=4294967295 dst_queue_family=4294967295
 nvidia-vulkan-vaapi: trace seq=46 event=export-visible-release surface=7 driver=2 stream=1 codec=0x8 fd_dev=11 fd_ino=22 content_gen=1 present_gen=0 old_layout=7 new_layout=1 src_queue_family=4294967295 dst_queue_family=4294967295 release_required=0 release_done=1 release_mode=implicit-sync-only
-nvidia-vulkan-vaapi: trace seq=47 event=decode-pixel-proof surface=7 codec=0x8 stream=1 content_gen=1 order_hint_or_frame_num=1 decode_crc_valid=1 decode_crc=0xabc sample_bytes=4096
+nvidia-vulkan-vaapi: trace seq=47 event=decode-pixel-proof surface=7 codec=0x8 stream=1 content_gen=1 display_order=1 decode_crc_valid=1 decode_crc=0xabc sample_bytes=4096
 nvidia-vulkan-vaapi: trace seq=48 event=present-pixel-proof surface=7 codec=0x8 stream=1 content_gen=1 present_gen=1 present_shadow_crc_valid=1 present_shadow_crc=0xabc previous_present_crc=0x0 matches_decode=1 matches_previous=0 sample_bytes=4096
 nvidia-vulkan-vaapi: trace seq=49 event=private-shadow-pixel-proof surface=7 codec=0x8 stream=1 content_gen=3 decode_crc_valid=1 decode_crc=0xdef private_shadow_crc_valid=1 private_shadow_crc=0xdef matches_decode=1 decode_sample_bytes=4096 private_sample_bytes=4096
 nvidia-vulkan-vaapi: trace seq=50 event=visible-publish-gate surface=7 codec=0x8 stream=1 content_gen=1 display_visible=1 copy_done=1 present_shadow_gen=1 external_release_ok=1 pixel_match_ok=1 pixel_proof_required=1 publish_ok=1
@@ -71,7 +71,7 @@ nvidia-vulkan-vaapi: trace seq=60 event=export-validity-gate surface=7 driver=2 
 nvidia-vulkan-vaapi: trace seq=61 event=returned-fd-pixel-proof surface=7 fd_dev=11 fd_ino=22 stream=1 codec=0x8 content_gen=1 fd_content_gen=1 pixel_source=decoded returned_crc=0xabc black_crc=0x10 zero_crc=0x0 is_black=0 is_zero=0 pixel_proof_valid=1 may_be_sampled_by_client=1 returned_fd=1 sample_bytes=8192 proof_enabled=1
 nvidia-vulkan-vaapi: trace seq=62 event=generic-export-summary surface=7 stream=1 codec=0x8 width=3840 height=2160 fourcc=0x30313050 content_gen=1 fd_content_gen=1 returned_fd=1 decision=return-decoded pixel_source=decoded pixel_proof_valid=1 is_black=0 is_zero=0 pending_decode=0 valid_seed_available=0 quarantine_outcome=none external_release_mode=implicit-sync-only status=0 may_be_sampled_by_client=1
 nvidia-vulkan-vaapi: trace seq=63 event=external-sync-proof surface=7 fd_dev=11 fd_ino=22 stream=1 codec=0x8 content_gen=1 copy_done=1 fence_waited=1 release_mode=implicit-sync-only release_required=0 release_done=1 acquire_required=0 acquire_done=0 old_layout=7 new_layout=1 src_queue_family=4294967295 dst_queue_family=4294967295 sync_fd=-1 semaphore_exported=0 present_crc_after_release=0xabc
-nvidia-vulkan-vaapi: trace seq=64 event=decode-pixel-proof surface=7 codec=0x8 stream=1 content_gen=2 order_hint_or_frame_num=2 decode_crc_valid=1 decode_crc=0x10 black_crc=0x10 zero_crc=0x0 is_black=1 is_zero=0 pixel_proof_valid=0 sample_bytes=4096
+nvidia-vulkan-vaapi: trace seq=64 event=decode-pixel-proof surface=7 codec=0x8 stream=1 content_gen=2 display_order=2 decode_crc_valid=1 decode_crc=0x10 black_crc=0x10 zero_crc=0x0 is_black=1 is_zero=0 pixel_proof_valid=0 sample_bytes=4096
 [1:2:0512/000000.000000:ERROR:media/gpu/vaapi/vaapi_wrapper.cc:3552] vaEndPicture failed, VA error: operation failed
 nvidia-vulkan-vaapi: device-lost call=vkWaitForFences operation=AV1 decode result=-4 decode_submitted=1 decode_completed=0
 """
@@ -185,7 +185,7 @@ def main() -> int:
     check(totals["export_copy_publish_skips"] == 1, "export copy publish skip aggregate mismatch")
     check(totals["av1_tile_submit_maps"] == 1 and totals["av1_tile_suspicious"] == 1, "AV1 tile aggregate mismatch")
     check(totals["av1_dpb_maps"] == 3, "AV1 DPB aggregate mismatch")
-    check(totals["av1_visible_audits"] == 1 and totals["av1_publish_failures"] == 0, "AV1 audit aggregate mismatch")
+    check(totals["visible_frame_audits"] == 1 and totals["visible_publish_failures"] == 0, "visible audit aggregate mismatch")
     check(data["events"].get("av1-submit") == 1, "AV1 submit event count mismatch")
     check(data["events"].get("av1-show-existing") == 1, "AV1 show-existing event count mismatch")
     check(data["browser_dropped_frames_observed"] is False, "browser dropped-frame observation mismatch")
@@ -263,7 +263,7 @@ def main() -> int:
     av1_stream = data["streams"][1]
     check(av1_stream["codec"] == "av1/0x4", "AV1 stream codec mismatch")
     check(av1_stream["refresh_requested"] == 0 and av1_stream["stale_visible_nondisplay"] == 0, "hidden showable AV1 stream refreshed visible export state")
-    check(av1_stream["av1_tile_submit_maps"] == 1 and av1_stream["av1_dpb_maps"] == 3 and av1_stream["av1_visible_audits"] == 1, "AV1 stream telemetry mismatch")
+    check(av1_stream["av1_tile_submit_maps"] == 1 and av1_stream["av1_dpb_maps"] == 3 and av1_stream["visible_frame_audits"] == 1, "AV1 stream telemetry mismatch")
     check("driver_stale_drops=2" in text_result.stdout, "text stale drop aggregate missing")
     check("nondisplay_shadow_seeds=0" in text_result.stdout, "text nondisplay seed aggregate missing")
     check("nondisplay_current_refreshes=1" in text_result.stdout, "text nondisplay current refresh aggregate missing")
@@ -298,7 +298,7 @@ def main() -> int:
     check("invalid_stale_private_decode_shadows=0" in text_result.stdout, "text invalid stale private decode shadow missing")
     check("invalid_visible_present_states=0" in text_result.stdout, "text invalid visible present state missing")
     check("invalid_thumbnail_predecode_seeds=0" in text_result.stdout, "text invalid thumbnail predecode seed missing")
-    check("av1_visible_audits=1" in text_result.stdout, "text AV1 audit aggregate missing")
+    check("visible_frame_audits=1" in text_result.stdout, "text visible audit aggregate missing")
     check("browser_dropped_frames_observed=0" in text_result.stdout, "text browser dropped-frame warning missing")
     check("live-summary path=-" in live_result.stderr, "live summary missing")
     check("trace-profile path=-" in live_result.stdout, "live final summary missing")

@@ -18,7 +18,7 @@ namespace {
         return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 && std::strcmp(value, "off") != 0;
     }
 
-    bool av1_trace_publication_enabled() {
+    bool trace_publication_enabled() {
         return vkvv_trace_deep_enabled() || av1_env_flag_enabled("VKVV_AV1_TRACE_PUBLICATION");
     }
 
@@ -40,7 +40,7 @@ namespace {
         return hash;
     }
 
-    uint64_t av1_publish_metadata_fingerprint(const SurfaceResource* resource) {
+    uint64_t publish_metadata_fingerprint(const SurfaceResource* resource) {
         uint64_t hash = 1469598103934665603ULL;
         hash          = fnv1a64(hash, resource != nullptr ? resource->av1_frame_sequence : 0);
         hash          = fnv1a64(hash, resource != nullptr ? resource->surface_id : VA_INVALID_ID);
@@ -52,7 +52,7 @@ namespace {
         return hash;
     }
 
-    const char* av1_published_path(const SurfaceResource* resource, bool shadow_published, bool import_published) {
+    const char* visible_published_path(const SurfaceResource* resource, bool shadow_published, bool import_published) {
         if (shadow_published) {
             return "exported-shadow";
         }
@@ -408,14 +408,14 @@ namespace {
 
     void trace_publication_fingerprint(VkvvSurface* surface, SurfaceResource* resource, bool refresh_export, bool shadow_published, bool import_published, bool published,
                                        const VisiblePublishCadenceTrace& cadence) {
-        if (surface == nullptr || resource == nullptr || !surface_resource_uses_av1_decode(resource) || !refresh_export || !av1_trace_publication_enabled()) {
+        if (surface == nullptr || resource == nullptr || !surface_resource_uses_av1_decode(resource) || !refresh_export || !trace_publication_enabled()) {
             return;
         }
 
         const CodecVisibleOutputTrace& visible = resource->visible_output_trace;
         const uint32_t fingerprint_level  = av1_fingerprint_level();
         const bool     crc_valid          = fingerprint_level > 0;
-        const uint64_t published_crc      = crc_valid ? av1_publish_metadata_fingerprint(resource) : 0;
+        const uint64_t published_crc      = crc_valid ? publish_metadata_fingerprint(resource) : 0;
         const bool     matches_decode     = crc_valid && resource->av1_decode_fingerprint != 0 && published_crc == resource->av1_decode_fingerprint;
         const bool     matches_previous   = crc_valid && resource->av1_previous_visible_fingerprint != 0 && published_crc == resource->av1_previous_visible_fingerprint;
         const bool     pixel_proof_valid  = resource->decode_pixel_proof_valid && resource->present_pixel_proof_valid;
@@ -424,11 +424,11 @@ namespace {
         const bool     effective_matches_decode = pixel_proof_valid ? pixel_matches_decode : matches_decode;
         const bool     effective_matches_previous = pixel_proof_valid ? pixel_matches_previous : matches_previous;
         const char*    proof_source = pixel_proof_valid ? "pixel" : (crc_valid ? "metadata" : "none");
-        const char*    published_path     = av1_published_path(resource, shadow_published, import_published);
+        const char*    published_path     = visible_published_path(resource, shadow_published, import_published);
         resource->av1_publish_fingerprint = published_crc;
 
-        VKVV_TRACE("av1-publish-fingerprint",
-                   "frame_seq=%llu surface=%u content_generation=%llu published_path=%s shadow_image_handle=0x%llx import_image_handle=0x0 exported=%u shadow_exported=%u "
+        VKVV_TRACE("visible-publish-fingerprint",
+                   "frame_sequence=%llu surface=%u content_generation=%llu published_path=%s shadow_image_handle=0x%llx import_image_handle=0x0 exported=%u shadow_exported=%u "
                    "import_external=%u import_present_generation=%llu published_crc_valid=%u published_y_tl_crc=0 published_y_center_crc=0 published_y_br_crc=0 "
                    "published_uv_center_crc=0 published_combined_crc=0x%llx published_matches_decode=%u published_matches_previous_visible=%u fingerprint_level=%u "
                    "fingerprint_kind=metadata pixel_proof_valid=%u pixel_matches_decode=%u pixel_matches_previous_visible=%u decode_pixel_crc=0x%llx present_pixel_crc=0x%llx "
@@ -441,12 +441,12 @@ namespace {
                    static_cast<unsigned long long>(resource->decode_pixel_crc), static_cast<unsigned long long>(resource->present_pixel_crc), matches_decode ? 1U : 0U,
                    matches_previous ? 1U : 0U, proof_source);
 
-        VKVV_TRACE("av1-visible-frame-identity",
-                   "frame_seq=%llu surface=%u stream=%llu codec=0x%x content_generation=%llu order_hint=%u frame_type=%u tile_source=%s decode_crc=0x%llx published_crc=0x%llx "
+        VKVV_TRACE("visible-frame-identity",
+                   "frame_sequence=%llu surface=%u stream=%llu codec=0x%x content_generation=%llu display_order=%u frame_type=%u tile_or_slice_source=%s decode_crc=0x%llx published_crc=0x%llx "
                    "published_matches_decode=%u published_matches_previous_visible=%u output_published=%u proof_source=%s pixel_proof_valid=%u pixel_matches_decode=%u "
                    "pixel_matches_previous_visible=%u metadata_matches_decode=%u metadata_matches_previous_visible=%u decode_pixel_crc=0x%llx present_pixel_crc=0x%llx "
-                   "publish_monotonic_us=%llu delta_visible_us=%llu fd_dev=%llu fd_ino=%llu fd_content_gen=%llu present_gen=%llu visible_frame_seq_gap=%llu "
-                   "previous_visible_valid=%u previous_visible_frame_seq=%llu previous_visible_order_hint=%u previous_visible_surface=%u previous_visible_content_gen=%llu "
+                   "publish_monotonic_us=%llu delta_visible_us=%llu fd_dev=%llu fd_ino=%llu fd_content_gen=%llu present_gen=%llu visible_frame_sequence_gap=%llu "
+                   "previous_visible_valid=%u previous_visible_frame_sequence=%llu previous_visible_display_order=%u previous_visible_surface=%u previous_visible_content_gen=%llu "
                    "previous_visible_fd_dev=%llu previous_visible_fd_ino=%llu previous_visible_fd_content_gen=%llu previous_visible_present_gen=%llu "
                    "previous_visible_pixel_crc=0x%llx same_fd_as_previous=%u same_surface_as_previous=%u",
                    static_cast<unsigned long long>(visible.frame_sequence), surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
@@ -484,14 +484,14 @@ namespace {
             failure_stage  = "publish";
             failure_reason = "published-metadata-fingerprint-mismatch";
         }
-        VKVV_TRACE("av1-visible-frame-audit",
-                   "frame_seq=%llu surface=%u stream=%llu order_hint=%u frame_type=%u show_frame=%u show_existing_frame=%u refresh_frame_flags=0x%02x content_generation=%llu "
-                   "tile_source=%s tile_count=%u tile_ranges_valid=%u tile_sum_size=%u setup_slot=%d target_dpb_slot=%d references_valid=%u reference_count=%u "
+        VKVV_TRACE("visible-frame-audit",
+                   "frame_sequence=%llu surface=%u stream=%llu display_order=%u frame_type=%u visible_output=%u show_existing=%u refresh_flags=0x%02x content_generation=%llu "
+                   "tile_or_slice_source=%s tile_count=%u tile_ranges_valid=%u tile_sum_size=%u setup_slot=%d target_dpb_slot=%d references_valid=%u reference_count=%u "
                    "decode_crc_valid=%u decode_crc=0x%llx published_path=%s published_crc_valid=%u published_crc=0x%llx published_matches_decode=%u "
                    "published_matches_previous_visible=%u output_published=%u proof_source=%s pixel_proof_valid=%u pixel_matches_decode=%u pixel_matches_previous_visible=%u "
                    "decode_pixel_crc=0x%llx present_pixel_crc=0x%llx metadata_matches_decode=%u metadata_matches_previous_visible=%u publish_monotonic_us=%llu "
-                   "delta_visible_us=%llu fd_dev=%llu fd_ino=%llu fd_content_gen=%llu present_gen=%llu visible_frame_seq_gap=%llu visible_order_hint_delta=%lld "
-                   "previous_visible_valid=%u previous_visible_frame_seq=%llu previous_visible_order_hint=%u previous_visible_surface=%u previous_visible_content_gen=%llu "
+                   "delta_visible_us=%llu fd_dev=%llu fd_ino=%llu fd_content_gen=%llu present_gen=%llu visible_frame_sequence_gap=%llu visible_display_order_delta=%lld "
+                   "previous_visible_valid=%u previous_visible_frame_sequence=%llu previous_visible_display_order=%u previous_visible_surface=%u previous_visible_content_gen=%llu "
                    "previous_visible_fd_dev=%llu previous_visible_fd_ino=%llu previous_visible_fd_content_gen=%llu previous_visible_present_gen=%llu "
                    "previous_visible_pixel_crc=0x%llx same_fd_as_previous=%u same_surface_as_previous=%u failure_stage=%s failure_reason=%s",
                    static_cast<unsigned long long>(visible.frame_sequence), surface->id, static_cast<unsigned long long>(resource->stream_id),
@@ -532,8 +532,8 @@ namespace {
         const bool import_published = surface_resource_has_direct_import_output(resource);
         const bool published        = shadow_published || import_published;
         const VisiblePublishCadenceTrace cadence = record_visible_publish_cadence(runtime, resource, import_published, published);
-        VKVV_TRACE("av1-visible-output-check",
-                   "surface=%u show_frame=%u show_existing_frame=%u refresh_frame_flags=0x%02x frame_to_show_map_idx=%d refresh_export=%u content_gen=%llu shadow_mem=0x%llx "
+        VKVV_TRACE("visible-output-check",
+                   "surface=%u visible_output=%u show_existing=%u refresh_flags=0x%02x displayed_reference_index=%d refresh_export=%u content_gen=%llu shadow_mem=0x%llx "
                    "shadow_gen=%llu shadow_ok=%u shadow_published=%u import_external=%u import_present_generation=%llu direct_import_ok=%u import_published=%u exported=%u "
                    "shadow_exported=%u result=%s",
                    surface->id, trace_valid && visible.visible_output && !visible.show_existing ? 1U : 0U, trace_valid && visible.show_existing ? 1U : 0U,
@@ -543,12 +543,12 @@ namespace {
                    resource->import.external ? 1U : 0U, static_cast<unsigned long long>(resource->import_present_generation), import_published ? 1U : 0U,
                    import_published ? 1U : 0U, resource->exported ? 1U : 0U, resource->export_resource.exported ? 1U : 0U, published ? "published" : "unpublished");
         if (published) {
-            VKVV_TRACE("av1-visible-frame-cadence",
-                       "surface=%u stream=%llu codec=0x%x frame_seq=%llu order_hint=%u content_gen=%llu fd_dev=%llu fd_ino=%llu fd_content_gen=%llu present_gen=%llu "
-                       "present_pixel_crc=0x%llx publish_monotonic_us=%llu delta_visible_us=%llu previous_visible_valid=%u previous_visible_frame_seq=%llu "
-                       "previous_visible_order_hint=%u previous_visible_surface=%u previous_visible_content_gen=%llu previous_visible_fd_dev=%llu previous_visible_fd_ino=%llu "
-                       "previous_visible_fd_content_gen=%llu previous_visible_present_gen=%llu previous_visible_pixel_crc=0x%llx visible_frame_seq_gap=%llu "
-                       "visible_order_hint_delta=%lld same_fd_as_previous=%u same_surface_as_previous=%u published_path=%s",
+            VKVV_TRACE("visible-frame-cadence",
+                       "surface=%u stream=%llu codec=0x%x frame_sequence=%llu display_order=%u content_gen=%llu fd_dev=%llu fd_ino=%llu fd_content_gen=%llu present_gen=%llu "
+                       "present_pixel_crc=0x%llx publish_monotonic_us=%llu delta_visible_us=%llu previous_visible_valid=%u previous_visible_frame_sequence=%llu "
+                       "previous_visible_display_order=%u previous_visible_surface=%u previous_visible_content_gen=%llu previous_visible_fd_dev=%llu previous_visible_fd_ino=%llu "
+                       "previous_visible_fd_content_gen=%llu previous_visible_present_gen=%llu previous_visible_pixel_crc=0x%llx visible_frame_sequence_gap=%llu "
+                       "visible_display_order_delta=%lld same_fd_as_previous=%u same_surface_as_previous=%u published_path=%s",
                        surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                        static_cast<unsigned long long>(visible.frame_sequence), static_cast<unsigned int>(visible.display_order),
                        static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(cadence.current_fd_dev),
@@ -562,7 +562,7 @@ namespace {
                        static_cast<unsigned long long>(cadence.previous_visible_present_generation), static_cast<unsigned long long>(cadence.previous_visible_pixel_crc),
                        static_cast<unsigned long long>(cadence.visible_frame_sequence_gap), static_cast<long long>(cadence.visible_display_order_delta),
                        cadence.same_fd_as_previous ? 1U : 0U, cadence.same_surface_as_previous ? 1U : 0U,
-                       av1_published_path(resource, shadow_published, import_published));
+                       visible_published_path(resource, shadow_published, import_published));
             if (resource->import.external && import_published) {
                 VKVV_TRACE("import-output-copy-enter",
                            "surface=%u stream=%llu codec=0x%x content_gen=%llu import_external=1 import_fd_valid=%u import_fd_dev=%llu import_fd_ino=%llu "
@@ -595,12 +595,12 @@ namespace {
                            static_cast<unsigned long long>(resource->content_generation), static_cast<unsigned long long>(resource->import_present_generation),
                            static_cast<unsigned long long>(resource->import_fd_dev), static_cast<unsigned long long>(resource->import_fd_ino));
             }
-            VKVV_TRACE("av1-visible-output-published",
+            VKVV_TRACE("visible-output-published",
                        "surface=%u stream=%llu codec=0x%x content_gen=%llu shadow_gen=%llu shadow_published=%u import_published=%u exported=%u shadow_exported=%u "
                        "import_external=%u direct_import_ok=%u import_present_generation=%llu import_fd_dev=%llu import_fd_ino=%llu decode_image=0x%llx import_image=0x%llx "
                        "copy_done=%u layout_released=%u queue_family_released=%u publish_monotonic_us=%llu delta_visible_us=%llu fd_dev=%llu fd_ino=%llu fd_content_gen=%llu "
-                       "present_gen=%llu present_pixel_crc=0x%llx visible_frame_seq_gap=%llu previous_visible_valid=%u previous_visible_frame_seq=%llu "
-                       "previous_visible_order_hint=%u previous_visible_surface=%u same_fd_as_previous=%u same_surface_as_previous=%u",
+                       "present_gen=%llu present_pixel_crc=0x%llx visible_frame_sequence_gap=%llu previous_visible_valid=%u previous_visible_frame_sequence=%llu "
+                       "previous_visible_display_order=%u previous_visible_surface=%u same_fd_as_previous=%u same_surface_as_previous=%u",
                        surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation, static_cast<unsigned long long>(resource->content_generation),
                        static_cast<unsigned long long>(resource->export_resource.content_generation), shadow_published ? 1U : 0U, import_published ? 1U : 0U,
                        resource->exported ? 1U : 0U, resource->export_resource.exported ? 1U : 0U, resource->import.external ? 1U : 0U, import_published ? 1U : 0U,
@@ -634,7 +634,7 @@ namespace {
                            resource->import.external ? 1U : 0U, import_published ? 1U : 0U, static_cast<unsigned long long>(resource->import_present_generation),
                            static_cast<unsigned long long>(resource->import.fd.dev), static_cast<unsigned long long>(resource->import.fd.ino), vkvv_trace_handle(resource->image));
             }
-            VKVV_TRACE("av1-visible-output-not-published",
+            VKVV_TRACE("visible-output-not-published",
                        "surface=%u stream=%llu codec=0x%x content_gen=%llu shadow_gen=%llu shadow_published=%u import_published=%u exported=%u shadow_exported=%u "
                        "import_external=%u direct_import_ok=%u import_present_generation=%llu import_fd_dev=%llu import_fd_ino=%llu decode_image=0x%llx import_image=0x0 "
                        "copy_done=0 layout_released=0 queue_family_released=0",
@@ -1119,12 +1119,12 @@ VAStatus vkvv_vulkan_refresh_surface_export(void* runtime_ptr, VkvvSurface* surf
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
     VKVV_TRACE("visible-output-proof",
-               "codec=0x%x surface=%u content_gen=%llu order_hint_or_frame_num=%llu published_path=%s published_gen=%llu previous_visible_surface=%u previous_visible_gen=%llu "
+               "codec=0x%x surface=%u content_gen=%llu display_order=%llu published_path=%s published_gen=%llu previous_visible_surface=%u previous_visible_gen=%llu "
                "published_matches_previous=%u",
                resource->codec_operation, surface->id, static_cast<unsigned long long>(resource->content_generation),
                surface_resource_has_visible_output_trace(resource) ? static_cast<unsigned long long>(resource->visible_output_trace.display_order) :
                                                                      static_cast<unsigned long long>(resource->content_generation),
-               av1_published_path(resource, visible_shadow_published, visible_import_published),
+               visible_published_path(resource, visible_shadow_published, visible_import_published),
                visible_shadow_published ? static_cast<unsigned long long>(resource->export_resource.content_generation) :
                                           static_cast<unsigned long long>(resource->import_present_generation),
                resource->last_display_refresh_generation != 0 ? surface->id : VA_INVALID_ID, static_cast<unsigned long long>(resource->last_display_refresh_generation),
