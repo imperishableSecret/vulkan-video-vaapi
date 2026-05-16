@@ -38,12 +38,30 @@ def main() -> int:
     export_text = export_cpp.read_text(encoding="utf-8")
     if "const bool predecode_backing_export      = exact_predecode_pool_placeholder;" not in export_text:
         fail("exact-predecode pool exports must use the explicit predecode backing path")
+    if "seed_predecode_export_from_last_good(runtime, resource, reason, reason_size)" not in export_text:
+        fail("active predecode backing must try stream-local seed before returning allocation-only backing")
+    if "fresh_unreturned_seed" not in export_text:
+        fail("freshly seeded pre-return export shadows must count as valid seed pixels")
+    if '"predecode-backing-no-seed-return"' not in export_text:
+        fail("unseeded predecode backing returns need explicit role telemetry")
+    if "predecode_no_seed_export_is_probe_sized" not in export_text:
+        fail("probe-sized no-seed predecode exports must be rejected before returning a black sampleable FD")
+    if '"predecode-backing-no-seed-probe-reject"' not in export_text:
+        fail("probe-sized no-seed predecode export rejection needs explicit telemetry")
+    if '"predecode-backing-no-seed-defer"' in export_text:
+        fail("unseeded predecode backing must not be blanket-deferred without a role discriminator")
     if "const bool sampleable_placeholder_export = export_request_readable && placeholder_available && !predecode_backing_export;" not in export_text:
         fail("sampleable placeholder rejection must only exempt explicit predecode backing")
     if re.search(r"sampleable_placeholder_export\s*=\s*export_request_readable\s*&&\s*placeholder_available\s*;", export_text):
         fail("sampleable placeholder rejection still includes predecode backing")
 
     shadow_text_for_lock = "\n".join(lines)
+    if "target->content_generation        = source->content_generation;" not in shadow_text_for_lock:
+        fail("predecode seed targets must inherit the source content generation after pixel-proofed copy")
+    if "mark_export_visible_release(source, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL)" not in shadow_text_for_lock:
+        fail("predecode seed targets must be externally released after the seed copy")
+    if "exit_predecode_quarantine(nullptr, target, export_visible_release_satisfied(target))" not in shadow_text_for_lock:
+        fail("predecode seed targets must leave quarantine once valid seed pixels are released")
     copy_wait_marker = 'const bool waited = wait_for_command_fence(runtime, std::numeric_limits<uint64_t>::max(), reason, reason_size, "surface export copy");'
     seed_proof_marker = 'trace_seed_pixel_proof(runtime, source, target, "success");'
     copy_wait_index = shadow_text_for_lock.find(copy_wait_marker)
@@ -252,6 +270,10 @@ def main() -> int:
         '"direct-import-output-gate"',
         '"predecode-seed-policy"',
         '"predecode-export-policy"',
+        '"predecode-backing-gate"',
+        '"predecode-backing-no-seed-return"',
+        '"predecode-backing-no-seed-probe-reject"',
+        '"predecode-seed-release"',
         '"predecode-backing-export"',
         '"transition-hold-export"',
         '"transition-hold-attach"',
