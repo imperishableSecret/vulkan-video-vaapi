@@ -248,13 +248,13 @@ namespace vkvv {
     }
 
     void track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool refresh_export,
-                              const char* operation, const Av1PendingDecodeTrace* av1_trace) {
+                              const char* operation, const PendingDecodeTrace* decode_trace) {
         CommandSlot& slot                   = active_slot(runtime);
         slot.pending.surface                = surface;
         slot.pending.parameters             = parameters;
         slot.pending.upload_allocation_size = upload_allocation_size;
         slot.pending.submit_monotonic_us    = monotonic_us();
-        slot.pending.av1_trace              = av1_trace != nullptr ? *av1_trace : Av1PendingDecodeTrace{};
+        slot.pending.decode_trace           = decode_trace != nullptr ? *decode_trace : PendingDecodeTrace{};
         slot.pending.refresh_export         = refresh_export;
         slot.pending.use                    = CommandUse::Decode;
         std::snprintf(slot.pending.operation, sizeof(slot.pending.operation), "%s", operation);

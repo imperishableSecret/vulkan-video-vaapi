@@ -467,6 +467,14 @@ namespace vkvv {
         Av1PendingReferenceTrace references[av1_pending_reference_trace_capacity]{};
     };
 
+    struct PendingDecodeTrace {
+        bool                  valid                  = false;
+        CodecVisibleOutputTrace visible{};
+        uint32_t              reference_count        = 0;
+        uint32_t              traced_reference_count = 0;
+        Av1PendingDecodeTrace av1_trace{};
+    };
+
     struct UploadBuffer {
         VkBuffer       buffer           = VK_NULL_HANDLE;
         VkDeviceMemory memory           = VK_NULL_HANDLE;
@@ -502,7 +510,7 @@ namespace vkvv {
         VkVideoSessionParametersKHR parameters             = VK_NULL_HANDLE;
         VkDeviceSize                upload_allocation_size = 0;
         uint64_t                    submit_monotonic_us    = 0;
-        Av1PendingDecodeTrace       av1_trace{};
+        PendingDecodeTrace          decode_trace{};
         bool                        refresh_export         = true;
         CommandUse                  use                    = CommandUse::Idle;
         char                        operation[64]{};
@@ -787,7 +795,7 @@ namespace vkvv {
     bool     wait_for_command_fence(VulkanRuntime* runtime, uint64_t timeout_ns, char* reason, size_t reason_size, const char* operation);
     bool     submit_command_buffer_and_wait(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation, CommandUse use = CommandUse::Decode);
     void     track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool refresh_export,
-                                  const char* operation, const Av1PendingDecodeTrace* av1_trace = nullptr);
+                                  const char* operation, const PendingDecodeTrace* decode_trace = nullptr);
     void     trace_pending_decode_pixel_proof(VulkanRuntime* runtime, const PendingWork* completed);
     void     trace_av1_pending_decode_pixel_proof(VulkanRuntime* runtime, const PendingWork* completed);
     size_t   runtime_pending_work_count(VulkanRuntime* runtime);

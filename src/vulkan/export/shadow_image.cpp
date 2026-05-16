@@ -1674,7 +1674,7 @@ namespace vkvv {
     };
 
     void trace_pending_decode_pixel_proof(VulkanRuntime* runtime, const PendingWork* completed) {
-        if (completed != nullptr && completed->av1_trace.valid) {
+        if (completed != nullptr && completed->decode_trace.av1_trace.valid) {
             trace_av1_pending_decode_pixel_proof(runtime, completed);
             return;
         }
@@ -1706,7 +1706,7 @@ namespace vkvv {
     }
 
     void trace_av1_pending_decode_pixel_proof(VulkanRuntime* runtime, const PendingWork* completed) {
-        if (runtime == nullptr || completed == nullptr || !completed->av1_trace.valid || completed->surface == nullptr || completed->surface->vulkan == nullptr) {
+        if (runtime == nullptr || completed == nullptr || !completed->decode_trace.av1_trace.valid || completed->surface == nullptr || completed->surface->vulkan == nullptr) {
             return;
         }
 
@@ -1726,12 +1726,12 @@ namespace vkvv {
         update_decode_pixel_proof_state(target, target_ok, target_crc, target_black, target_zero);
 
         Av1ReferencePixelProof ref_proofs[av1_pending_reference_trace_capacity]{};
-        const uint32_t         references_traced = std::min<uint32_t>(completed->av1_trace.reference_count, av1_pending_reference_trace_capacity);
+        const uint32_t         references_traced = std::min<uint32_t>(completed->decode_trace.av1_trace.reference_count, av1_pending_reference_trace_capacity);
         uint32_t               matching_ref_index = UINT32_MAX;
         VASurfaceID            matching_ref_surface = VA_INVALID_ID;
         int32_t                matching_ref_slot    = -1;
         for (uint32_t i = 0; i < references_traced; i++) {
-            const Av1PendingReferenceTrace& ref = completed->av1_trace.references[i];
+            const Av1PendingReferenceTrace& ref = completed->decode_trace.av1_trace.references[i];
             SurfaceResource*                resource = ref.resource;
             if (!ref.valid || resource == nullptr) {
                 continue;
@@ -1758,10 +1758,10 @@ namespace vkvv {
                        "reference_name=%u reference_ref_idx=%u reference_order_hint=%u reference_frame_type=%u reference_frame_id=%u reference_showable=%u "
                        "reference_displayed=%u submitted_reference_content_gen=%llu current_reference_content_gen=%llu ref_crc_valid=%u ref_pixel_crc=0x%llx "
                        "target_crc_valid=%u target_pixel_crc=0x%llx matches_target=%u ref_is_black=%u ref_is_zero=%u sample_bytes=%llu pixel_proof_enabled=%u",
-                       static_cast<unsigned long long>(completed->av1_trace.frame_sequence), target->surface_id, static_cast<unsigned long long>(target->content_generation),
-                       completed->av1_trace.order_hint, completed->av1_trace.show_frame ? 1U : 0U, completed->av1_trace.showable_frame ? 1U : 0U,
-                       completed->av1_trace.show_existing_frame ? 1U : 0U, completed->av1_trace.refresh_frame_flags, completed->av1_trace.target_dpb_slot,
-                       completed->av1_trace.setup_slot, i, completed->av1_trace.reference_count, ref.surface_id, ref.dpb_slot, ref.reference_name,
+                       static_cast<unsigned long long>(completed->decode_trace.av1_trace.frame_sequence), target->surface_id, static_cast<unsigned long long>(target->content_generation),
+                       completed->decode_trace.av1_trace.order_hint, completed->decode_trace.av1_trace.show_frame ? 1U : 0U, completed->decode_trace.av1_trace.showable_frame ? 1U : 0U,
+                       completed->decode_trace.av1_trace.show_existing_frame ? 1U : 0U, completed->decode_trace.av1_trace.refresh_frame_flags, completed->decode_trace.av1_trace.target_dpb_slot,
+                       completed->decode_trace.av1_trace.setup_slot, i, completed->decode_trace.av1_trace.reference_count, ref.surface_id, ref.dpb_slot, ref.reference_name,
                        ref.ref_frame_map_index, ref.order_hint, ref.frame_type, ref.frame_id, ref.showable ? 1U : 0U, ref.displayed ? 1U : 0U,
                        static_cast<unsigned long long>(ref.content_generation), static_cast<unsigned long long>(resource->content_generation), ref_proofs[i].valid ? 1U : 0U,
                        static_cast<unsigned long long>(ref_proofs[i].valid ? ref_proofs[i].crc : 0), target_ok ? 1U : 0U,
@@ -1775,17 +1775,17 @@ namespace vkvv {
                    "refresh_frame_flags=0x%02x frame_to_show_map_idx=%d target_dpb_slot=%d setup_slot=%d reference_count=%u references_traced=%u decode_crc_valid=%u "
                    "decode_pixel_crc=0x%llx black_crc=0x%llx zero_crc=0x%llx is_black=%u is_zero=%u matches_previous_decode_pixel=%u matches_any_reference=%u "
                    "matching_reference_index=%u matching_reference_surface=%u matching_reference_slot=%d sample_bytes=%llu pixel_proof_enabled=%u reason=\"%s\"",
-                   static_cast<unsigned long long>(completed->av1_trace.frame_sequence), target->surface_id, static_cast<unsigned long long>(target->stream_id),
-                   target->codec_operation, static_cast<unsigned long long>(target->content_generation), completed->av1_trace.order_hint, completed->av1_trace.frame_type,
-                   completed->av1_trace.show_frame ? 1U : 0U, completed->av1_trace.showable_frame ? 1U : 0U, completed->av1_trace.show_existing_frame ? 1U : 0U,
-                   completed->av1_trace.refresh_frame_flags, completed->av1_trace.frame_to_show_map_idx, completed->av1_trace.target_dpb_slot,
-                   completed->av1_trace.setup_slot, completed->av1_trace.reference_count, references_traced, target_ok ? 1U : 0U,
+                   static_cast<unsigned long long>(completed->decode_trace.av1_trace.frame_sequence), target->surface_id, static_cast<unsigned long long>(target->stream_id),
+                   target->codec_operation, static_cast<unsigned long long>(target->content_generation), completed->decode_trace.av1_trace.order_hint, completed->decode_trace.av1_trace.frame_type,
+                   completed->decode_trace.av1_trace.show_frame ? 1U : 0U, completed->decode_trace.av1_trace.showable_frame ? 1U : 0U, completed->decode_trace.av1_trace.show_existing_frame ? 1U : 0U,
+                   completed->decode_trace.av1_trace.refresh_frame_flags, completed->decode_trace.av1_trace.frame_to_show_map_idx, completed->decode_trace.av1_trace.target_dpb_slot,
+                   completed->decode_trace.av1_trace.setup_slot, completed->decode_trace.av1_trace.reference_count, references_traced, target_ok ? 1U : 0U,
                    static_cast<unsigned long long>(target_ok ? target_crc : 0), static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc),
                    target_black ? 1U : 0U, target_zero ? 1U : 0U, matches_previous_decode ? 1U : 0U, matching_ref_index != UINT32_MAX ? 1U : 0U,
                    matching_ref_index != UINT32_MAX ? matching_ref_index : 0U, matching_ref_surface, matching_ref_slot, static_cast<unsigned long long>(target_bytes),
                    proof_enabled ? 1U : 0U, proof_reason);
         if (target_ok && matching_ref_index != UINT32_MAX && matching_ref_index < references_traced) {
-            const Av1PendingReferenceTrace& ref       = completed->av1_trace.references[matching_ref_index];
+            const Av1PendingReferenceTrace& ref       = completed->decode_trace.av1_trace.references[matching_ref_index];
             const Av1ReferencePixelProof&   ref_proof = ref_proofs[matching_ref_index];
             VKVV_TRACE_DEEP("av1-noop-candidate",
                        "frame_seq=%llu surface=%u content_gen=%llu order_hint=%u frame_type=%u current_frame_id=%u show_frame=%u showable_frame=%u show_existing_frame=%u "
@@ -1803,36 +1803,36 @@ namespace vkvv {
                        "matching_reference_surface=%u matching_reference_slot=%d matching_reference_name=%u matching_reference_ref_idx=%u matching_reference_order_hint=%u "
                        "matching_reference_frame_type=%u matching_reference_frame_id=%u matching_reference_showable=%u matching_reference_displayed=%u "
                        "matching_reference_content_gen=%llu target_pixel_crc=0x%llx reference_pixel_crc=0x%llx sample_bytes=%llu pixel_proof_enabled=%u",
-                       static_cast<unsigned long long>(completed->av1_trace.frame_sequence), target->surface_id, static_cast<unsigned long long>(target->content_generation),
-                       completed->av1_trace.order_hint, completed->av1_trace.frame_type, completed->av1_trace.current_frame_id, completed->av1_trace.show_frame ? 1U : 0U,
-                       completed->av1_trace.showable_frame ? 1U : 0U, completed->av1_trace.show_existing_frame ? 1U : 0U, completed->av1_trace.refresh_frame_flags,
-                       completed->av1_trace.primary_ref_frame, completed->av1_trace.target_dpb_slot, completed->av1_trace.setup_slot, completed->av1_trace.reference_count,
-                       completed->av1_trace.bitstream_size, completed->av1_trace.tile_count, completed->av1_trace.tile_sum_size,
-                       static_cast<unsigned long long>(completed->av1_trace.tile_bytes_hash), static_cast<unsigned long long>(completed->av1_trace.bitstream_hash),
-                       completed->av1_trace.tile_source != nullptr ? completed->av1_trace.tile_source : "unknown",
-                       completed->av1_trace.tile_selection_reason != nullptr ? completed->av1_trace.tile_selection_reason : "unknown",
-                       completed->av1_trace.parser_used ? 1U : 0U, completed->av1_trace.parser_status, completed->av1_trace.selected_obu_type,
-                       completed->av1_trace.tile_group_count, completed->av1_trace.va_tile_count, completed->av1_trace.parsed_tile_count,
-                       completed->av1_trace.tile_ranges_equivalent ? 1U : 0U, completed->av1_trace.base_q_idx, completed->av1_trace.delta_q_y_dc,
-                       completed->av1_trace.delta_q_u_dc, completed->av1_trace.delta_q_u_ac, completed->av1_trace.delta_q_v_dc, completed->av1_trace.delta_q_v_ac,
-                       completed->av1_trace.using_qmatrix ? 1U : 0U, completed->av1_trace.diff_uv_delta ? 1U : 0U, completed->av1_trace.qm_y, completed->av1_trace.qm_u,
-                       completed->av1_trace.qm_v, completed->av1_trace.error_resilient_mode ? 1U : 0U, completed->av1_trace.disable_cdf_update ? 1U : 0U,
-                       completed->av1_trace.disable_frame_end_update_cdf ? 1U : 0U, completed->av1_trace.allow_intrabc ? 1U : 0U,
-                       completed->av1_trace.allow_warped_motion ? 1U : 0U, completed->av1_trace.allow_high_precision_mv ? 1U : 0U,
-                       completed->av1_trace.is_motion_mode_switchable ? 1U : 0U, completed->av1_trace.use_ref_frame_mvs ? 1U : 0U,
-                       completed->av1_trace.reference_select ? 1U : 0U, completed->av1_trace.skip_mode_present ? 1U : 0U, completed->av1_trace.skip_mode_frame[0],
-                       completed->av1_trace.skip_mode_frame[1], completed->av1_trace.interpolation_filter, completed->av1_trace.std_interpolation_filter,
-                       completed->av1_trace.tx_mode, completed->av1_trace.std_tx_mode, completed->av1_trace.segmentation_enabled ? 1U : 0U,
-                       completed->av1_trace.segmentation_update_map ? 1U : 0U, completed->av1_trace.segmentation_temporal_update ? 1U : 0U,
-                       completed->av1_trace.segmentation_update_data ? 1U : 0U, completed->av1_trace.segmentation_feature_mask_or,
-                       static_cast<unsigned long long>(completed->av1_trace.segmentation_feature_data_hash),
-                       completed->av1_trace.loop_filter_delta_enabled ? 1U : 0U, completed->av1_trace.loop_filter_delta_update ? 1U : 0U,
-                       completed->av1_trace.loop_filter_level[0], completed->av1_trace.loop_filter_level[1], completed->av1_trace.loop_filter_level[2],
-                       completed->av1_trace.loop_filter_level[3], completed->av1_trace.cdef_enabled ? 1U : 0U, completed->av1_trace.cdef_damping_minus_3,
-                       completed->av1_trace.cdef_bits, completed->av1_trace.restoration_enabled ? 1U : 0U, completed->av1_trace.uses_lr ? 1U : 0U,
-                       completed->av1_trace.uses_chroma_lr ? 1U : 0U, completed->av1_trace.restoration_type[0], completed->av1_trace.restoration_type[1],
-                       completed->av1_trace.restoration_type[2], completed->av1_trace.restoration_size[0], completed->av1_trace.restoration_size[1],
-                       completed->av1_trace.restoration_size[2], matching_ref_index, ref.surface_id, ref.dpb_slot, ref.reference_name, ref.ref_frame_map_index, ref.order_hint,
+                       static_cast<unsigned long long>(completed->decode_trace.av1_trace.frame_sequence), target->surface_id, static_cast<unsigned long long>(target->content_generation),
+                       completed->decode_trace.av1_trace.order_hint, completed->decode_trace.av1_trace.frame_type, completed->decode_trace.av1_trace.current_frame_id, completed->decode_trace.av1_trace.show_frame ? 1U : 0U,
+                       completed->decode_trace.av1_trace.showable_frame ? 1U : 0U, completed->decode_trace.av1_trace.show_existing_frame ? 1U : 0U, completed->decode_trace.av1_trace.refresh_frame_flags,
+                       completed->decode_trace.av1_trace.primary_ref_frame, completed->decode_trace.av1_trace.target_dpb_slot, completed->decode_trace.av1_trace.setup_slot, completed->decode_trace.av1_trace.reference_count,
+                       completed->decode_trace.av1_trace.bitstream_size, completed->decode_trace.av1_trace.tile_count, completed->decode_trace.av1_trace.tile_sum_size,
+                       static_cast<unsigned long long>(completed->decode_trace.av1_trace.tile_bytes_hash), static_cast<unsigned long long>(completed->decode_trace.av1_trace.bitstream_hash),
+                       completed->decode_trace.av1_trace.tile_source != nullptr ? completed->decode_trace.av1_trace.tile_source : "unknown",
+                       completed->decode_trace.av1_trace.tile_selection_reason != nullptr ? completed->decode_trace.av1_trace.tile_selection_reason : "unknown",
+                       completed->decode_trace.av1_trace.parser_used ? 1U : 0U, completed->decode_trace.av1_trace.parser_status, completed->decode_trace.av1_trace.selected_obu_type,
+                       completed->decode_trace.av1_trace.tile_group_count, completed->decode_trace.av1_trace.va_tile_count, completed->decode_trace.av1_trace.parsed_tile_count,
+                       completed->decode_trace.av1_trace.tile_ranges_equivalent ? 1U : 0U, completed->decode_trace.av1_trace.base_q_idx, completed->decode_trace.av1_trace.delta_q_y_dc,
+                       completed->decode_trace.av1_trace.delta_q_u_dc, completed->decode_trace.av1_trace.delta_q_u_ac, completed->decode_trace.av1_trace.delta_q_v_dc, completed->decode_trace.av1_trace.delta_q_v_ac,
+                       completed->decode_trace.av1_trace.using_qmatrix ? 1U : 0U, completed->decode_trace.av1_trace.diff_uv_delta ? 1U : 0U, completed->decode_trace.av1_trace.qm_y, completed->decode_trace.av1_trace.qm_u,
+                       completed->decode_trace.av1_trace.qm_v, completed->decode_trace.av1_trace.error_resilient_mode ? 1U : 0U, completed->decode_trace.av1_trace.disable_cdf_update ? 1U : 0U,
+                       completed->decode_trace.av1_trace.disable_frame_end_update_cdf ? 1U : 0U, completed->decode_trace.av1_trace.allow_intrabc ? 1U : 0U,
+                       completed->decode_trace.av1_trace.allow_warped_motion ? 1U : 0U, completed->decode_trace.av1_trace.allow_high_precision_mv ? 1U : 0U,
+                       completed->decode_trace.av1_trace.is_motion_mode_switchable ? 1U : 0U, completed->decode_trace.av1_trace.use_ref_frame_mvs ? 1U : 0U,
+                       completed->decode_trace.av1_trace.reference_select ? 1U : 0U, completed->decode_trace.av1_trace.skip_mode_present ? 1U : 0U, completed->decode_trace.av1_trace.skip_mode_frame[0],
+                       completed->decode_trace.av1_trace.skip_mode_frame[1], completed->decode_trace.av1_trace.interpolation_filter, completed->decode_trace.av1_trace.std_interpolation_filter,
+                       completed->decode_trace.av1_trace.tx_mode, completed->decode_trace.av1_trace.std_tx_mode, completed->decode_trace.av1_trace.segmentation_enabled ? 1U : 0U,
+                       completed->decode_trace.av1_trace.segmentation_update_map ? 1U : 0U, completed->decode_trace.av1_trace.segmentation_temporal_update ? 1U : 0U,
+                       completed->decode_trace.av1_trace.segmentation_update_data ? 1U : 0U, completed->decode_trace.av1_trace.segmentation_feature_mask_or,
+                       static_cast<unsigned long long>(completed->decode_trace.av1_trace.segmentation_feature_data_hash),
+                       completed->decode_trace.av1_trace.loop_filter_delta_enabled ? 1U : 0U, completed->decode_trace.av1_trace.loop_filter_delta_update ? 1U : 0U,
+                       completed->decode_trace.av1_trace.loop_filter_level[0], completed->decode_trace.av1_trace.loop_filter_level[1], completed->decode_trace.av1_trace.loop_filter_level[2],
+                       completed->decode_trace.av1_trace.loop_filter_level[3], completed->decode_trace.av1_trace.cdef_enabled ? 1U : 0U, completed->decode_trace.av1_trace.cdef_damping_minus_3,
+                       completed->decode_trace.av1_trace.cdef_bits, completed->decode_trace.av1_trace.restoration_enabled ? 1U : 0U, completed->decode_trace.av1_trace.uses_lr ? 1U : 0U,
+                       completed->decode_trace.av1_trace.uses_chroma_lr ? 1U : 0U, completed->decode_trace.av1_trace.restoration_type[0], completed->decode_trace.av1_trace.restoration_type[1],
+                       completed->decode_trace.av1_trace.restoration_type[2], completed->decode_trace.av1_trace.restoration_size[0], completed->decode_trace.av1_trace.restoration_size[1],
+                       completed->decode_trace.av1_trace.restoration_size[2], matching_ref_index, ref.surface_id, ref.dpb_slot, ref.reference_name, ref.ref_frame_map_index, ref.order_hint,
                        ref.frame_type, ref.frame_id, ref.showable ? 1U : 0U, ref.displayed ? 1U : 0U, static_cast<unsigned long long>(ref.content_generation),
                        static_cast<unsigned long long>(target_crc), static_cast<unsigned long long>(ref_proof.valid ? ref_proof.crc : 0),
                        static_cast<unsigned long long>(target_bytes), proof_enabled ? 1U : 0U);
