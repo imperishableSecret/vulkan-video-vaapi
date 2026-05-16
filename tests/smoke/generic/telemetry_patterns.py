@@ -68,7 +68,6 @@ def main() -> int:
         fail("sampleable placeholder rejection must only exempt explicit predecode backing")
     if re.search(r"sampleable_placeholder_export\s*=\s*export_request_readable\s*&&\s*placeholder_available\s*;", export_text):
         fail("sampleable placeholder rejection still includes predecode backing")
-
     shadow_text_for_lock = "\n".join(lines)
     if "target->content_generation        = source->content_generation;" not in shadow_text_for_lock:
         fail("predecode seed targets must inherit the source content generation after pixel-proofed copy")
@@ -244,6 +243,12 @@ def main() -> int:
     export_retained_text = (root / "src" / "vulkan" / "export" / "retained.cpp").read_text(encoding="utf-8")
     resource_text = (root / "src" / "vulkan" / "resources" / "surface.cpp").read_text(encoding="utf-8")
     export_combined_text = export_text + "\n" + shadow_text + "\n" + export_state_text + "\n" + export_retained_text + "\n" + resource_text
+    if "predecode_seed_source_structurally_valid" not in shadow_text:
+        fail("predecode seed admission must have a structural source-validity helper")
+    if "return export_pixel_proof_enabled() && source != nullptr" in shadow_text:
+        fail("predecode seed source admission still depends on pixel proof being enabled")
+    if "predecode_seed_target_thumbnail_like(target) || !predecode_seed_source_decoded_for_internal_copy(source)" not in shadow_text:
+        fail("thumbnail-like predecode targets must stay on the placeholder path even when a structural source exists")
     for forbidden in (
         "VKVV_ALLOW_PLACEHOLDER_EXPORT",
         "DebugPlaceholder",
@@ -497,8 +502,9 @@ def main() -> int:
         "private-shadow-refresh",
         "nondisplay-present-pinned-skip",
         "neutral-placeholder",
-        "pixel-proof-disabled",
         "source-not-decoded",
+        "source-not-published-seed",
+        "source-domain-incomplete",
         "source-proof-stale",
         "source-proof-unavailable",
         "source-proof-invalid",
