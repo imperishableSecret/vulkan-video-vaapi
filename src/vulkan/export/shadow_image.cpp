@@ -1025,14 +1025,14 @@ namespace vkvv {
         source->present_pixel_matches_previous = present_ok && source->previous_present_pixel_crc != 0 && source->previous_present_pixel_crc == source->present_pixel_crc;
         const bool present_black               = present_ok && black_crc != 0 && source->present_pixel_crc == black_crc;
         const bool present_zero                = present_ok && zero_crc != 0 && source->present_pixel_crc == zero_crc;
-        VKVV_TRACE("decode-pixel-proof",
+        VKVV_TRACE_DEEP("decode-pixel-proof",
                    "surface=%u codec=0x%x stream=%llu content_gen=%llu order_hint_or_frame_num=%llu decode_crc_valid=%u decode_crc=0x%llx black_crc=0x%llx "
                    "zero_crc=0x%llx is_black=%u is_zero=%u pixel_proof_valid=%u sample_bytes=%llu",
                    source->surface_id, source->codec_operation, static_cast<unsigned long long>(source->stream_id), static_cast<unsigned long long>(source->content_generation),
                    static_cast<unsigned long long>(order_hint_or_frame_num), decode_ok ? 1U : 0U, static_cast<unsigned long long>(source->decode_pixel_crc),
                    static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc), decode_black ? 1U : 0U, decode_zero ? 1U : 0U,
                    decode_ok && !decode_black && !decode_zero ? 1U : 0U, static_cast<unsigned long long>(decode_bytes));
-        VKVV_TRACE("present-pixel-proof",
+        VKVV_TRACE_DEEP("present-pixel-proof",
                    "surface=%u codec=0x%x stream=%llu content_gen=%llu fd_dev=%llu fd_ino=%llu fd_content_gen=%llu present_gen=%llu present_shadow_crc_valid=%u "
                    "present_shadow_crc=0x%llx present_crc=0x%llx decode_crc=0x%llx black_crc=0x%llx zero_crc=0x%llx previous_present_crc=0x%llx matches_decode=%u "
                    "matches_previous=%u matches_previous_present=%u is_black=%u is_zero=%u pixel_proof_valid=%u sample_bytes=%llu",
@@ -1082,7 +1082,7 @@ namespace vkvv {
         source->private_shadow_pixel_crc            = private_ok ? private_crc : 0;
         source->private_shadow_pixel_matches_decode = decode_ok && private_ok && decode_crc == private_crc;
 
-        VKVV_TRACE("private-shadow-pixel-proof",
+        VKVV_TRACE_DEEP("private-shadow-pixel-proof",
                    "surface=%u codec=0x%x stream=%llu content_gen=%llu decode_crc_valid=%u decode_crc=0x%llx private_shadow_crc_valid=%u private_shadow_crc=0x%llx "
                    "matches_decode=%u decode_sample_bytes=%llu private_sample_bytes=%llu",
                    source->surface_id, source->codec_operation, static_cast<unsigned long long>(source->stream_id), static_cast<unsigned long long>(source->content_generation),
@@ -1146,7 +1146,7 @@ namespace vkvv {
                 (!export_pixel_proof_enabled() || (resource->seed_pixel_proof_valid && pixel_proof_valid));
             proof->placeholder_pixels = pixel_source == VkvvExportPixelSource::Placeholder || is_black || is_zero;
         }
-        VKVV_TRACE("returned-fd-pixel-proof",
+        VKVV_TRACE_DEEP("returned-fd-pixel-proof",
                    "surface=%u fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu pixel_source=%s returned_crc=0x%llx black_crc=0x%llx "
                    "zero_crc=0x%llx is_black=%u is_zero=%u pixel_proof_valid=%u may_be_sampled_by_client=%u export_role=%s returned_fd=1 sample_bytes=%llu proof_enabled=%u",
                    owner->surface_id, static_cast<unsigned long long>(fd.dev), static_cast<unsigned long long>(fd.ino), static_cast<unsigned long long>(owner->stream_id),
@@ -1193,7 +1193,7 @@ namespace vkvv {
         const bool target_proof_ok  = !proof_enabled || (target_ok && target_bytes > 0 && target_matches && !target_black && !target_zero);
         const bool target_valid     = source_valid && target_proof_ok;
         target->seed_pixel_proof_valid = proof_enabled && target_valid;
-        VKVV_TRACE("seed-source-pixel-proof",
+        VKVV_TRACE_DEEP("seed-source-pixel-proof",
                    "source_surface=%u source_stream=%llu source_codec=0x%x source_present_gen=%llu source_fd_content_gen=%llu source_crc=0x%llx black_crc=0x%llx "
                    "zero_crc=0x%llx is_black=%u is_zero=%u pixel_proof_valid=%u valid_for_seed=%u sample_bytes=%llu proof_enabled=%u",
                    source->surface_id, static_cast<unsigned long long>(source->stream_id), source->codec_operation,
@@ -1201,7 +1201,7 @@ namespace vkvv {
                    static_cast<unsigned long long>(export_resource_fd_content_generation(&source->export_resource)), static_cast<unsigned long long>(source_ok ? source_crc : 0),
                    static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc), source_black ? 1U : 0U, source_zero ? 1U : 0U,
                    source_ok ? 1U : 0U, source_valid ? 1U : 0U, static_cast<unsigned long long>(source_bytes), proof_enabled ? 1U : 0U);
-        VKVV_TRACE("seed-target-pixel-proof",
+        VKVV_TRACE_DEEP("seed-target-pixel-proof",
                    "target_surface=%u source_surface=%u target_fd_dev=%llu target_fd_ino=%llu target_crc_after_copy=0x%llx source_crc=0x%llx matches_source=%u "
                    "target_is_black=%u target_is_zero=%u pixel_proof_valid=%u reject_reason=%s copy_status=%s target_sample_bytes=%llu",
                    target->owner_surface_id, source->surface_id, static_cast<unsigned long long>(target->fd_dev), static_cast<unsigned long long>(target->fd_ino),
@@ -1695,7 +1695,7 @@ namespace vkvv {
         const bool target_black = target_ok && black_crc != 0 && target_crc == black_crc;
         const bool target_zero  = target_ok && zero_crc != 0 && target_crc == zero_crc;
         update_decode_pixel_proof_state(target, target_ok, target_crc, target_black, target_zero);
-        VKVV_TRACE("pending-decode-pixel-proof",
+        VKVV_TRACE_DEEP("pending-decode-pixel-proof",
                    "surface=%u stream=%llu codec=0x%x content_gen=%llu operation=%s decode_crc_valid=%u decode_crc=0x%llx black_crc=0x%llx zero_crc=0x%llx "
                    "is_black=%u is_zero=%u pixel_proof_valid=%u sample_bytes=%llu proof_enabled=%u",
                    target->surface_id, static_cast<unsigned long long>(target->stream_id), target->codec_operation, static_cast<unsigned long long>(target->content_generation),
@@ -1751,7 +1751,7 @@ namespace vkvv {
                 matching_ref_surface = ref.surface_id;
                 matching_ref_slot    = ref.dpb_slot;
             }
-            VKVV_TRACE("av1-reference-pixel-proof",
+            VKVV_TRACE_DEEP("av1-reference-pixel-proof",
                        "frame_seq=%llu target_surface=%u target_content_gen=%llu order_hint=%u show_frame=%u showable_frame=%u show_existing_frame=%u "
                        "refresh_frame_flags=0x%02x target_dpb_slot=%d setup_slot=%d reference_index=%u reference_count=%u reference_surface=%u reference_slot=%d "
                        "reference_name=%u reference_ref_idx=%u reference_order_hint=%u reference_frame_type=%u reference_frame_id=%u reference_showable=%u "
@@ -1769,7 +1769,7 @@ namespace vkvv {
         }
 
         const bool matches_previous_decode = target_ok && target->decode_pixel_proof_valid && target->decode_pixel_crc == target_crc;
-        VKVV_TRACE("av1-decode-pixel-proof",
+        VKVV_TRACE_DEEP("av1-decode-pixel-proof",
                    "frame_seq=%llu surface=%u stream=%llu codec=0x%x content_gen=%llu order_hint=%u frame_type=%u show_frame=%u showable_frame=%u show_existing_frame=%u "
                    "refresh_frame_flags=0x%02x frame_to_show_map_idx=%d target_dpb_slot=%d setup_slot=%d reference_count=%u references_traced=%u decode_crc_valid=%u "
                    "decode_pixel_crc=0x%llx black_crc=0x%llx zero_crc=0x%llx is_black=%u is_zero=%u matches_previous_decode_pixel=%u matches_any_reference=%u "
@@ -1786,7 +1786,7 @@ namespace vkvv {
         if (target_ok && matching_ref_index != UINT32_MAX && matching_ref_index < references_traced) {
             const Av1PendingReferenceTrace& ref       = completed->av1_trace.references[matching_ref_index];
             const Av1ReferencePixelProof&   ref_proof = ref_proofs[matching_ref_index];
-            VKVV_TRACE("av1-noop-candidate",
+            VKVV_TRACE_DEEP("av1-noop-candidate",
                        "frame_seq=%llu surface=%u content_gen=%llu order_hint=%u frame_type=%u current_frame_id=%u show_frame=%u showable_frame=%u show_existing_frame=%u "
                        "refresh_frame_flags=0x%02x primary_ref_frame=%u target_dpb_slot=%d setup_slot=%d reference_count=%u bitstream_size=%u tile_count=%u "
                        "tile_sum_size=%u tile_hash=0x%llx bitstream_hash=0x%llx tile_source=%s selection_reason=%s parser_used=%u parser_status=%d selected_obu_type=%u "
@@ -1992,7 +1992,7 @@ namespace vkvv {
             if (!valid && reject_summary[0] == 'n' && std::strcmp(reject_summary, "none") == 0) {
                 reject_summary = reject_reason;
             }
-            VKVV_TRACE("export-seed-candidate",
+            VKVV_TRACE_DEEP("export-seed-candidate",
                        "target_surface=%u candidate_surface=%u same_driver=%u same_stream=%u same_codec=%u same_fourcc=%u same_visible_extent=%u same_coded_extent=%u "
                        "same_sequence_generation=%u same_session_generation=%u candidate_present_gen=%llu candidate_fd_content_gen=%llu candidate_external_release_ok=%u "
                        "candidate_pixel_proof_valid=%u candidate_is_black=%u candidate_is_zero=%u candidate_valid=%u reject_reason=%s",
@@ -2016,7 +2016,7 @@ namespace vkvv {
             }
             i++;
         }
-        VKVV_TRACE("export-seed-candidate-scan",
+        VKVV_TRACE_DEEP("export-seed-candidate-scan",
                    "target_surface=%u target_driver=%llu target_stream=%llu target_codec=0x%x target_fourcc=0x%x target_visible_width=%u target_visible_height=%u "
                    "target_coded_width=%u target_coded_height=%u target_sequence_generation=%llu target_session_generation=%llu candidate_count=%zu valid_candidate_count=%zu "
                    "selected_surface=%u selected_reason=%s reject_summary=%s",

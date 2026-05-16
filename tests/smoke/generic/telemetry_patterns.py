@@ -351,6 +351,22 @@ def main() -> int:
     ):
         if event not in export_combined_text:
             fail(f"export regression telemetry trace is missing event {event}")
+    for event in (
+        '"export-seed-candidate-scan"',
+        '"export-seed-candidate"',
+        '"seed-source-pixel-proof"',
+        '"seed-target-pixel-proof"',
+        '"returned-fd-pixel-proof"',
+        '"decode-pixel-proof"',
+        '"present-pixel-proof"',
+        '"private-shadow-pixel-proof"',
+        '"pending-decode-pixel-proof"',
+        '"av1-decode-pixel-proof"',
+        '"av1-reference-pixel-proof"',
+        '"av1-noop-candidate"',
+    ):
+        if f"VKVV_TRACE_DEEP({event}" not in export_combined_text:
+            fail(f"high-volume diagnostic trace must be deep-trace gated: {event}")
     for field in (
         "show_frame=",
         "show_existing_frame=",

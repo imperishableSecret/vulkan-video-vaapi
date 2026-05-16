@@ -345,6 +345,8 @@ Validation:
 ### Phase 7: Telemetry slimming
 
 - Move any remaining high-volume debug traces to deep trace or diagnostic-only build blocks.
+  - Seed candidate scans and pixel/CRC proof traces are deep-trace gated.
+  - VA config/surface negotiation traces are deep-trace gated.
 - Keep the invariant summary events.
 - Re-run the browser scenarios and compare logs.
 

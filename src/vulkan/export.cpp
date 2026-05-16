@@ -1646,7 +1646,7 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
         returned_proof.pixel_source             = pixel_source;
         returned_proof.export_role              = returned_export_role;
         returned_proof.decoded_pixels_valid     = surface->decoded && resource->content_generation != 0;
-        VKVV_TRACE("returned-fd-pixel-proof",
+        VKVV_TRACE_DEEP("returned-fd-pixel-proof",
                    "surface=%u fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x content_gen=%llu fd_content_gen=%llu pixel_source=%s returned_crc=0x0 black_crc=0x0 zero_crc=0x0 "
                    "is_black=0 is_zero=0 pixel_proof_valid=0 may_be_sampled_by_client=%u export_role=%s returned_fd=1 sample_bytes=0 proof_enabled=0",
                    surface->id, static_cast<unsigned long long>(fd_stat.dev), static_cast<unsigned long long>(fd_stat.ino),
