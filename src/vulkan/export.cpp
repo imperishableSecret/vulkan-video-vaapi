@@ -1317,7 +1317,22 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
     const bool placeholder_available          = export_source_is_placeholder(exported_shadow, pre_fd_pixel_source);
     const bool exact_predecode_pool_placeholder =
         allow_exact_predecode_pool_placeholder_export(surface, resource, exported_shadow, pre_fd_pixel_source);
-    if (!valid_decoded_pixels_available && !valid_seed_available && !(placeholder_available && allow_placeholder_export()) && !exact_predecode_pool_placeholder) {
+    const bool sampleable_placeholder_export = export_request_readable && placeholder_available;
+    const bool debug_placeholder_export      = !export_request_readable && placeholder_available && allow_placeholder_export();
+    const bool bootstrap_placeholder_export  = !export_request_readable && exact_predecode_pool_placeholder;
+    if (sampleable_placeholder_export) {
+        VkvvFdIdentity no_fd{};
+        if (exported_shadow != nullptr) {
+            trace_predecode_quarantine_outcome(resource, exported_shadow, "export-failed", "sampleable-placeholder", false);
+        }
+        trace_export_summary(exported_shadow, nullptr, false, no_fd, "fail", "sampleable-placeholder-not-presentable", VA_STATUS_ERROR_OPERATION_FAILED);
+        VKVV_ERROR_REASON(reason, reason_size, VA_STATUS_ERROR_OPERATION_FAILED,
+                          "surface export refused sampleable placeholder fd: surface=%u stream=%llu codec=0x%x content_gen=%llu pixel_source=%s",
+                          surface->id, static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
+                          static_cast<unsigned long long>(resource->content_generation), vkvv_export_pixel_source_name(pre_fd_pixel_source));
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    if (!valid_decoded_pixels_available && !valid_seed_available && !debug_placeholder_export && !bootstrap_placeholder_export) {
         VkvvFdIdentity no_fd{};
         if (placeholder_available && exported_shadow != nullptr) {
             trace_predecode_quarantine_outcome(resource, exported_shadow, "export-failed", "no-valid-pixels", false);
@@ -1329,13 +1344,13 @@ VAStatus vkvv_vulkan_export_surface(void* runtime_ptr, const VkvvSurface* surfac
                           static_cast<unsigned long long>(resource->content_generation), vkvv_export_pixel_source_name(pre_fd_pixel_source));
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
-    if (exact_predecode_pool_placeholder) {
+    if (bootstrap_placeholder_export) {
         VKVV_TRACE("predecode-pool-placeholder-export",
                    "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=0 decision=return-placeholder returned_fd=1 exact_surface=1 seed_surface=%u "
                    "seed_gen=0",
                    surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
                    VA_INVALID_ID);
-    } else if (placeholder_available) {
+    } else if (debug_placeholder_export) {
         VKVV_TRACE("debug-placeholder-export",
                    "surface=%u driver=%llu stream=%llu codec=0x%x content_gen=%llu decision=return-placeholder returned_fd=1 unsafe=1 reason=debug-override",
                    surface->id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id), resource->codec_operation,
