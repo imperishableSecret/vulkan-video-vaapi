@@ -386,6 +386,18 @@ namespace {
         resource->av1_visible_show_existing_frame   = input->header.show_existing_frame;
         resource->av1_visible_refresh_frame_flags   = input->header.refresh_frame_flags;
         resource->av1_visible_frame_to_show_map_idx = input->header.frame_to_show_map_idx;
+
+        CodecVisibleOutputTrace visible{};
+        visible.valid                     = true;
+        visible.visible_output            = input->header.show_frame || input->header.show_existing_frame;
+        visible.show_existing             = input->header.show_existing_frame;
+        visible.frame_sequence            = resource->av1_frame_sequence;
+        visible.display_order             = input->pic->order_hint;
+        visible.frame_type                = input->pic->pic_info_fields.bits.frame_type;
+        visible.refresh_flags             = input->header.refresh_frame_flags;
+        visible.displayed_reference_index = input->header.frame_to_show_map_idx;
+        visible.tile_or_slice_source      = resource->av1_tile_source;
+        set_surface_visible_output_trace(resource, visible);
     }
 
     bool av1_env_flag_enabled(const char* name) {
