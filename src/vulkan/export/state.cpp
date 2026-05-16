@@ -267,7 +267,7 @@ namespace vkvv {
         resource->exported_fd.fd_exported                     = fd.valid;
         resource->exported_fd.fd_dev                          = fd.dev;
         resource->exported_fd.fd_ino                          = fd.ino;
-        resource->exported_fd.may_be_sampled_by_client        = fd.valid;
+        resource->exported_fd.may_be_sampled_by_client        = fd.valid && content_generation != 0;
         resource->exported_fd.fd_content_generation           = content_generation;
         resource->exported_fd.last_written_content_generation = content_generation;
         resource->exported_fd.detached_from_surface           = false;
@@ -279,6 +279,7 @@ namespace vkvv {
         }
         resource->exported_fd.fd_content_generation           = content_generation;
         resource->exported_fd.last_written_content_generation = content_generation;
+        resource->exported_fd.may_be_sampled_by_client        = content_generation != 0;
         resource->exported_fd.detached_from_surface           = false;
     }
 

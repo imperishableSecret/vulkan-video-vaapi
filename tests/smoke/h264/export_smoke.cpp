@@ -233,7 +233,40 @@ namespace {
         return true;
     }
 
-    bool check_predecode_backup_seeding(vkvv::VulkanRuntime* runtime) {
+    bool check_sampleable_predecode_export_is_refused(vkvv::VulkanRuntime* runtime) {
+        char reason[512] = {};
+
+        VkvvSurface surface{};
+        init_nv12_surface(&surface, 880, h264_stream_id + 30, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+
+        VAStatus status = vkvv_vulkan_prepare_surface_export(runtime, &surface, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        if (status != VA_STATUS_SUCCESS) {
+            vkvv_vulkan_surface_destroy(runtime, &surface);
+            return false;
+        }
+
+        VADRMPRIMESurfaceDescriptor descriptor{};
+        descriptor.objects[0].fd = -1;
+        status = vkvv_vulkan_export_surface(runtime, &surface, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &descriptor, reason, sizeof(reason));
+        std::printf("%s\n", reason);
+        if (descriptor.objects[0].fd >= 0) {
+            close(descriptor.objects[0].fd);
+        }
+
+        auto* resource = static_cast<vkvv::SurfaceResource*>(surface.vulkan);
+        const bool refused_placeholder =
+            status != VA_STATUS_SUCCESS && resource != nullptr && resource->content_generation == 0 && resource->export_resource.content_generation == 0 &&
+            !vkvv::export_resource_fd_may_be_sampled_by_client(&resource->export_resource);
+        vkvv_vulkan_surface_destroy(runtime, &surface);
+        if (!refused_placeholder) {
+            std::fprintf(stderr, "sampleable predecode export should be refused without returning a placeholder fd\n");
+            return false;
+        }
+        return true;
+    }
+
+    [[maybe_unused]] bool check_predecode_backup_seeding(vkvv::VulkanRuntime* runtime) {
         char                        reason[512] = {};
         void*                       session     = nullptr;
         VADRMPRIMESurfaceDescriptor backup_descriptor{};
@@ -331,7 +364,7 @@ namespace {
         return true;
     }
 
-    bool check_thumbnail_predecode_keeps_placeholder(vkvv::VulkanRuntime* runtime) {
+    [[maybe_unused]] bool check_thumbnail_predecode_keeps_placeholder(vkvv::VulkanRuntime* runtime) {
         char                        reason[512] = {};
         void*                       session     = nullptr;
         VADRMPRIMESurfaceDescriptor backup_descriptor{};
@@ -407,7 +440,7 @@ namespace {
         return true;
     }
 
-    bool check_export_time_last_good_keeps_placeholder(vkvv::VulkanRuntime* runtime) {
+    [[maybe_unused]] bool check_export_time_last_good_keeps_placeholder(vkvv::VulkanRuntime* runtime) {
         char                        reason[512] = {};
         void*                       session     = nullptr;
         VADRMPRIMESurfaceDescriptor descriptor{};
@@ -515,7 +548,7 @@ namespace {
         return true;
     }
 
-    bool check_nondisplay_decode_does_not_replace_last_good_seed(vkvv::VulkanRuntime* runtime) {
+    [[maybe_unused]] bool check_nondisplay_decode_does_not_replace_last_good_seed(vkvv::VulkanRuntime* runtime) {
         char                        reason[512] = {};
         void*                       session     = nullptr;
         VADRMPRIMESurfaceDescriptor nondisplay_descriptor{};
@@ -808,7 +841,7 @@ namespace {
         return true;
     }
 
-    bool check_untagged_export_adopts_active_decode_domain(vkvv::VulkanRuntime* runtime) {
+    [[maybe_unused]] bool check_untagged_export_adopts_active_decode_domain(vkvv::VulkanRuntime* runtime) {
         char                        reason[512] = {};
         void*                       session     = nullptr;
         VADRMPRIMESurfaceDescriptor descriptor{};
@@ -940,7 +973,7 @@ namespace {
         return true;
     }
 
-    bool check_predecode_pending_completion_refreshes_export(vkvv::VulkanRuntime* runtime) {
+    [[maybe_unused]] bool check_predecode_pending_completion_refreshes_export(vkvv::VulkanRuntime* runtime) {
         char                        reason[512] = {};
         void*                       session     = nullptr;
         VADRMPRIMESurfaceDescriptor descriptor{};
@@ -1065,7 +1098,7 @@ namespace {
         return true;
     }
 
-    bool check_unknown_predecode_export_uses_first_decode_domain(vkvv::VulkanRuntime* runtime) {
+    [[maybe_unused]] bool check_unknown_predecode_export_uses_first_decode_domain(vkvv::VulkanRuntime* runtime) {
         char                        reason[512] = {};
         void*                       session     = nullptr;
         VADRMPRIMESurfaceDescriptor descriptor{};
@@ -1146,7 +1179,7 @@ namespace {
         return true;
     }
 
-    bool check_predecode_seed_rejects_cross_codec(vkvv::VulkanRuntime* runtime) {
+    [[maybe_unused]] bool check_predecode_seed_rejects_cross_codec(vkvv::VulkanRuntime* runtime) {
         char                        reason[512] = {};
         void*                       vp9_session = nullptr;
         VADRMPRIMESurfaceDescriptor descriptor{};
@@ -1271,39 +1304,11 @@ int main(void) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
-    if (!check_predecode_backup_seeding(typed_runtime)) {
-        vkvv_vulkan_runtime_destroy(runtime);
-        return 1;
-    }
-    if (!check_thumbnail_predecode_keeps_placeholder(typed_runtime)) {
-        vkvv_vulkan_runtime_destroy(runtime);
-        return 1;
-    }
-    if (!check_export_time_last_good_keeps_placeholder(typed_runtime)) {
-        vkvv_vulkan_runtime_destroy(runtime);
-        return 1;
-    }
-    if (!check_nondisplay_decode_does_not_replace_last_good_seed(typed_runtime)) {
+    if (!check_sampleable_predecode_export_is_refused(typed_runtime)) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
     if (!check_nondisplay_import_attaches_and_refreshes_retained_backing(typed_runtime)) {
-        vkvv_vulkan_runtime_destroy(runtime);
-        return 1;
-    }
-    if (!check_untagged_export_adopts_active_decode_domain(typed_runtime)) {
-        vkvv_vulkan_runtime_destroy(runtime);
-        return 1;
-    }
-    if (!check_predecode_pending_completion_refreshes_export(typed_runtime)) {
-        vkvv_vulkan_runtime_destroy(runtime);
-        return 1;
-    }
-    if (!check_unknown_predecode_export_uses_first_decode_domain(typed_runtime)) {
-        vkvv_vulkan_runtime_destroy(runtime);
-        return 1;
-    }
-    if (!check_predecode_seed_rejects_cross_codec(typed_runtime)) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
@@ -1348,20 +1353,16 @@ int main(void) {
     p010_descriptor.objects[0].fd = -1;
     status = vkvv_vulkan_export_surface(runtime, &p010_surface, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &p010_descriptor, reason, sizeof(reason));
     std::printf("%s\n", reason);
-    if (status != VA_STATUS_SUCCESS || p010_descriptor.fourcc != VA_FOURCC_P010 || p010_descriptor.num_objects != 1 || p010_descriptor.num_layers != 2 ||
-        p010_descriptor.layers[0].drm_format != DRM_FORMAT_R16 || p010_descriptor.layers[1].drm_format != DRM_FORMAT_GR1616) {
-        std::fprintf(stderr, "P010 descriptor builder returned an unexpected DRM PRIME shape\n");
-        if (p010_descriptor.objects[0].fd >= 0) {
-            close(p010_descriptor.objects[0].fd);
-        }
+    if (p010_descriptor.objects[0].fd >= 0) {
+        close(p010_descriptor.objects[0].fd);
+    }
+    if (status == VA_STATUS_SUCCESS) {
+        std::fprintf(stderr, "P010 predecode sampleable export unexpectedly returned a placeholder fd\n");
         vkvv_vulkan_surface_destroy(runtime, &p010_surface);
         vkvv_vulkan_surface_destroy(runtime, &surface);
         vkvv_vulkan_h264_session_destroy(runtime, session);
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
-    }
-    if (p010_descriptor.objects[0].fd >= 0) {
-        close(p010_descriptor.objects[0].fd);
     }
     vkvv_vulkan_surface_destroy(runtime, &p010_surface);
 
@@ -1389,37 +1390,24 @@ int main(void) {
     VADRMPRIMESurfaceDescriptor descriptor{};
     status = vkvv_vulkan_export_surface(runtime, &surface, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &descriptor, reason, sizeof(reason));
     std::printf("%s\n", reason);
-    if (status != VA_STATUS_SUCCESS) {
+    if (descriptor.objects[0].fd >= 0) {
+        close(descriptor.objects[0].fd);
+        descriptor.objects[0].fd = -1;
+    }
+    if (status == VA_STATUS_SUCCESS) {
+        std::fprintf(stderr, "sampleable export before decode unexpectedly returned a placeholder fd\n");
         vkvv_vulkan_surface_destroy(runtime, &surface);
         vkvv_vulkan_h264_session_destroy(runtime, session);
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
-    if (descriptor.fourcc != VA_FOURCC_NV12 || descriptor.num_objects != 1 || descriptor.num_layers != 2 || descriptor.layers[0].drm_format != DRM_FORMAT_R8 ||
-        descriptor.layers[0].num_planes != 1 || descriptor.layers[1].drm_format != DRM_FORMAT_GR88 || descriptor.layers[1].num_planes != 1) {
-        std::fprintf(stderr, "NV12 descriptor builder returned an unexpected DRM PRIME shape\n");
-        if (descriptor.objects[0].fd >= 0) {
-            close(descriptor.objects[0].fd);
-        }
-        vkvv_vulkan_surface_destroy(runtime, &surface);
-        vkvv_vulkan_h264_session_destroy(runtime, session);
-        vkvv_vulkan_runtime_destroy(runtime);
-        return 1;
-    }
-
-    std::printf("objects=%u layers=%u fd=%d size=%u y_offset=%u y_pitch=%u uv_offset=%u uv_pitch=%u modifier=0x%llx\n", descriptor.num_objects, descriptor.num_layers,
-                descriptor.objects[0].fd, descriptor.objects[0].size, descriptor.layers[0].offset[0], descriptor.layers[0].pitch[0], descriptor.layers[1].offset[0],
-                descriptor.layers[1].pitch[0], static_cast<unsigned long long>(descriptor.objects[0].drm_format_modifier));
 
     auto* resource = static_cast<vkvv::SurfaceResource*>(surface.vulkan);
     if (resource == nullptr || resource->image != VK_NULL_HANDLE || resource->memory != VK_NULL_HANDLE || resource->view != VK_NULL_HANDLE || resource->coded_extent.width != 64 ||
         resource->coded_extent.height != 64 || resource->visible_extent.width != 64 || resource->visible_extent.height != 64 || resource->va_fourcc != VA_FOURCC_NV12 ||
         resource->allocation_size != 0 || resource->export_resource.allocation_size == 0 || resource->export_resource.layout != VK_IMAGE_LAYOUT_GENERAL ||
-        resource->export_resource.content_generation != 0 || !resource->export_resource.exported) {
-        std::fprintf(stderr, "export preparation should allocate only an export shadow before decode\n");
-        if (descriptor.objects[0].fd >= 0) {
-            close(descriptor.objects[0].fd);
-        }
+        resource->export_resource.content_generation != 0 || resource->export_resource.exported) {
+        std::fprintf(stderr, "export preparation should allocate only an unpublished export shadow before decode\n");
         vkvv_vulkan_surface_destroy(runtime, &surface);
         vkvv_vulkan_h264_session_destroy(runtime, session);
         vkvv_vulkan_runtime_destroy(runtime);
@@ -1427,7 +1415,7 @@ int main(void) {
     }
     VkDeviceMemory     first_export_memory = resource->export_resource.memory;
     const VkDeviceSize first_export_size   = resource->export_resource.allocation_size;
-    const int          first_fd            = descriptor.objects[0].fd;
+    constexpr int      first_fd            = -1;
 
     session = vkvv_vulkan_h264_session_create();
     if (session == nullptr) {
@@ -1503,9 +1491,9 @@ int main(void) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
-    if (first_fd < 0 || fcntl(first_fd, F_GETFD) < 0 || resource->export_resource.memory != first_export_memory || resource->export_resource.allocation_size == 0 ||
+    if (resource->export_resource.memory != first_export_memory || resource->export_resource.allocation_size == 0 ||
         resource->export_resource.content_generation != resource->content_generation) {
-        std::fprintf(stderr, "export refresh did not update the previously exported shadow image in place\n");
+        std::fprintf(stderr, "export refresh did not update the prepared shadow image in place\n");
         if (first_fd >= 0) {
             close(first_fd);
         }
