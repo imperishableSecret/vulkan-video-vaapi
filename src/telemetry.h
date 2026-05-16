@@ -6,6 +6,10 @@
 #include <stdint.h>
 #include <va/va.h>
 
+#ifndef VKVV_ENABLE_TRACE_TELEMETRY
+#define VKVV_ENABLE_TRACE_TELEMETRY 1
+#endif
+
 bool        vkvv_log_enabled(void);
 bool        vkvv_success_reason_enabled(void);
 bool        vkvv_trace_enabled(void);
@@ -18,6 +22,10 @@ inline void vkvv_clear_reason(char* reason, std::size_t reason_size) {
     if (reason != nullptr && reason_size > 0) {
         reason[0] = '\0';
     }
+}
+
+inline constexpr bool vkvv_trace_compiled(void) {
+    return VKVV_ENABLE_TRACE_TELEMETRY != 0;
 }
 
 inline const char* vkvv_va_status_name(VAStatus status) {
@@ -45,6 +53,7 @@ inline const char* vkvv_va_status_name(VAStatus status) {
 // arguments are already cheap or explicitly pre-gated. Do not build strings,
 // walk containers, or call syscalls for trace arguments outside one of these
 // guards.
+#if VKVV_ENABLE_TRACE_TELEMETRY
 #define VKVV_TRACE(event, fmt, ...)                                                                                                                                                \
     do {                                                                                                                                                                           \
         if (vkvv_trace_enabled()) {                                                                                                                                                \
@@ -58,6 +67,21 @@ inline const char* vkvv_va_status_name(VAStatus status) {
             vkvv_trace_emit((event), (fmt)__VA_OPT__(, ) __VA_ARGS__);                                                                                                             \
         }                                                                                                                                                                          \
     } while (false)
+#else
+#define VKVV_TRACE(event, fmt, ...)                                                                                                                                                \
+    do {                                                                                                                                                                           \
+        if constexpr (false) {                                                                                                                                                     \
+            vkvv_trace_emit((event), (fmt)__VA_OPT__(, ) __VA_ARGS__);                                                                                                             \
+        }                                                                                                                                                                          \
+    } while (false)
+
+#define VKVV_TRACE_DEEP(event, fmt, ...)                                                                                                                                           \
+    do {                                                                                                                                                                           \
+        if constexpr (false) {                                                                                                                                                     \
+            vkvv_trace_emit((event), (fmt)__VA_OPT__(, ) __VA_ARGS__);                                                                                                             \
+        }                                                                                                                                                                          \
+    } while (false)
+#endif
 
 #define VKVV_SUCCESS_REASON(reason, reason_size, fmt, ...)                                                                                                                         \
     do {                                                                                                                                                                           \

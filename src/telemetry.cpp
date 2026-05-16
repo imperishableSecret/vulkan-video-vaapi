@@ -14,18 +14,22 @@
 
 namespace {
 
+#if VKVV_ENABLE_TRACE_TELEMETRY
     std::atomic<unsigned long long> trace_sequence{1};
-    std::mutex                      trace_mutex;
+#endif
+    std::mutex trace_mutex;
 
-    bool                            env_enabled(const char* name) {
+    bool       env_enabled(const char* name) {
         const char* value = std::getenv(name);
         return value != nullptr && std::strcmp(value, "0") != 0;
     }
 
+#if VKVV_ENABLE_TRACE_TELEMETRY
     bool trace_deep_env_enabled(void) {
         const char* value = std::getenv("VKVV_TRACE");
         return value != nullptr && (std::strcmp(value, "2") == 0 || std::strcmp(value, "deep") == 0 || std::strcmp(value, "verbose") == 0);
     }
+#endif
 
     std::string format_body(const char* fmt, va_list args) {
         if (fmt == nullptr || fmt[0] == '\0') {
@@ -97,6 +101,7 @@ namespace {
         write_all_locked(telemetry_output_fd_locked(), line);
     }
 
+#if VKVV_ENABLE_TRACE_TELEMETRY
     void trace_vemit(const char* event, const char* fmt, va_list args) {
         const std::string           body = format_body(fmt, args);
 
@@ -117,6 +122,7 @@ namespace {
         line.push_back('\n');
         write_all_locked(telemetry_output_fd_locked(), line);
     }
+#endif
 
 } // namespace
 
@@ -130,14 +136,22 @@ bool vkvv_success_reason_enabled(void) {
 }
 
 bool vkvv_trace_enabled(void) {
-    static const bool enabled = env_enabled("VKVV_TRACE") || env_enabled("VKVV_TRACE_EXPORT_VALIDITY") || env_enabled("VKVV_TRACE_FD_LIFETIME") ||
-        env_enabled("VKVV_TRACE_PIXEL_PROOF");
+#if VKVV_ENABLE_TRACE_TELEMETRY
+    static const bool enabled =
+        env_enabled("VKVV_TRACE") || env_enabled("VKVV_TRACE_EXPORT_VALIDITY") || env_enabled("VKVV_TRACE_FD_LIFETIME") || env_enabled("VKVV_TRACE_PIXEL_PROOF");
     return enabled;
+#else
+    return false;
+#endif
 }
 
 bool vkvv_trace_deep_enabled(void) {
+#if VKVV_ENABLE_TRACE_TELEMETRY
     static const bool enabled = trace_deep_env_enabled();
     return enabled;
+#else
+    return false;
+#endif
 }
 
 void vkvv_log(const char* fmt, ...) {
@@ -158,6 +172,7 @@ void vkvv_log(const char* fmt, ...) {
 }
 
 void vkvv_trace(const char* event, const char* fmt, ...) {
+#if VKVV_ENABLE_TRACE_TELEMETRY
     if (!vkvv_trace_enabled()) {
         return;
     }
@@ -166,11 +181,20 @@ void vkvv_trace(const char* event, const char* fmt, ...) {
     va_start(args, fmt);
     trace_vemit(event, fmt, args);
     va_end(args);
+#else
+    (void)event;
+    (void)fmt;
+#endif
 }
 
 void vkvv_trace_emit(const char* event, const char* fmt, ...) {
+#if VKVV_ENABLE_TRACE_TELEMETRY
     va_list args;
     va_start(args, fmt);
     trace_vemit(event, fmt, args);
     va_end(args);
+#else
+    (void)event;
+    (void)fmt;
+#endif
 }
