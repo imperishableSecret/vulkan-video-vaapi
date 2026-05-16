@@ -37,6 +37,21 @@ namespace vkvv {
         }
     }
 
+    const char* vkvv_export_role_name(VkvvExportRole role) {
+        switch (role) {
+            case VkvvExportRole::None: return "none";
+            case VkvvExportRole::DecodedPixels: return "decoded";
+            case VkvvExportRole::PixelProvenSeed: return "pixel-proven-seed";
+            case VkvvExportRole::BootstrapLease: return "bootstrap";
+            case VkvvExportRole::DebugPlaceholder: return "debug-placeholder";
+            default: return "unknown";
+        }
+    }
+
+    bool export_role_may_be_sampled_by_client(VkvvExportRole role) {
+        return role == VkvvExportRole::DecodedPixels || role == VkvvExportRole::PixelProvenSeed;
+    }
+
     const char* vkvv_export_present_source_name(VkvvExportPresentSource source) {
         switch (source) {
             case VkvvExportPresentSource::None: return "none";
@@ -127,11 +142,16 @@ namespace vkvv {
     }
 
     bool export_resource_fd_may_be_sampled_by_client(const ExportResource* resource) {
-        return resource != nullptr && resource->exported_fd.fd_exported && resource->exported_fd.may_be_sampled_by_client && !resource->exported_fd.detached_from_surface;
+        return resource != nullptr && resource->exported_fd.fd_exported && resource->exported_fd.may_be_sampled_by_client &&
+            export_role_may_be_sampled_by_client(resource->exported_fd.role) && !resource->exported_fd.detached_from_surface;
     }
 
     uint64_t export_resource_fd_content_generation(const ExportResource* resource) {
         return resource != nullptr && resource->exported_fd.fd_exported ? resource->exported_fd.fd_content_generation : 0;
+    }
+
+    VkvvExportRole export_resource_fd_role(const ExportResource* resource) {
+        return resource != nullptr && resource->exported_fd.fd_exported ? resource->exported_fd.role : VkvvExportRole::None;
     }
 
     bool export_resource_fd_fresh(const SurfaceResource* resource) {
@@ -257,7 +277,7 @@ namespace vkvv {
         resource->external_sync             = {};
     }
 
-    void mark_export_fd_returned(ExportResource* resource, const VkvvFdIdentity& fd, uint64_t content_generation) {
+    void mark_export_fd_returned(ExportResource* resource, const VkvvFdIdentity& fd, uint64_t content_generation, VkvvExportRole role) {
         if (resource == nullptr) {
             return;
         }
@@ -267,20 +287,22 @@ namespace vkvv {
         resource->exported_fd.fd_exported                     = fd.valid;
         resource->exported_fd.fd_dev                          = fd.dev;
         resource->exported_fd.fd_ino                          = fd.ino;
-        resource->exported_fd.may_be_sampled_by_client        = fd.valid && content_generation != 0;
+        resource->exported_fd.may_be_sampled_by_client        = fd.valid && content_generation != 0 && export_role_may_be_sampled_by_client(role);
         resource->exported_fd.fd_content_generation           = content_generation;
         resource->exported_fd.last_written_content_generation = content_generation;
         resource->exported_fd.detached_from_surface           = false;
+        resource->exported_fd.role                            = fd.valid ? role : VkvvExportRole::None;
     }
 
-    void mark_export_fd_written(ExportResource* resource, uint64_t content_generation) {
+    void mark_export_fd_written(ExportResource* resource, uint64_t content_generation, VkvvExportRole role) {
         if (resource == nullptr || !resource->exported_fd.fd_exported) {
             return;
         }
         resource->exported_fd.fd_content_generation           = content_generation;
         resource->exported_fd.last_written_content_generation = content_generation;
-        resource->exported_fd.may_be_sampled_by_client        = content_generation != 0;
+        resource->exported_fd.may_be_sampled_by_client        = content_generation != 0 && export_role_may_be_sampled_by_client(role);
         resource->exported_fd.detached_from_surface           = false;
+        resource->exported_fd.role                            = content_generation != 0 ? role : VkvvExportRole::None;
     }
 
     void mark_export_fd_detached(ExportResource* resource) {
@@ -305,11 +327,37 @@ namespace vkvv {
         const uint64_t    fd_ino     = resource->exported_fd.fd_exported ? resource->exported_fd.fd_ino : resource->fd_ino;
         VKVV_TRACE("export-fd-lifetime",
                    "event_action=%s surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu fd_content_gen=%llu present_gen=%llu "
-                   "predecode_quarantined=%u may_be_sampled_by_client=%u generation_at_action=%llu",
+                   "predecode_quarantined=%u may_be_sampled_by_client=%u generation_at_action=%llu export_role=%s",
                    action != nullptr ? action : "unknown", surface_id, static_cast<unsigned long long>(driver), static_cast<unsigned long long>(stream), codec,
                    static_cast<unsigned long long>(fd_dev), static_cast<unsigned long long>(fd_ino), static_cast<unsigned long long>(content),
                    static_cast<unsigned long long>(export_resource_fd_content_generation(resource)), static_cast<unsigned long long>(resource->present_generation),
-                   resource->predecode_quarantined ? 1U : 0U, may_be_sampled_by_client ? 1U : 0U, static_cast<unsigned long long>(generation_at_action));
+                   resource->predecode_quarantined ? 1U : 0U, may_be_sampled_by_client ? 1U : 0U, static_cast<unsigned long long>(generation_at_action),
+                   vkvv_export_role_name(export_resource_fd_role(resource)));
+    }
+
+    void trace_export_role_lifecycle(const SurfaceResource* owner, const ExportResource* resource, const char* action, bool refresh_export) {
+        if (resource == nullptr) {
+            return;
+        }
+        const VASurfaceID surface_id = owner != nullptr ? owner->surface_id : resource->owner_surface_id;
+        const uint64_t    driver     = owner != nullptr ? owner->driver_instance_id : resource->driver_instance_id;
+        const uint64_t    stream     = owner != nullptr ? owner->stream_id : resource->stream_id;
+        const auto        codec      = owner != nullptr ? owner->codec_operation : resource->codec_operation;
+        const uint64_t    content    = owner != nullptr ? owner->content_generation : resource->content_generation;
+        VKVV_TRACE("export-role-lifecycle",
+                   "action=%s surface=%u driver=%llu stream=%llu codec=0x%x export_role=%s fd_exported=%u fd_dev=%llu fd_ino=%llu content_gen=%llu "
+                   "fd_content_gen=%llu last_written_content_gen=%llu present_gen=%llu predecode_exported=%u predecode_quarantined=%u had_va_begin=%u "
+                   "had_decode_submit=%u had_visible_decode=%u may_be_sampled_by_client=%u detached_from_surface=%u refresh_export=%u",
+                   action != nullptr ? action : "unknown", surface_id, static_cast<unsigned long long>(driver), static_cast<unsigned long long>(stream), codec,
+                   vkvv_export_role_name(export_resource_fd_role(resource)), resource->exported_fd.fd_exported ? 1U : 0U,
+                   static_cast<unsigned long long>(resource->exported_fd.fd_exported ? resource->exported_fd.fd_dev : resource->fd_dev),
+                   static_cast<unsigned long long>(resource->exported_fd.fd_exported ? resource->exported_fd.fd_ino : resource->fd_ino),
+                   static_cast<unsigned long long>(content), static_cast<unsigned long long>(export_resource_fd_content_generation(resource)),
+                   static_cast<unsigned long long>(resource->exported_fd.last_written_content_generation), static_cast<unsigned long long>(resource->present_generation),
+                   resource->predecode_exported ? 1U : 0U, resource->predecode_quarantined ? 1U : 0U, resource->predecode_had_va_begin ? 1U : 0U,
+                   resource->predecode_had_decode_submit ? 1U : 0U, resource->predecode_had_visible_decode ? 1U : 0U,
+                   export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U, resource->exported_fd.detached_from_surface ? 1U : 0U,
+                   refresh_export ? 1U : 0U);
     }
 
     void trace_predecode_quarantine_outcome(const SurfaceResource* owner, const ExportResource* resource, const char* outcome, const char* reason, bool returned_fd) {
@@ -329,12 +377,12 @@ namespace vkvv {
         const uint64_t    fd_ino     = resource->predecode_fd_ino != 0 ? resource->predecode_fd_ino : resource->fd_ino;
         VKVV_TRACE("predecode-quarantine-outcome",
                    "surface=%u fd_dev=%llu fd_ino=%llu stream=%llu codec=0x%x age_ms=%llu content_gen=%llu fd_content_gen=%llu decoded=%u had_va_begin=%u "
-                   "had_decode_submit=%u had_visible_decode=%u may_be_sampled_by_client=%u outcome=%s reason=%s returned_fd=%u",
+                   "had_decode_submit=%u had_visible_decode=%u may_be_sampled_by_client=%u export_role=%s outcome=%s reason=%s returned_fd=%u",
                    surface_id, static_cast<unsigned long long>(fd_dev), static_cast<unsigned long long>(fd_ino), static_cast<unsigned long long>(stream), codec,
                    static_cast<unsigned long long>(age_ms), static_cast<unsigned long long>(content),
                    static_cast<unsigned long long>(export_resource_fd_content_generation(resource)), decoded ? 1U : 0U, resource->predecode_had_va_begin ? 1U : 0U,
                    resource->predecode_had_decode_submit ? 1U : 0U, resource->predecode_had_visible_decode ? 1U : 0U,
-                   export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U, outcome != nullptr ? outcome : "unknown",
+                   export_resource_fd_may_be_sampled_by_client(resource) ? 1U : 0U, vkvv_export_role_name(export_resource_fd_role(resource)), outcome != nullptr ? outcome : "unknown",
                    reason != nullptr ? reason : "none", returned_fd ? 1U : 0U);
     }
 
@@ -459,10 +507,12 @@ namespace vkvv {
         resource->predecode_had_visible_decode  = false;
         VKVV_TRACE("predecode-quarantine-enter",
                    "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu presentable=0 published_visible=0 predecode_exported=%u "
-                   "predecode_quarantined=1",
+                   "predecode_quarantined=1 export_role=%s",
                    owner->surface_id, static_cast<unsigned long long>(owner->driver_instance_id), static_cast<unsigned long long>(owner->stream_id), owner->codec_operation,
                    static_cast<unsigned long long>(resource->predecode_fd_dev), static_cast<unsigned long long>(resource->predecode_fd_ino),
-                   static_cast<unsigned long long>(resource->predecode_generation), resource->predecode_exported ? 1U : 0U);
+                   static_cast<unsigned long long>(resource->predecode_generation), resource->predecode_exported ? 1U : 0U,
+                   vkvv_export_role_name(export_resource_fd_role(resource)));
+        trace_export_role_lifecycle(owner, resource, "quarantine-enter", false);
         trace_export_fd_lifetime(owner, resource, "quarantine-enter", resource->predecode_generation, export_resource_fd_may_be_sampled_by_client(resource));
     }
 
@@ -473,13 +523,14 @@ namespace vkvv {
         const uint64_t fd_dev = resource->predecode_fd_dev;
         const uint64_t fd_ino = resource->predecode_fd_ino;
         trace_predecode_quarantine_outcome(owner, resource, resource->predecode_seeded ? "seed-exit" : "decoded-exit", "valid-pixels", true);
+        trace_export_role_lifecycle(owner, resource, "quarantine-exit", release_done);
         trace_export_fd_lifetime(owner, resource, "quarantine-exit", resource->content_generation, export_resource_fd_may_be_sampled_by_client(resource));
         clear_predecode_quarantine_state(resource);
         VKVV_TRACE("predecode-quarantine-exit",
-                   "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu present_gen=%llu release_done=%u predecode_quarantined=0",
+                   "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu present_gen=%llu release_done=%u predecode_quarantined=0 export_role=%s",
                    owner->surface_id, static_cast<unsigned long long>(owner->driver_instance_id), static_cast<unsigned long long>(owner->stream_id), owner->codec_operation,
                    static_cast<unsigned long long>(fd_dev), static_cast<unsigned long long>(fd_ino), static_cast<unsigned long long>(owner->content_generation),
-                   static_cast<unsigned long long>(resource->present_generation), release_done ? 1U : 0U);
+                   static_cast<unsigned long long>(resource->present_generation), release_done ? 1U : 0U, vkvv_export_role_name(export_resource_fd_role(resource)));
     }
 
     void mark_export_visible_acquire(const SurfaceResource* owner, ExportResource* resource) {

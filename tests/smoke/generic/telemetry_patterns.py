@@ -34,6 +34,25 @@ def main() -> int:
         if "vkvv_trace_deep_enabled()" not in window:
             fail(f"export_seed_records_string() is not deep-trace gated at {shadow.relative_to(root)}:{index + 1}")
 
+    export_cpp = root / "src" / "vulkan" / "export.cpp"
+    export_text = export_cpp.read_text(encoding="utf-8")
+    if "const bool bootstrap_placeholder_export  = !export_request_readable && exact_predecode_pool_placeholder;" not in export_text:
+        fail("sampleable/readable exports must not use the exact-predecode bootstrap placeholder success path")
+    if "const bool sampleable_placeholder_export = export_request_readable && placeholder_available;" not in export_text:
+        fail("sampleable placeholder rejection must include bootstrap placeholders")
+    if re.search(r"sampleable_placeholder_export\s*=\s*export_request_readable\s*&&\s*placeholder_available\s*&&\s*!bootstrap_placeholder_export", export_text):
+        fail("sampleable placeholder rejection still exempts bootstrap placeholders")
+
+    shadow_text_for_lock = "\n".join(lines)
+    copy_wait_marker = 'const bool waited = wait_for_command_fence(runtime, std::numeric_limits<uint64_t>::max(), reason, reason_size, "surface export copy");'
+    seed_proof_marker = 'trace_seed_pixel_proof(runtime, source, target, "success");'
+    copy_wait_index = shadow_text_for_lock.find(copy_wait_marker)
+    seed_proof_index = shadow_text_for_lock.find(seed_proof_marker)
+    if copy_wait_index < 0 or seed_proof_index < 0:
+        fail("surface export copy seed-proof lock-order guard could not find expected markers")
+    if "command_lock.unlock();" not in shadow_text_for_lock[copy_wait_index:seed_proof_index]:
+        fail("surface export copy can call seed pixel proof while command_mutex is still locked")
+
     av1_decode = root / "src" / "vulkan" / "codecs" / "av1" / "decode.cpp"
     av1_text = av1_decode.read_text(encoding="utf-8")
     va_context_text = (root / "src" / "va" / "context.cpp").read_text(encoding="utf-8")
@@ -243,6 +262,7 @@ def main() -> int:
         '"seed-target-pixel-proof"',
         '"returned-fd-pixel-proof"',
         '"export-fd-lifetime"',
+        '"export-role-lifecycle"',
         '"predecode-quarantine-outcome"',
         '"generic-export-summary"',
         '"debug-placeholder-export"',
@@ -258,6 +278,7 @@ def main() -> int:
         '"decode-pixel-proof"',
         '"present-pixel-proof"',
         '"private-shadow-pixel-proof"',
+        '"pending-decode-pixel-proof"',
         '"av1-decode-pixel-proof"',
         '"av1-reference-pixel-proof"',
         '"av1-noop-candidate"',
@@ -338,6 +359,7 @@ def main() -> int:
         "fd_exported=",
         "fd_content_gen=",
         "may_be_sampled_by_client=",
+        "export_role=",
         "detached_from_surface=",
         "last_written_content_gen=",
         "decode_crc=",
@@ -430,10 +452,15 @@ def main() -> int:
         "private-shadow-refresh",
         "nondisplay-present-pinned-skip",
         "neutral-placeholder",
-        "source-not-client-safe",
-        "no-pixel-proof",
+        "pixel-proof-disabled",
+        "source-not-decoded",
+        "source-proof-stale",
+        "source-proof-unavailable",
+        "source-proof-invalid",
         "stream-local-seed",
         "failed-no-valid-source",
+        "source-not-copyable",
+        "seed-proof-failed",
         "delay-if-pending",
         "drained-and-exported",
         "shadow_published_would_be_internal=1",
@@ -453,6 +480,7 @@ def main() -> int:
         "separate_layers=",
         "composed_layers=",
         "sampleable_export=",
+        "sampleable-placeholder-not-presentable",
         "decision=",
         "returned_fd=",
         "pixel_source=",
@@ -477,6 +505,9 @@ def main() -> int:
         "is_black=",
         "is_zero=",
         "pixel_proof_valid=",
+        "source_decode_proof_gen=",
+        "source_decode_proof_valid=",
+        "source_decode_content_valid=",
         "event_action=",
         "generation_at_action=",
         "age_ms=",

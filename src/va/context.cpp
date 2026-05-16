@@ -377,6 +377,7 @@ VAStatus vkvvBeginPicture(VADriverContextP ctx, VAContextID context, VASurfaceID
     surface->codec_operation = vctx->codec_operation;
     vctx->render_target      = render_target;
     vkvv_surface_begin_work(surface);
+    vkvv_vulkan_note_surface_decode_begin(surface);
     const uint64_t previous_begin_us = vctx->telemetry_last_begin_us;
     const uint64_t previous_end_us   = vctx->telemetry_last_end_submitted_us;
     const uint64_t delta_begin_us    = previous_begin_us != 0 && begin_call_us >= previous_begin_us ? begin_call_us - previous_begin_us : 0;

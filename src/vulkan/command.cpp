@@ -284,6 +284,10 @@ namespace vkvv {
                 resource->export_resource.predecode_had_va_begin       = true;
                 resource->export_resource.predecode_had_decode_submit  = true;
                 resource->export_resource.predecode_had_visible_decode = resource->export_resource.predecode_had_visible_decode || refresh_export;
+                trace_export_role_lifecycle(resource, &resource->export_resource,
+                                            export_resource_fd_role(&resource->export_resource) == VkvvExportRole::BootstrapLease ? "bootstrap-claimed-submit" :
+                                                                                                                                    "predecode-claimed-submit",
+                                            refresh_export);
             }
             trace_export_fd_lifetime(resource, &resource->export_resource, "decode-begin", resource->content_generation,
                                      export_resource_fd_may_be_sampled_by_client(&resource->export_resource));
@@ -386,7 +390,7 @@ namespace vkvv {
             trace_export_fd_lifetime(resource, &resource->export_resource, "decode-complete", resource->content_generation,
                                      export_resource_fd_may_be_sampled_by_client(&resource->export_resource));
         }
-        trace_av1_pending_decode_pixel_proof(runtime, &completed);
+        trace_pending_decode_pixel_proof(runtime, &completed);
         const auto* refresh_resource = completed.surface != nullptr ? static_cast<const SurfaceResource*>(completed.surface->vulkan) : nullptr;
         const uint64_t refresh_start_us = monotonic_us();
         VKVV_TRACE("pending-refresh-decision",

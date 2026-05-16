@@ -78,10 +78,12 @@ namespace vkvv {
         }
         if (resource->predecode_quarantined) {
             trace_predecode_quarantine_outcome(nullptr, resource, "destroyed", "surface-destroy", false);
-            VKVV_TRACE("export-resource-destroy", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx fd_dev=%llu fd_ino=%llu content_gen=%llu predecode_quarantined=1",
+            VKVV_TRACE("export-resource-destroy",
+                       "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx fd_dev=%llu fd_ino=%llu content_gen=%llu predecode_quarantined=1 export_role=%s",
                        resource->owner_surface_id, static_cast<unsigned long long>(resource->driver_instance_id), static_cast<unsigned long long>(resource->stream_id),
                        resource->codec_operation, vkvv_trace_handle(resource->memory), static_cast<unsigned long long>(resource->predecode_fd_dev),
-                       static_cast<unsigned long long>(resource->predecode_fd_ino), static_cast<unsigned long long>(resource->predecode_generation));
+                       static_cast<unsigned long long>(resource->predecode_fd_ino), static_cast<unsigned long long>(resource->predecode_generation),
+                       vkvv_export_role_name(export_resource_fd_role(resource)));
         }
         trace_export_fd_lifetime(nullptr, resource, "destroy", resource->content_generation, export_resource_fd_may_be_sampled_by_client(resource));
         if (resource->image != VK_NULL_HANDLE) {
@@ -445,11 +447,11 @@ namespace vkvv {
 
         const bool role_retainable = resource->export_resource.exported && resource->export_resource.client_visible_shadow && !resource->export_resource.private_nondisplay_shadow;
         if (resource->export_resource.private_nondisplay_shadow || (resource->export_resource.exported && !role_retainable)) {
-            VKVV_TRACE("retained-role-mismatch-drop", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx exported=%u client_visible=%u private_only=%u",
+            VKVV_TRACE("retained-role-mismatch-drop", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx exported=%u client_visible=%u private_only=%u export_role=%s",
                        resource->export_resource.owner_surface_id, static_cast<unsigned long long>(resource->export_resource.driver_instance_id),
                        static_cast<unsigned long long>(resource->export_resource.stream_id), resource->export_resource.codec_operation,
                        vkvv_trace_handle(resource->export_resource.memory), resource->export_resource.exported ? 1U : 0U, resource->export_resource.client_visible_shadow ? 1U : 0U,
-                       resource->export_resource.private_nondisplay_shadow ? 1U : 0U);
+                       resource->export_resource.private_nondisplay_shadow ? 1U : 0U, vkvv_export_role_name(export_resource_fd_role(&resource->export_resource)));
         }
         const bool                   retainable = role_retainable && resource->export_resource.allocation_size != 0 && !runtime->device_lost;
         std::unique_lock<std::mutex> lock(runtime->export_mutex);
@@ -570,7 +572,10 @@ namespace vkvv {
             return;
         }
 
-        trace_export_fd_lifetime(resource, &resource->export_resource, "surface-destroy", resource->content_generation,
+        const bool unused_bootstrap_export = export_resource_fd_role(&resource->export_resource) == VkvvExportRole::BootstrapLease &&
+            resource->export_resource.content_generation == 0 && !resource->export_resource.predecode_had_decode_submit;
+        trace_export_role_lifecycle(resource, &resource->export_resource, unused_bootstrap_export ? "bootstrap-unused-destroy" : "surface-destroy", false);
+        trace_export_fd_lifetime(resource, &resource->export_resource, unused_bootstrap_export ? "bootstrap-unused-destroy" : "surface-destroy", resource->content_generation,
                                  export_resource_fd_may_be_sampled_by_client(&resource->export_resource));
         unregister_export_seed_resource(runtime, resource);
         detach_export_resource(runtime, resource);
