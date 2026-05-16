@@ -59,6 +59,7 @@ namespace {
         backing.resource.exported_fd.fd_dev                   = backing.resource.fd_dev;
         backing.resource.exported_fd.fd_ino                   = backing.resource.fd_ino;
         backing.resource.exported_fd.may_be_sampled_by_client = true;
+        backing.resource.exported_fd.role                     = vkvv::VkvvExportRole::DecodedPixels;
         backing.fd                                            = vkvv::retained_export_fd_identity(backing.resource);
         return backing;
     }
@@ -488,17 +489,19 @@ namespace {
         fd.valid = true;
         fd.dev   = 11;
         fd.ino   = 22;
-        vkvv::mark_export_fd_returned(&resource.export_resource, fd, 4);
+        vkvv::mark_export_fd_returned(&resource.export_resource, fd, 4, vkvv::VkvvExportRole::DecodedPixels);
         ok &= check(vkvv::export_resource_fd_may_be_sampled_by_client(&resource.export_resource), "returned export fd was not marked client-sampleable");
         ok &= check(vkvv::export_resource_fd_content_generation(&resource.export_resource) == 4, "returned export fd generation mismatch");
+        ok &= check(vkvv::export_resource_fd_role(&resource.export_resource) == vkvv::VkvvExportRole::DecodedPixels, "returned export fd role mismatch");
         ok &= check(!vkvv::export_resource_fd_fresh(&resource), "stale exported fd was treated as fresh");
 
         resource.export_resource.content_generation = resource.content_generation;
-        vkvv::mark_export_fd_written(&resource.export_resource, resource.content_generation);
+        vkvv::mark_export_fd_written(&resource.export_resource, resource.content_generation, vkvv::VkvvExportRole::DecodedPixels);
         ok &= check(vkvv::export_resource_fd_fresh(&resource), "fresh exported fd was rejected");
 
         vkvv::mark_export_fd_detached(&resource.export_resource);
         ok &= check(!vkvv::export_resource_fd_may_be_sampled_by_client(&resource.export_resource), "detached export fd remained client-sampleable");
+        ok &= check(vkvv::export_resource_fd_role(&resource.export_resource) == vkvv::VkvvExportRole::DecodedPixels, "detached export fd lost its role");
         ok &= check(vkvv::export_resource_fd_fresh(&resource), "detached export fd should not force current-surface freshness");
         return ok;
     }
@@ -552,7 +555,7 @@ namespace {
         fd.valid = true;
         fd.dev   = 33;
         fd.ino   = 44;
-        vkvv::mark_export_fd_returned(&source.export_resource, fd, source.content_generation);
+        vkvv::mark_export_fd_returned(&source.export_resource, fd, source.content_generation, vkvv::VkvvExportRole::DecodedPixels);
         source.export_resource.external_sync.external_release_done = true;
         source.export_resource.external_sync.released_generation   = source.content_generation;
         source.export_resource.external_sync.release_mode          = vkvv::VkvvExternalReleaseMode::ImplicitSyncOnly;

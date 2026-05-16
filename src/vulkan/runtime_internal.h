@@ -49,6 +49,16 @@ namespace vkvv {
 
     const char* vkvv_export_pixel_source_name(VkvvExportPixelSource source);
 
+    enum class VkvvExportRole {
+        None = 0,
+        DecodedPixels,
+        PixelProvenSeed,
+        BootstrapLease,
+        DebugPlaceholder,
+    };
+
+    const char* vkvv_export_role_name(VkvvExportRole role);
+
     struct VkvvReturnedFdProof {
         bool                          returned_fd              = false;
         int                           fd                       = -1;
@@ -61,6 +71,7 @@ namespace vkvv {
         uint64_t                      content_generation       = 0;
         uint64_t                      fd_content_generation    = 0;
         VkvvExportPixelSource         pixel_source             = VkvvExportPixelSource::None;
+        VkvvExportRole                export_role              = VkvvExportRole::None;
         bool                          decoded_pixels_valid     = false;
         bool                          seed_pixels_valid        = false;
         bool                          placeholder_pixels       = false;
@@ -92,6 +103,7 @@ namespace vkvv {
         uint64_t fd_content_generation           = 0;
         uint64_t last_written_content_generation = 0;
         bool     detached_from_surface           = false;
+        VkvvExportRole role                       = VkvvExportRole::None;
     };
 
     struct ExportResource {
@@ -332,12 +344,14 @@ namespace vkvv {
         uint64_t                      av1_publish_fingerprint                = 0;
         const char*                   av1_tile_source                        = "unknown";
         bool                          decode_pixel_proof_valid               = false;
+        bool                          decode_pixel_content_valid             = false;
         bool                          present_pixel_proof_valid              = false;
         bool                          private_shadow_pixel_proof_valid       = false;
         bool                          present_pixel_matches_decode           = false;
         bool                          private_shadow_pixel_matches_decode    = false;
         bool                          present_pixel_matches_previous         = false;
         uint64_t                      decode_pixel_crc                       = 0;
+        uint64_t                      decode_pixel_proof_generation          = 0;
         uint64_t                      present_pixel_crc                      = 0;
         uint64_t                      private_shadow_pixel_crc               = 0;
         uint64_t                      previous_present_pixel_crc             = 0;
@@ -665,6 +679,7 @@ namespace vkvv {
     bool                export_visible_release_satisfied(const ExportResource* resource);
     bool                export_resource_fd_may_be_sampled_by_client(const ExportResource* resource);
     uint64_t            export_resource_fd_content_generation(const ExportResource* resource);
+    VkvvExportRole      export_resource_fd_role(const ExportResource* resource);
     bool                export_resource_fd_fresh(const SurfaceResource* resource);
     VkvvExportPixelSource export_pixel_source_for_resource(const SurfaceResource* owner, const ExportResource* resource);
     bool                surface_resource_has_current_export_shadow(const SurfaceResource* resource);
@@ -674,8 +689,8 @@ namespace vkvv {
     bool                surface_resource_has_published_visible_output(const SurfaceResource* resource);
     bool                surface_resource_requires_visible_publication(const SurfaceResource* resource, bool refresh_export);
     void                clear_export_present_state(ExportResource* resource);
-    void                mark_export_fd_returned(ExportResource* resource, const VkvvFdIdentity& fd, uint64_t content_generation);
-    void                mark_export_fd_written(ExportResource* resource, uint64_t content_generation);
+    void                mark_export_fd_returned(ExportResource* resource, const VkvvFdIdentity& fd, uint64_t content_generation, VkvvExportRole role);
+    void                mark_export_fd_written(ExportResource* resource, uint64_t content_generation, VkvvExportRole role);
     void                mark_export_fd_detached(ExportResource* resource);
     void                mark_export_predecode_nonpresentable(ExportResource* resource);
     void                pin_export_visible_present(SurfaceResource* owner, ExportResource* resource, VkvvExportPresentSource source);
@@ -689,6 +704,7 @@ namespace vkvv {
                                                             const char* action);
     void                  trace_export_fd_lifetime(const SurfaceResource* owner, const ExportResource* resource, const char* action, uint64_t generation_at_action,
                                                    bool may_be_sampled_by_client);
+    void                  trace_export_role_lifecycle(const SurfaceResource* owner, const ExportResource* resource, const char* action, bool refresh_export);
     void                  trace_predecode_quarantine_outcome(const SurfaceResource* owner, const ExportResource* resource, const char* outcome, const char* reason,
                                                              bool returned_fd);
     bool                  predecode_seed_source_safe_for_client(const SurfaceResource* source);
@@ -732,6 +748,7 @@ namespace vkvv {
     bool     submit_command_buffer_and_wait(VulkanRuntime* runtime, char* reason, size_t reason_size, const char* operation, CommandUse use = CommandUse::Decode);
     void     track_pending_decode(VulkanRuntime* runtime, VkvvSurface* surface, VkVideoSessionParametersKHR parameters, VkDeviceSize upload_allocation_size, bool refresh_export,
                                   const char* operation, const Av1PendingDecodeTrace* av1_trace = nullptr);
+    void     trace_pending_decode_pixel_proof(VulkanRuntime* runtime, const PendingWork* completed);
     void     trace_av1_pending_decode_pixel_proof(VulkanRuntime* runtime, const PendingWork* completed);
     size_t   runtime_pending_work_count(VulkanRuntime* runtime);
     bool     runtime_surface_has_pending_work(VulkanRuntime* runtime, const VkvvSurface* surface);
