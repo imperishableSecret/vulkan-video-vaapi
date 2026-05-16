@@ -61,6 +61,7 @@ namespace {
 int main() {
     const bool  expect_trace    = env_is_enabled("VKVV_EXPECT_TRACE");
     const bool  expect_deep     = env_is_enabled("VKVV_EXPECT_TRACE_DEEP");
+    const bool  expect_compiled = env_is_enabled("VKVV_EXPECT_TRACE_COMPILED");
     const bool  expect_log      = env_is_enabled("VKVV_EXPECT_LOG");
     const bool  expect_log_file = env_is_enabled("VKVV_EXPECT_LOG_FILE");
     const bool  expect_reason   = expect_trace || expect_log;
@@ -72,6 +73,7 @@ int main() {
     }
 
     bool ok = true;
+    ok      = check(vkvv_trace_compiled() == expect_compiled, "trace compile gate mismatch") && ok;
     ok      = check(vkvv_trace_enabled() == expect_trace, "trace env cache mismatch") && ok;
     ok      = check(vkvv_trace_deep_enabled() == expect_deep, "deep trace env cache mismatch") && ok;
     ok      = check(vkvv_log_enabled() == expect_log, "log env cache mismatch") && ok;
@@ -100,7 +102,11 @@ int main() {
         ok = check(log_file != nullptr && log_file[0] != '\0', "expected VKVV_LOG_FILE path") && ok;
         std::ifstream input(log_file != nullptr ? log_file : "");
         std::string   contents((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-        ok = check(contains(contents, "nvidia-vulkan-vaapi: trace seq=1 event=telemetry-smoke"), "trace record missing from VKVV_LOG_FILE") && ok;
+        if (expect_trace) {
+            ok = check(contains(contents, "nvidia-vulkan-vaapi: trace seq=1 event=telemetry-smoke"), "trace record missing from VKVV_LOG_FILE") && ok;
+        } else {
+            ok = check(!contains(contents, "event=telemetry-smoke"), "trace record present when telemetry is compiled out") && ok;
+        }
         ok = check(contains(contents, "telemetry-log-smoke value=13"), "log record missing from VKVV_LOG_FILE") && ok;
     }
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;

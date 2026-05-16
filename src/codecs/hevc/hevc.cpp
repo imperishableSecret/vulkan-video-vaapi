@@ -66,7 +66,7 @@ namespace {
         const unsigned int type     = buffer != nullptr ? static_cast<unsigned int>(buffer->type) : 0U;
         const unsigned int size     = buffer != nullptr ? buffer->size : 0U;
         const unsigned int elements = buffer != nullptr ? buffer->num_elements : 0U;
-        vkvv_trace("hevc-render-reject", "reason=%s type=%u size=%u elements=%u has_pic=%u has_iq=%u has_slice_params=%u has_slice_data=%u slices=%u bitstream=%zu",
+        VKVV_TRACE("hevc-render-reject", "reason=%s type=%u size=%u elements=%u has_pic=%u has_iq=%u has_slice_params=%u has_slice_data=%u slices=%u bitstream=%zu",
                    reason != nullptr ? reason : "unknown", type, size, elements, hevc != nullptr && hevc->has_pic ? 1U : 0U, hevc != nullptr && hevc->has_iq ? 1U : 0U,
                    hevc != nullptr && hevc->has_slice_params ? 1U : 0U, hevc != nullptr && hevc->has_slice_data ? 1U : 0U, hevc != nullptr ? hevc->slice_count : 0U,
                    hevc != nullptr ? hevc->bitstream.size() : 0U);

@@ -16,6 +16,14 @@ project(
 cpp = meson.get_compiler('cpp')
 python3 = find_program('python3')
 
+trace_telemetry_option = get_option('trace_telemetry')
+trace_telemetry_enabled = trace_telemetry_option.enabled() or (trace_telemetry_option.auto() and get_option('debug'))
+trace_telemetry_define = '-DVKVV_ENABLE_TRACE_TELEMETRY=0'
+if trace_telemetry_enabled
+  trace_telemetry_define = '-DVKVV_ENABLE_TRACE_TELEMETRY=1'
+endif
+add_project_arguments(trace_telemetry_define, language: 'cpp')
+
 libva_dep = dependency('libva')
 libva_drm_dep = dependency('libva-drm')
 libdrm_dep = dependency('libdrm')
@@ -282,31 +290,36 @@ driver_test_env.set('LIBVA_DRIVERS_PATH', meson.current_build_dir())
 telemetry_trace_off_env = environment()
 telemetry_trace_off_env.set('VKVV_TRACE', '0')
 telemetry_trace_off_env.set('VKVV_EXPECT_TRACE', '0')
+telemetry_trace_off_env.set('VKVV_EXPECT_TRACE_COMPILED', trace_telemetry_enabled ? '1' : '0')
 telemetry_trace_off_env.set('VKVV_LOG', '0')
 telemetry_trace_off_env.set('VKVV_EXPECT_LOG', '0')
 
 telemetry_trace_on_env = environment()
 telemetry_trace_on_env.set('VKVV_TRACE', '1')
-telemetry_trace_on_env.set('VKVV_EXPECT_TRACE', '1')
+telemetry_trace_on_env.set('VKVV_EXPECT_TRACE', trace_telemetry_enabled ? '1' : '0')
+telemetry_trace_on_env.set('VKVV_EXPECT_TRACE_COMPILED', trace_telemetry_enabled ? '1' : '0')
 telemetry_trace_on_env.set('VKVV_LOG', '1')
 telemetry_trace_on_env.set('VKVV_EXPECT_LOG', '1')
 
 telemetry_log_on_env = environment()
 telemetry_log_on_env.set('VKVV_TRACE', '0')
 telemetry_log_on_env.set('VKVV_EXPECT_TRACE', '0')
+telemetry_log_on_env.set('VKVV_EXPECT_TRACE_COMPILED', trace_telemetry_enabled ? '1' : '0')
 telemetry_log_on_env.set('VKVV_LOG', '1')
 telemetry_log_on_env.set('VKVV_EXPECT_LOG', '1')
 
 telemetry_trace_deep_env = environment()
 telemetry_trace_deep_env.set('VKVV_TRACE', 'deep')
-telemetry_trace_deep_env.set('VKVV_EXPECT_TRACE', '1')
-telemetry_trace_deep_env.set('VKVV_EXPECT_TRACE_DEEP', '1')
+telemetry_trace_deep_env.set('VKVV_EXPECT_TRACE', trace_telemetry_enabled ? '1' : '0')
+telemetry_trace_deep_env.set('VKVV_EXPECT_TRACE_DEEP', trace_telemetry_enabled ? '1' : '0')
+telemetry_trace_deep_env.set('VKVV_EXPECT_TRACE_COMPILED', trace_telemetry_enabled ? '1' : '0')
 telemetry_trace_deep_env.set('VKVV_LOG', '0')
 telemetry_trace_deep_env.set('VKVV_EXPECT_LOG', '0')
 
 telemetry_log_file_env = environment()
 telemetry_log_file_env.set('VKVV_TRACE', '1')
-telemetry_log_file_env.set('VKVV_EXPECT_TRACE', '1')
+telemetry_log_file_env.set('VKVV_EXPECT_TRACE', trace_telemetry_enabled ? '1' : '0')
+telemetry_log_file_env.set('VKVV_EXPECT_TRACE_COMPILED', trace_telemetry_enabled ? '1' : '0')
 telemetry_log_file_env.set('VKVV_LOG', '1')
 telemetry_log_file_env.set('VKVV_EXPECT_LOG', '1')
 telemetry_log_file_env.set('VKVV_LOG_FILE', '/tmp/vkvv-telemetry-smoke.log')

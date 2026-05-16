@@ -13,15 +13,29 @@ def fail(message: str) -> None:
 def main() -> int:
     root = Path(sys.argv[1])
     vulkan_root = root / "src" / "vulkan"
+    meson_text = (root / "meson.build").read_text(encoding="utf-8")
+    telemetry_header = (root / "src" / "telemetry.h").read_text(encoding="utf-8")
+    telemetry_text = (root / "src" / "telemetry.cpp").read_text(encoding="utf-8")
+
+    if "trace_telemetry" not in meson_text:
+        fail("Meson trace telemetry compile option is missing")
+    if "VKVV_ENABLE_TRACE_TELEMETRY=0" not in meson_text or "VKVV_ENABLE_TRACE_TELEMETRY=1" not in meson_text:
+        fail("trace telemetry option must define the compile-time telemetry gate")
+    if "VKVV_ENABLE_TRACE_TELEMETRY" not in telemetry_header or "inline constexpr bool vkvv_trace_compiled" not in telemetry_header:
+        fail("telemetry header is missing the compile-time trace gate")
+    if "#if VKVV_ENABLE_TRACE_TELEMETRY" not in telemetry_header or "#if VKVV_ENABLE_TRACE_TELEMETRY" not in telemetry_text:
+        fail("trace telemetry must compile out both macros and runtime trace emitters")
 
     direct_trace = []
-    for path in vulkan_root.rglob("*.cpp"):
+    for path in (root / "src").rglob("*.cpp"):
+        if path.name == "telemetry.cpp":
+            continue
         text = path.read_text(encoding="utf-8")
         for number, line in enumerate(text.splitlines(), start=1):
             if re.search(r"\bvkvv_trace\(", line):
                 direct_trace.append(f"{path.relative_to(root)}:{number}")
     if direct_trace:
-        fail("direct vkvv_trace() remains in hot Vulkan sources:\n" + "\n".join(direct_trace))
+        fail("direct vkvv_trace() remains in hot driver sources:\n" + "\n".join(direct_trace))
 
     shadow = root / "src" / "vulkan" / "export" / "shadow_image.cpp"
     lines = shadow.read_text(encoding="utf-8").splitlines()
@@ -575,7 +589,6 @@ def main() -> int:
         "VKVV_ALLOW_PLACEHOLDER_EXPORT",
         "VKVV_EXPORT_SYNC_MODE",
     ):
-        telemetry_text = (root / "src" / "telemetry.cpp").read_text(encoding="utf-8")
         if toggle not in export_text and toggle not in export_state_text and toggle not in shadow_text and toggle not in telemetry_text:
             fail(f"AV1 publication telemetry toggle is missing: {toggle}")
 
