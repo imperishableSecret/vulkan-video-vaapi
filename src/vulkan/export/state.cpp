@@ -18,7 +18,7 @@ namespace vkvv {
     const char* vkvv_export_copy_reason_name(VkvvExportCopyReason reason) {
         switch (reason) {
             case VkvvExportCopyReason::VisibleRefresh: return "visible-refresh";
-            case VkvvExportCopyReason::PredecodePlaceholderSeed: return "predecode-placeholder-seed";
+            case VkvvExportCopyReason::PredecodeBackingSeed: return "predecode-backing-seed";
             case VkvvExportCopyReason::ImportOutput: return "import-output";
             case VkvvExportCopyReason::NondisplayCurrentRefresh: return "nondisplay-current-refresh";
             case VkvvExportCopyReason::NondisplayPrivateRefresh: return "nondisplay-private-refresh";
@@ -57,7 +57,7 @@ namespace vkvv {
             case VkvvExportPresentSource::None: return "none";
             case VkvvExportPresentSource::VisibleRefresh: return "visible-refresh";
             case VkvvExportPresentSource::ShowExisting: return "show-existing";
-            case VkvvExportPresentSource::PredecodePlaceholder: return "predecode-placeholder";
+            case VkvvExportPresentSource::PredecodeBacking: return "predecode-backing";
             case VkvvExportPresentSource::PrivateNondisplay: return "private-nondisplay";
             default: return "unknown";
         }
@@ -156,7 +156,7 @@ namespace vkvv {
 
     bool export_resource_has_valid_retained_presentation(const ExportResource* resource) {
         if (resource == nullptr || resource->content_generation == 0 || resource->private_nondisplay_shadow || resource->predecode_exported ||
-            resource->predecode_seeded || resource->predecode_quarantined || resource->black_placeholder || resource->seed_source_generation != 0 ||
+            resource->predecode_seeded || resource->predecode_quarantined || resource->neutral_backing || resource->seed_source_generation != 0 ||
             resource->seed_source_surface_id != VA_INVALID_ID || resource->seed_pixel_proof_valid) {
             return false;
         }
@@ -188,7 +188,7 @@ namespace vkvv {
         if (resource == nullptr) {
             return VkvvExportPixelSource::None;
         }
-        if (resource->black_placeholder || (resource->predecode_exported && !resource->predecode_seeded && resource->content_generation == 0 &&
+        if (resource->neutral_backing || (resource->predecode_exported && !resource->predecode_seeded && resource->content_generation == 0 &&
                                                 resource->seed_source_generation == 0)) {
             return VkvvExportPixelSource::Placeholder;
         }
@@ -276,7 +276,7 @@ namespace vkvv {
 
     bool av1_visible_export_requires_copy(const SurfaceResource* resource) {
         return surface_resource_uses_av1_decode(resource) &&
-            (resource->export_resource.predecode_exported || resource->export_resource.predecode_seeded || resource->export_resource.black_placeholder ||
+            (resource->export_resource.predecode_exported || resource->export_resource.predecode_seeded || resource->export_resource.neutral_backing ||
              resource->export_retained_attached || resource->export_import_attached || surface_resource_export_shadow_stale(resource));
     }
 
@@ -413,7 +413,7 @@ namespace vkvv {
             return;
         }
         clear_export_present_state(resource);
-        resource->present_source = VkvvExportPresentSource::PredecodePlaceholder;
+        resource->present_source = VkvvExportPresentSource::PredecodeBacking;
     }
 
     void pin_export_visible_present(SurfaceResource* owner, ExportResource* resource, VkvvExportPresentSource source) {
@@ -495,7 +495,7 @@ namespace vkvv {
         }
         resource->predecode_exported     = false;
         resource->predecode_seeded       = false;
-        resource->black_placeholder      = false;
+        resource->neutral_backing      = false;
         resource->seed_source_surface_id = VA_INVALID_ID;
         resource->seed_source_generation = 0;
         resource->seed_pixel_proof_valid = false;

@@ -50,7 +50,7 @@ def main() -> int:
 
     export_cpp = root / "src" / "vulkan" / "export.cpp"
     export_text = export_cpp.read_text(encoding="utf-8")
-    if "decision.predecode_backing_export = decision.exact_predecode_pool_placeholder;" not in export_text:
+    if "decision.predecode_backing_export = decision.exact_predecode_pool_backing;" not in export_text:
         fail("exact-predecode pool exports must use the explicit predecode backing path")
     if "seed_predecode_export_from_last_good(runtime, resource, reason, reason_size)" not in export_text:
         fail("active predecode backing must try stream-local seed before returning allocation-only backing")
@@ -487,6 +487,7 @@ def main() -> int:
         "publish_ok=",
         "mutation_action=",
         "client_visible_shadow_mutated=0",
+        "neutral_backing=",
         "present_shadow_gen=",
         "private_shadow_gen=",
         "decode_shadow_gen=",
@@ -498,14 +499,14 @@ def main() -> int:
         "nondisplay-private-refresh",
         "display_visible=",
         "mutation_action=skipped-client-shadow",
-        "predecode-placeholder-seed",
+        "predecode-backing-seed",
         "visible-refresh",
         "visible-present-pin",
         "nondisplay-current-refresh",
         "nondisplay-current-refresh-unpinned",
         "private-shadow-refresh",
         "nondisplay-present-pinned-skip",
-        "neutral-placeholder",
+        "allocation-only-backing",
         "source-not-decoded",
         "source-not-published-seed",
         "source-domain-incomplete",
@@ -524,7 +525,7 @@ def main() -> int:
         "missing-vulkan-import-support",
         "incomplete-import",
         "exact-surface-predecode",
-        "exact-surface-placeholder",
+        "exact-surface-backing",
         "exact_surface=1",
         "export_flags=",
         "access_flags=",

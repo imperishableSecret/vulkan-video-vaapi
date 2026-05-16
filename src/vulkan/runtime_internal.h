@@ -21,7 +21,7 @@ namespace vkvv {
         None,
         VisibleRefresh,
         ShowExisting,
-        PredecodePlaceholder,
+        PredecodeBacking,
         PrivateNondisplay,
     };
 
@@ -132,7 +132,7 @@ namespace vkvv {
         bool                          predecode_had_va_begin       = false;
         bool                          predecode_had_decode_submit  = false;
         bool                          predecode_had_visible_decode = false;
-        bool                          black_placeholder            = false;
+        bool                          neutral_backing            = false;
         VASurfaceID                   seed_source_surface_id       = VA_INVALID_ID;
         uint64_t                      seed_source_generation       = 0;
         bool                          seed_pixel_proof_valid       = false;
@@ -161,7 +161,7 @@ namespace vkvv {
 
     enum class VkvvExportCopyReason {
         VisibleRefresh,
-        PredecodePlaceholderSeed,
+        PredecodeBackingSeed,
         ImportOutput,
         NondisplayCurrentRefresh,
         NondisplayPrivateRefresh,

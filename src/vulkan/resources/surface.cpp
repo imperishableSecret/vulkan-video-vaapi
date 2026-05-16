@@ -118,7 +118,7 @@ namespace vkvv {
         resource->predecode_had_va_begin       = false;
         resource->predecode_had_decode_submit  = false;
         resource->predecode_had_visible_decode = false;
-        resource->black_placeholder            = false;
+        resource->neutral_backing            = false;
         resource->seed_source_surface_id       = VA_INVALID_ID;
         resource->seed_source_generation       = 0;
         resource->seed_pixel_proof_valid       = false;

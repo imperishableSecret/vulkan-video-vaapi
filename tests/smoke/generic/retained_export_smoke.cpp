@@ -279,7 +279,7 @@ namespace {
         av1_resource.content_generation                     = 7;
         av1_resource.export_resource.predecode_exported     = true;
         av1_resource.export_resource.predecode_seeded       = true;
-        av1_resource.export_resource.black_placeholder      = true;
+        av1_resource.export_resource.neutral_backing      = true;
         av1_resource.export_resource.seed_source_surface_id = 42;
         av1_resource.export_resource.seed_source_generation = 6;
 
@@ -293,7 +293,7 @@ namespace {
         ok &= check(!vkvv::av1_non_display_export_refresh(&vp9_resource, false), "non-AV1 non-display refresh selected the AV1 no-seed policy");
 
         vkvv::clear_predecode_export_state(&av1_resource.export_resource);
-        ok &= check(!av1_resource.export_resource.predecode_exported && !av1_resource.export_resource.predecode_seeded && !av1_resource.export_resource.black_placeholder &&
+        ok &= check(!av1_resource.export_resource.predecode_exported && !av1_resource.export_resource.predecode_seeded && !av1_resource.export_resource.neutral_backing &&
                         av1_resource.export_resource.seed_source_surface_id == VA_INVALID_ID && av1_resource.export_resource.seed_source_generation == 0,
                     "AV1 non-display predecode state was not fully cleared");
         return ok;
@@ -317,9 +317,9 @@ namespace {
         ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "AV1 seeded predecode export did not force visible copy");
         av1_resource.export_resource.predecode_seeded = false;
 
-        av1_resource.export_resource.black_placeholder = true;
+        av1_resource.export_resource.neutral_backing = true;
         ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "AV1 placeholder export did not force visible copy");
-        av1_resource.export_resource.black_placeholder = false;
+        av1_resource.export_resource.neutral_backing = false;
 
         av1_resource.export_retained_attached = true;
         ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "AV1 retained export attach did not force visible copy");
@@ -551,7 +551,7 @@ namespace {
 
         vkvv::ExportResource placeholder{};
         placeholder.predecode_exported = true;
-        placeholder.black_placeholder  = true;
+        placeholder.neutral_backing  = true;
         ok &= check(vkvv::export_pixel_source_for_resource(&owner, &placeholder) == vkvv::VkvvExportPixelSource::Placeholder,
                     "placeholder export source was not classified as placeholder");
 

@@ -326,7 +326,7 @@ namespace {
             return false;
         }
         if (backup_resource->export_resource.presentable || backup_resource->export_resource.present_pinned || backup_resource->export_resource.present_generation != 0 ||
-            backup_resource->export_resource.present_source != vkvv::VkvvExportPresentSource::PredecodePlaceholder) {
+            backup_resource->export_resource.present_source != vkvv::VkvvExportPresentSource::PredecodeBacking) {
             std::fprintf(stderr, "predecode export should not be presentable before decode\n");
             cleanup();
             return false;
@@ -368,7 +368,7 @@ namespace {
             return false;
         }
 
-        if (!backup_resource->export_resource.predecode_exported || backup_resource->export_resource.predecode_seeded || !backup_resource->export_resource.black_placeholder ||
+        if (!backup_resource->export_resource.predecode_exported || backup_resource->export_resource.predecode_seeded || !backup_resource->export_resource.neutral_backing ||
             backup_resource->export_resource.seed_source_surface_id != VA_INVALID_ID || backup_resource->export_resource.seed_source_generation != 0 ||
             backup_resource->export_resource.content_generation != 0 || backup_resource->export_resource.layout != VK_IMAGE_LAYOUT_GENERAL) {
             std::fprintf(stderr, "decoded refresh seeded or mutated a compatible predecode backup export\n");
@@ -376,7 +376,7 @@ namespace {
             return false;
         }
         if (backup_resource->export_resource.presentable || backup_resource->export_resource.present_pinned || backup_resource->export_resource.present_generation != 0 ||
-            backup_resource->export_resource.present_source != vkvv::VkvvExportPresentSource::PredecodePlaceholder) {
+            backup_resource->export_resource.present_source != vkvv::VkvvExportPresentSource::PredecodeBacking) {
             std::fprintf(stderr, "predecode seed should remain non-presentable\n");
             cleanup();
             return false;
@@ -386,7 +386,7 @@ namespace {
         return true;
     }
 
-    [[maybe_unused]] bool check_thumbnail_predecode_keeps_placeholder(vkvv::VulkanRuntime* runtime) {
+    [[maybe_unused]] bool check_thumbnail_predecode_keeps_allocation_backing(vkvv::VulkanRuntime* runtime) {
         char                        reason[512] = {};
         void*                       session     = nullptr;
         VADRMPRIMESurfaceDescriptor backup_descriptor{};
@@ -418,8 +418,8 @@ namespace {
         std::printf("%s\n", reason);
         auto* backup_resource = static_cast<vkvv::SurfaceResource*>(backup.vulkan);
         if (status != VA_STATUS_SUCCESS || backup_resource == nullptr || !backup_resource->export_resource.predecode_exported ||
-            backup_resource->export_resource.predecode_seeded || !backup_resource->export_resource.black_placeholder) {
-            std::fprintf(stderr, "thumbnail predecode export should start as an unseeded placeholder\n");
+            backup_resource->export_resource.predecode_seeded || !backup_resource->export_resource.neutral_backing) {
+            std::fprintf(stderr, "thumbnail predecode export should start as unseeded allocation backing\n");
             cleanup();
             return false;
         }
@@ -451,7 +451,7 @@ namespace {
             std::printf("%s\n", reason);
         }
         if (status != VA_STATUS_SUCCESS || !backup_resource->export_resource.predecode_exported || backup_resource->export_resource.predecode_seeded ||
-            !backup_resource->export_resource.black_placeholder || backup_resource->export_resource.seed_source_surface_id != VA_INVALID_ID ||
+            !backup_resource->export_resource.neutral_backing || backup_resource->export_resource.seed_source_surface_id != VA_INVALID_ID ||
             backup_resource->export_resource.seed_source_generation != 0) {
             std::fprintf(stderr, "thumbnail predecode export was seeded from an old visible frame\n");
             cleanup();
@@ -554,7 +554,7 @@ namespace {
         const bool proof_enabled = pixel_proof_enabled_for_smoke();
         if (proof_enabled) {
             if (status != VA_STATUS_SUCCESS || descriptor.objects[0].fd < 0 || late_resource == nullptr || !late_resource->export_resource.predecode_exported ||
-                late_resource->export_resource.predecode_seeded || !late_resource->export_resource.black_placeholder ||
+                late_resource->export_resource.predecode_seeded || !late_resource->export_resource.neutral_backing ||
                 late_resource->export_resource.seed_source_surface_id != VA_INVALID_ID || late_resource->export_resource.seed_source_generation != 0 ||
                 late_resource->export_resource.content_generation != 0 ||
                 vkvv::export_resource_fd_role(&late_resource->export_resource) != vkvv::VkvvExportRole::PredecodeBacking ||
@@ -567,7 +567,7 @@ namespace {
             return true;
         }
         if (status != VA_STATUS_SUCCESS || descriptor.objects[0].fd < 0 || late_resource == nullptr || !late_resource->export_resource.predecode_exported ||
-            !late_resource->export_resource.predecode_seeded || late_resource->export_resource.black_placeholder ||
+            !late_resource->export_resource.predecode_seeded || late_resource->export_resource.neutral_backing ||
             late_resource->export_resource.seed_source_surface_id != decoded.id ||
             late_resource->export_resource.seed_source_generation != decoded_resource->content_generation ||
             late_resource->export_resource.content_generation != decoded_resource->content_generation ||
@@ -662,7 +662,7 @@ namespace {
         std::printf("%s\n", reason);
         auto* nondisplay_resource = static_cast<vkvv::SurfaceResource*>(nondisplay.vulkan);
         if (status != VA_STATUS_SUCCESS || nondisplay_resource == nullptr || !nondisplay_resource->export_resource.predecode_exported ||
-            nondisplay_resource->export_resource.predecode_seeded || !nondisplay_resource->export_resource.black_placeholder ||
+            nondisplay_resource->export_resource.predecode_seeded || !nondisplay_resource->export_resource.neutral_backing ||
             nondisplay_resource->export_resource.seed_source_surface_id != VA_INVALID_ID) {
             std::fprintf(stderr, "non-display predecode export seeded from the displayable last-good frame\n");
             cleanup();
@@ -949,7 +949,7 @@ namespace {
         std::printf("%s\n", reason);
         auto* late_resource = static_cast<vkvv::SurfaceResource*>(late_export.vulkan);
         if (status != VA_STATUS_SUCCESS || late_resource == nullptr || late_resource->stream_id != context.stream_id || late_resource->codec_operation != context.codec_operation ||
-            !late_resource->export_resource.predecode_exported || late_resource->export_resource.predecode_seeded || !late_resource->export_resource.black_placeholder ||
+            !late_resource->export_resource.predecode_exported || late_resource->export_resource.predecode_seeded || !late_resource->export_resource.neutral_backing ||
             late_resource->export_resource.seed_source_surface_id != VA_INVALID_ID || late_resource->export_resource.seed_source_generation != 0) {
             std::fprintf(stderr, "untagged Chrome-style export was seeded after active-domain tagging\n");
             cleanup();
@@ -1237,7 +1237,7 @@ namespace {
         std::printf("%s\n", reason);
         auto* backup_resource = static_cast<vkvv::SurfaceResource*>(av1_backup.vulkan);
         if (status != VA_STATUS_SUCCESS || backup_resource == nullptr || !backup_resource->export_resource.predecode_exported ||
-            backup_resource->export_resource.predecode_seeded || !backup_resource->export_resource.black_placeholder) {
+            backup_resource->export_resource.predecode_seeded || !backup_resource->export_resource.neutral_backing) {
             std::fprintf(stderr, "cross-codec target should start as an unseeded black predecode export\n");
             cleanup();
             return false;
@@ -1288,7 +1288,7 @@ namespace {
             return false;
         }
 
-        if (backup_resource->export_resource.predecode_seeded || !backup_resource->export_resource.black_placeholder ||
+        if (backup_resource->export_resource.predecode_seeded || !backup_resource->export_resource.neutral_backing ||
             backup_resource->export_resource.seed_source_surface_id != VA_INVALID_ID) {
             std::fprintf(stderr, "VP9 decoded refresh incorrectly seeded an AV1 predecode export\n");
             cleanup();
