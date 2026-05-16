@@ -40,16 +40,17 @@ namespace vkvv {
     const char* vkvv_export_role_name(VkvvExportRole role) {
         switch (role) {
             case VkvvExportRole::None: return "none";
+            case VkvvExportRole::PredecodeBacking: return "predecode-backing";
             case VkvvExportRole::DecodedPixels: return "decoded";
             case VkvvExportRole::PixelProvenSeed: return "pixel-proven-seed";
-            case VkvvExportRole::BootstrapLease: return "bootstrap";
+            case VkvvExportRole::TransitionHold: return "transition-hold";
             case VkvvExportRole::DebugPlaceholder: return "debug-placeholder";
             default: return "unknown";
         }
     }
 
     bool export_role_may_be_sampled_by_client(VkvvExportRole role) {
-        return role == VkvvExportRole::DecodedPixels || role == VkvvExportRole::PixelProvenSeed;
+        return role == VkvvExportRole::DecodedPixels || role == VkvvExportRole::PixelProvenSeed || role == VkvvExportRole::TransitionHold;
     }
 
     const char* vkvv_export_present_source_name(VkvvExportPresentSource source) {
@@ -152,6 +153,28 @@ namespace vkvv {
 
     VkvvExportRole export_resource_fd_role(const ExportResource* resource) {
         return resource != nullptr && resource->exported_fd.fd_exported ? resource->exported_fd.role : VkvvExportRole::None;
+    }
+
+    bool export_resource_has_valid_retained_presentation(const ExportResource* resource) {
+        if (resource == nullptr || resource->content_generation == 0 || resource->private_nondisplay_shadow || resource->predecode_exported ||
+            resource->predecode_seeded || resource->predecode_quarantined || resource->black_placeholder || resource->seed_source_generation != 0 ||
+            resource->seed_source_surface_id != VA_INVALID_ID || resource->seed_pixel_proof_valid) {
+            return false;
+        }
+        if (!resource->exported || !resource->client_visible_shadow || !resource->presentable || !resource->present_pinned || !resource->published_visible ||
+            resource->present_generation == 0 || resource->present_generation != resource->content_generation || resource->present_stream_id != resource->stream_id ||
+            resource->present_codec_operation != resource->codec_operation || !export_visible_release_satisfied(resource)) {
+            return false;
+        }
+        return resource->exported_fd.fd_exported && resource->exported_fd.fd_content_generation == resource->content_generation &&
+            resource->exported_fd.last_written_content_generation == resource->content_generation && resource->exported_fd.role == VkvvExportRole::DecodedPixels;
+    }
+
+    bool export_resource_is_transition_hold_for_surface(const SurfaceResource* owner, const ExportResource* resource) {
+        return owner != nullptr && resource != nullptr && owner->content_generation == 0 && owner->export_retained_attached &&
+            export_resource_has_valid_retained_presentation(resource) && resource->driver_instance_id == owner->driver_instance_id &&
+            resource->stream_id == owner->stream_id && resource->codec_operation == owner->codec_operation && resource->format == owner->format &&
+            resource->va_fourcc == owner->va_fourcc && resource->extent.width >= owner->coded_extent.width && resource->extent.height >= owner->coded_extent.height;
     }
 
     bool export_resource_fd_fresh(const SurfaceResource* resource) {

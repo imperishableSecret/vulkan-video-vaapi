@@ -233,7 +233,7 @@ namespace {
         return true;
     }
 
-    bool check_sampleable_predecode_export_is_refused(vkvv::VulkanRuntime* runtime) {
+    bool check_active_domain_predecode_export_returns_backing(vkvv::VulkanRuntime* runtime) {
         char reason[512] = {};
 
         VkvvSurface surface{};
@@ -260,14 +260,16 @@ namespace {
         status = vkvv_vulkan_export_surface(runtime, &surface, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &descriptor, reason, sizeof(reason));
         std::printf("%s\n", reason);
         auto* resource = static_cast<vkvv::SurfaceResource*>(surface.vulkan);
-        const bool refused_placeholder =
-            status != VA_STATUS_SUCCESS && descriptor.objects[0].fd < 0 && resource != nullptr && resource->content_generation == 0 &&
-            resource->export_resource.content_generation == 0 && !resource->exported && !resource->export_resource.exported &&
-            !resource->export_resource.predecode_exported && !resource->export_resource.predecode_quarantined &&
+        const bool returned_predecode_backing =
+            status == VA_STATUS_SUCCESS && descriptor.objects[0].fd >= 0 && resource != nullptr && resource->content_generation == 0 &&
+            resource->export_resource.content_generation == 0 && resource->exported && resource->export_resource.exported &&
+            resource->export_resource.predecode_exported && resource->export_resource.predecode_quarantined && !resource->export_resource.presentable &&
+            !resource->export_resource.present_pinned && !resource->export_resource.published_visible &&
+            vkvv::export_resource_fd_content_generation(&resource->export_resource) == 0 &&
             !vkvv::export_resource_fd_may_be_sampled_by_client(&resource->export_resource) &&
-            vkvv::export_resource_fd_role(&resource->export_resource) == vkvv::VkvvExportRole::None;
-        if (!refused_placeholder) {
-            std::fprintf(stderr, "sampleable predecode export should be refused without returning a placeholder fd\n");
+            vkvv::export_resource_fd_role(&resource->export_resource) == vkvv::VkvvExportRole::PredecodeBacking;
+        if (!returned_predecode_backing) {
+            std::fprintf(stderr, "active-domain sampleable predecode export should return non-presentable backing\n");
             cleanup();
             return false;
         }
@@ -1315,7 +1317,7 @@ int main(void) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
-    if (!check_sampleable_predecode_export_is_refused(typed_runtime)) {
+    if (!check_active_domain_predecode_export_returns_backing(typed_runtime)) {
         vkvv_vulkan_runtime_destroy(runtime);
         return 1;
     }
@@ -1368,7 +1370,7 @@ int main(void) {
         close(p010_descriptor.objects[0].fd);
     }
     if (status == VA_STATUS_SUCCESS) {
-        std::fprintf(stderr, "P010 predecode sampleable export unexpectedly returned a placeholder fd\n");
+        std::fprintf(stderr, "P010 predecode sampleable export without active decode domain unexpectedly returned backing\n");
         vkvv_vulkan_surface_destroy(runtime, &p010_surface);
         vkvv_vulkan_surface_destroy(runtime, &surface);
         vkvv_vulkan_h264_session_destroy(runtime, session);
@@ -1402,27 +1404,21 @@ int main(void) {
     descriptor.objects[0].fd = -1;
     status = vkvv_vulkan_export_surface(runtime, &surface, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &descriptor, reason, sizeof(reason));
     std::printf("%s\n", reason);
-    if (descriptor.objects[0].fd >= 0) {
-        close(descriptor.objects[0].fd);
-        descriptor.objects[0].fd = -1;
-    }
-    if (status == VA_STATUS_SUCCESS) {
-        std::fprintf(stderr, "sampleable export before decode unexpectedly returned a placeholder fd\n");
-        vkvv_vulkan_surface_destroy(runtime, &surface);
-        vkvv_vulkan_h264_session_destroy(runtime, session);
-        vkvv_vulkan_runtime_destroy(runtime);
-        return 1;
-    }
 
     auto* resource = static_cast<vkvv::SurfaceResource*>(surface.vulkan);
     if (resource == nullptr || resource->image != VK_NULL_HANDLE || resource->memory != VK_NULL_HANDLE || resource->view != VK_NULL_HANDLE || resource->coded_extent.width != 64 ||
         resource->coded_extent.height != 64 || resource->visible_extent.width != 64 || resource->visible_extent.height != 64 || resource->va_fourcc != VA_FOURCC_NV12 ||
         resource->allocation_size != 0 || resource->export_resource.allocation_size == 0 || resource->export_resource.layout != VK_IMAGE_LAYOUT_GENERAL ||
-        resource->export_resource.content_generation != 0 || resource->exported || resource->export_resource.exported || resource->export_resource.predecode_exported ||
-        resource->export_resource.predecode_quarantined || resource->export_resource.presentable || resource->export_resource.present_pinned ||
+        status != VA_STATUS_SUCCESS || descriptor.objects[0].fd < 0 || resource->export_resource.content_generation != 0 || !resource->exported ||
+        !resource->export_resource.exported || !resource->export_resource.predecode_exported || !resource->export_resource.predecode_quarantined ||
+        resource->export_resource.presentable || resource->export_resource.present_pinned ||
         resource->export_resource.present_generation != 0 || vkvv::export_resource_fd_may_be_sampled_by_client(&resource->export_resource) ||
-        vkvv::export_resource_fd_role(&resource->export_resource) != vkvv::VkvvExportRole::None) {
-        std::fprintf(stderr, "export preparation should allocate only an unpublished export shadow before decode\n");
+        vkvv::export_resource_fd_content_generation(&resource->export_resource) != 0 ||
+        vkvv::export_resource_fd_role(&resource->export_resource) != vkvv::VkvvExportRole::PredecodeBacking) {
+        std::fprintf(stderr, "active-domain export should return only non-presentable predecode backing before decode\n");
+        if (descriptor.objects[0].fd >= 0) {
+            close(descriptor.objects[0].fd);
+        }
         vkvv_vulkan_surface_destroy(runtime, &surface);
         vkvv_vulkan_h264_session_destroy(runtime, session);
         vkvv_vulkan_runtime_destroy(runtime);
@@ -1430,7 +1426,8 @@ int main(void) {
     }
     VkDeviceMemory     first_export_memory = resource->export_resource.memory;
     const VkDeviceSize first_export_size   = resource->export_resource.allocation_size;
-    constexpr int      first_fd            = -1;
+    const int          first_fd            = descriptor.objects[0].fd;
+    descriptor.objects[0].fd = -1;
 
     session = vkvv_vulkan_h264_session_create();
     if (session == nullptr) {
@@ -1508,10 +1505,11 @@ int main(void) {
     }
     if (resource->export_resource.memory != first_export_memory || resource->export_resource.allocation_size == 0 ||
         resource->export_resource.content_generation != resource->content_generation || resource->export_resource.predecode_quarantined ||
-        vkvv_vulkan_surface_has_predecode_export(&surface) || vkvv::export_resource_fd_content_generation(&resource->export_resource) != 0 ||
-        vkvv::export_resource_fd_may_be_sampled_by_client(&resource->export_resource) ||
-        vkvv::export_resource_fd_role(&resource->export_resource) != vkvv::VkvvExportRole::None) {
-        std::fprintf(stderr, "export refresh did not update the unpublished shadow image in place\n");
+        vkvv_vulkan_surface_has_predecode_export(&surface) ||
+        vkvv::export_resource_fd_content_generation(&resource->export_resource) != resource->content_generation ||
+        !vkvv::export_resource_fd_may_be_sampled_by_client(&resource->export_resource) ||
+        vkvv::export_resource_fd_role(&resource->export_resource) != vkvv::VkvvExportRole::DecodedPixels) {
+        std::fprintf(stderr, "export refresh did not upgrade the predecode backing in place\n");
         if (first_fd >= 0) {
             close(first_fd);
         }

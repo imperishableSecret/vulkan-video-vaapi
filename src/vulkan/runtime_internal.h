@@ -51,9 +51,10 @@ namespace vkvv {
 
     enum class VkvvExportRole {
         None = 0,
+        PredecodeBacking,
         DecodedPixels,
         PixelProvenSeed,
-        BootstrapLease,
+        TransitionHold,
         DebugPlaceholder,
     };
 
@@ -680,6 +681,8 @@ namespace vkvv {
     bool                export_resource_fd_may_be_sampled_by_client(const ExportResource* resource);
     uint64_t            export_resource_fd_content_generation(const ExportResource* resource);
     VkvvExportRole      export_resource_fd_role(const ExportResource* resource);
+    bool                export_resource_has_valid_retained_presentation(const ExportResource* resource);
+    bool                export_resource_is_transition_hold_for_surface(const SurfaceResource* owner, const ExportResource* resource);
     bool                export_resource_fd_fresh(const SurfaceResource* resource);
     VkvvExportPixelSource export_pixel_source_for_resource(const SurfaceResource* owner, const ExportResource* resource);
     bool                surface_resource_has_current_export_shadow(const SurfaceResource* resource);

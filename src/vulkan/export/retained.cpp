@@ -50,7 +50,7 @@ namespace vkvv {
         const VkvvExternalImageIdentity import_key   = vkvv_external_image_identity_from_import(import);
         const VkvvExternalImageIdentity retained_key = retained_export_image_identity(resource);
 
-        if (resource.private_nondisplay_shadow || !resource.exported || !resource.client_visible_shadow) {
+        if (!export_resource_has_valid_retained_presentation(&resource)) {
             return RetainedExportMatch::RoleMismatch;
         }
         if (!import_key.fd.valid || !retained_key.fd.valid) {
