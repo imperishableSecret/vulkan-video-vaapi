@@ -445,7 +445,7 @@ namespace vkvv {
             return;
         }
 
-        const bool role_retainable = resource->export_resource.exported && resource->export_resource.client_visible_shadow && !resource->export_resource.private_nondisplay_shadow;
+        const bool role_retainable = export_resource_has_valid_retained_presentation(&resource->export_resource);
         if (resource->export_resource.private_nondisplay_shadow || (resource->export_resource.exported && !role_retainable)) {
             VKVV_TRACE("retained-role-mismatch-drop", "owner=%u driver=%llu stream=%llu codec=0x%x mem=0x%llx exported=%u client_visible=%u private_only=%u export_role=%s",
                        resource->export_resource.owner_surface_id, static_cast<unsigned long long>(resource->export_resource.driver_instance_id),
@@ -572,10 +572,10 @@ namespace vkvv {
             return;
         }
 
-        const bool unused_bootstrap_export = export_resource_fd_role(&resource->export_resource) == VkvvExportRole::BootstrapLease &&
+        const bool unused_predecode_backing = export_resource_fd_role(&resource->export_resource) == VkvvExportRole::PredecodeBacking &&
             resource->export_resource.content_generation == 0 && !resource->export_resource.predecode_had_decode_submit;
-        trace_export_role_lifecycle(resource, &resource->export_resource, unused_bootstrap_export ? "bootstrap-unused-destroy" : "surface-destroy", false);
-        trace_export_fd_lifetime(resource, &resource->export_resource, unused_bootstrap_export ? "bootstrap-unused-destroy" : "surface-destroy", resource->content_generation,
+        trace_export_role_lifecycle(resource, &resource->export_resource, unused_predecode_backing ? "predecode-backing-unused-destroy" : "surface-destroy", false);
+        trace_export_fd_lifetime(resource, &resource->export_resource, unused_predecode_backing ? "predecode-backing-unused-destroy" : "surface-destroy", resource->content_generation,
                                  export_resource_fd_may_be_sampled_by_client(&resource->export_resource));
         unregister_export_seed_resource(runtime, resource);
         detach_export_resource(runtime, resource);

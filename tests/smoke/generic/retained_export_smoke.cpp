@@ -49,6 +49,19 @@ namespace {
         backing.resource.va_fourcc                            = fourcc_nv12;
         backing.resource.format                               = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
         backing.resource.extent                               = {1920, 1088};
+        backing.resource.owner_surface_id                     = 77;
+        backing.resource.content_generation                    = 5;
+        backing.resource.present_generation                    = backing.resource.content_generation;
+        backing.resource.presentable                           = true;
+        backing.resource.present_pinned                        = true;
+        backing.resource.published_visible                     = true;
+        backing.resource.present_surface_id                    = backing.resource.owner_surface_id;
+        backing.resource.present_stream_id                     = backing.resource.stream_id;
+        backing.resource.present_codec_operation               = backing.resource.codec_operation;
+        backing.resource.present_source                        = vkvv::VkvvExportPresentSource::VisibleRefresh;
+        backing.resource.external_sync.external_release_done    = true;
+        backing.resource.external_sync.released_generation      = backing.resource.content_generation;
+        backing.resource.external_sync.release_mode             = vkvv::VkvvExternalReleaseMode::ImplicitSyncOnly;
         backing.resource.allocation_size                      = 1920 * 1088 * 3 / 2;
         backing.resource.has_drm_format_modifier              = true;
         backing.resource.drm_format_modifier                  = modifier_linear;
@@ -59,6 +72,8 @@ namespace {
         backing.resource.exported_fd.fd_dev                   = backing.resource.fd_dev;
         backing.resource.exported_fd.fd_ino                   = backing.resource.fd_ino;
         backing.resource.exported_fd.may_be_sampled_by_client = true;
+        backing.resource.exported_fd.fd_content_generation     = backing.resource.content_generation;
+        backing.resource.exported_fd.last_written_content_generation = backing.resource.content_generation;
         backing.resource.exported_fd.role                     = vkvv::VkvvExportRole::DecodedPixels;
         backing.fd                                            = vkvv::retained_export_fd_identity(backing.resource);
         return backing;
@@ -489,6 +504,16 @@ namespace {
         fd.valid = true;
         fd.dev   = 11;
         fd.ino   = 22;
+        vkvv::mark_export_fd_returned(&resource.export_resource, fd, 0, vkvv::VkvvExportRole::PredecodeBacking);
+        ok &= check(!vkvv::export_resource_fd_may_be_sampled_by_client(&resource.export_resource), "predecode backing fd was marked client-sampleable");
+        ok &= check(vkvv::export_resource_fd_content_generation(&resource.export_resource) == 0, "predecode backing fd generation should be zero");
+        ok &= check(vkvv::export_resource_fd_role(&resource.export_resource) == vkvv::VkvvExportRole::PredecodeBacking, "predecode backing fd role mismatch");
+
+        vkvv::mark_export_fd_returned(&resource.export_resource, fd, 4, vkvv::VkvvExportRole::TransitionHold);
+        ok &= check(vkvv::export_resource_fd_may_be_sampled_by_client(&resource.export_resource), "transition hold fd was not marked client-sampleable");
+        ok &= check(vkvv::export_resource_fd_content_generation(&resource.export_resource) == 4, "transition hold fd generation mismatch");
+        ok &= check(vkvv::export_resource_fd_role(&resource.export_resource) == vkvv::VkvvExportRole::TransitionHold, "transition hold fd role mismatch");
+
         vkvv::mark_export_fd_returned(&resource.export_resource, fd, 4, vkvv::VkvvExportRole::DecodedPixels);
         ok &= check(vkvv::export_resource_fd_may_be_sampled_by_client(&resource.export_resource), "returned export fd was not marked client-sampleable");
         ok &= check(vkvv::export_resource_fd_content_generation(&resource.export_resource) == 4, "returned export fd generation mismatch");
@@ -534,6 +559,37 @@ namespace {
         retained.content_generation = 4;
         ok &= check(vkvv::export_pixel_source_for_resource(&owner, &retained) == vkvv::VkvvExportPixelSource::RetainedUnknown,
                     "retained non-current export source was not classified as retained unknown");
+        return ok;
+    }
+
+    bool check_transition_hold_policy() {
+        bool                        ok      = true;
+        vkvv::RetainedExportBacking backing = make_backing();
+        vkvv::SurfaceResource       owner{};
+        owner.surface_id              = 99;
+        owner.driver_instance_id      = retained_driver;
+        owner.stream_id               = retained_stream;
+        owner.codec_operation         = codec_vp9;
+        owner.format                  = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+        owner.va_fourcc               = fourcc_nv12;
+        owner.coded_extent            = {1920, 1088};
+        owner.export_retained_attached = true;
+        owner.export_resource         = backing.resource;
+
+        ok &= check(vkvv::export_resource_has_valid_retained_presentation(&owner.export_resource), "valid retained presentation was rejected");
+        ok &= check(vkvv::export_resource_is_transition_hold_for_surface(&owner, &owner.export_resource), "valid transition hold was rejected");
+
+        owner.content_generation = 1;
+        ok &= check(!vkvv::export_resource_is_transition_hold_for_surface(&owner, &owner.export_resource), "decoded target accepted stale transition hold");
+        owner.content_generation = 0;
+
+        owner.stream_id++;
+        ok &= check(!vkvv::export_resource_is_transition_hold_for_surface(&owner, &owner.export_resource), "cross-stream retained presentation became transition hold");
+        owner.stream_id = retained_stream;
+
+        owner.export_resource.predecode_seeded       = true;
+        owner.export_resource.seed_source_generation = owner.export_resource.content_generation;
+        ok &= check(!vkvv::export_resource_has_valid_retained_presentation(&owner.export_resource), "seeded retained content became transition hold");
         return ok;
     }
 
@@ -641,6 +697,7 @@ int main() {
     ok &= check_private_decode_shadow_state_policy();
     ok &= check_exported_fd_state_policy();
     ok &= check_export_pixel_source_policy();
+    ok &= check_transition_hold_policy();
     ok &= check_predecode_seed_source_safety();
     return ok ? 0 : 1;
 }

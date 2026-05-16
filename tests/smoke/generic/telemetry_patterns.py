@@ -36,12 +36,12 @@ def main() -> int:
 
     export_cpp = root / "src" / "vulkan" / "export.cpp"
     export_text = export_cpp.read_text(encoding="utf-8")
-    if "const bool bootstrap_placeholder_export  = !export_request_readable && exact_predecode_pool_placeholder;" not in export_text:
-        fail("sampleable/readable exports must not use the exact-predecode bootstrap placeholder success path")
-    if "const bool sampleable_placeholder_export = export_request_readable && placeholder_available;" not in export_text:
-        fail("sampleable placeholder rejection must include bootstrap placeholders")
-    if re.search(r"sampleable_placeholder_export\s*=\s*export_request_readable\s*&&\s*placeholder_available\s*&&\s*!bootstrap_placeholder_export", export_text):
-        fail("sampleable placeholder rejection still exempts bootstrap placeholders")
+    if "const bool predecode_backing_export      = exact_predecode_pool_placeholder;" not in export_text:
+        fail("exact-predecode pool exports must use the explicit predecode backing path")
+    if "const bool sampleable_placeholder_export = export_request_readable && placeholder_available && !predecode_backing_export;" not in export_text:
+        fail("sampleable placeholder rejection must only exempt explicit predecode backing")
+    if re.search(r"sampleable_placeholder_export\s*=\s*export_request_readable\s*&&\s*placeholder_available\s*;", export_text):
+        fail("sampleable placeholder rejection still includes predecode backing")
 
     shadow_text_for_lock = "\n".join(lines)
     copy_wait_marker = 'const bool waited = wait_for_command_fence(runtime, std::numeric_limits<uint64_t>::max(), reason, reason_size, "surface export copy");'
@@ -252,7 +252,9 @@ def main() -> int:
         '"direct-import-output-gate"',
         '"predecode-seed-policy"',
         '"predecode-export-policy"',
-        '"predecode-pool-placeholder-export"',
+        '"predecode-backing-export"',
+        '"transition-hold-export"',
+        '"transition-hold-attach"',
         '"export-request-flags"',
         '"export-validity-gate"',
         '"export-drain-attempt"',

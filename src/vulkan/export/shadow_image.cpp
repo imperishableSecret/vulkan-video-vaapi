@@ -1220,6 +1220,7 @@ namespace vkvv {
             source->export_resource.seed_source_surface_id = VA_INVALID_ID;
             source->export_resource.seed_source_generation = 0;
             source->export_resource.seed_pixel_proof_valid = false;
+            mark_export_fd_written(&source->export_resource, source->export_resource.content_generation, VkvvExportRole::TransitionHold);
             source->export_retained_attached               = true;
             source->export_import_attached                 = true;
             it->state                                      = RetainedExportState::Attached;
@@ -1228,6 +1229,7 @@ namespace vkvv {
                 0;
             trace_export_fd_lifetime(source, &source->export_resource, "retained-attach", source->export_resource.content_generation,
                                      export_resource_fd_may_be_sampled_by_client(&source->export_resource));
+            trace_export_role_lifecycle(source, &source->export_resource, "transition-hold-attach", false);
             VKVV_TRACE("export-import-attach",
                        "surface=%u driver=%llu stream=%llu codec=0x%x import_fd_dev=%llu import_fd_ino=%llu old_owner=%u old_driver=%llu old_stream=%llu old_codec=0x%x "
                        "shadow_mem=0x%llx shadow_gen=%llu retained=%zu retained_mem=%llu seq=%llu",

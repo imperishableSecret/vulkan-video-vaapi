@@ -285,7 +285,7 @@ namespace vkvv {
                 resource->export_resource.predecode_had_decode_submit  = true;
                 resource->export_resource.predecode_had_visible_decode = resource->export_resource.predecode_had_visible_decode || refresh_export;
                 trace_export_role_lifecycle(resource, &resource->export_resource,
-                                            export_resource_fd_role(&resource->export_resource) == VkvvExportRole::BootstrapLease ? "bootstrap-claimed-submit" :
+                                            export_resource_fd_role(&resource->export_resource) == VkvvExportRole::PredecodeBacking ? "predecode-backing-claimed-submit" :
                                                                                                                                     "predecode-claimed-submit",
                                             refresh_export);
             }
