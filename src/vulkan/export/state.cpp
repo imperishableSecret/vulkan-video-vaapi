@@ -269,13 +269,22 @@ namespace vkvv {
         return surface_resource_has_exported_shadow_output(resource) || surface_resource_has_direct_import_output(resource);
     }
 
+    bool surface_resource_has_visible_output_trace(const SurfaceResource* resource) {
+        return resource != nullptr && resource->visible_output_trace.valid;
+    }
+
+    bool surface_resource_visible_output_expected(const SurfaceResource* resource, bool refresh_export) {
+        return refresh_export && resource != nullptr && resource->content_generation != 0 && resource->visible_output_trace.valid &&
+            resource->visible_output_trace.visible_output;
+    }
+
     bool surface_resource_requires_visible_publication(const SurfaceResource* resource, bool refresh_export) {
-        return refresh_export && resource != nullptr && resource->content_generation != 0 && surface_resource_uses_av1_decode(resource) &&
+        return surface_resource_visible_output_expected(resource, refresh_export) &&
             (resource->import.external || resource->exported || resource->export_resource.exported);
     }
 
-    bool av1_visible_export_requires_copy(const SurfaceResource* resource) {
-        return surface_resource_uses_av1_decode(resource) &&
+    bool surface_resource_visible_export_requires_copy(const SurfaceResource* resource) {
+        return surface_resource_has_visible_output_trace(resource) && resource->visible_output_trace.visible_output &&
             (resource->export_resource.predecode_exported || resource->export_resource.predecode_seeded || resource->export_resource.neutral_backing ||
              resource->export_retained_attached || resource->export_import_attached || surface_resource_export_shadow_stale(resource));
     }

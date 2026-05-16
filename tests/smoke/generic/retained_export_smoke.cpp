@@ -299,43 +299,50 @@ namespace {
         return ok;
     }
 
-    bool check_av1_visible_export_copy_policy() {
+    bool check_visible_export_copy_policy() {
         bool                  ok = true;
         vkvv::SurfaceResource av1_resource{};
         av1_resource.codec_operation                    = codec_av1;
         av1_resource.content_generation                 = 11;
         av1_resource.export_resource.content_generation = 11;
+        vkvv::CodecVisibleOutputTrace visible{};
+        visible.valid          = true;
+        visible.visible_output = true;
+        vkvv::set_surface_visible_output_trace(&av1_resource, visible);
 
         ok &= check(!vkvv::surface_resource_export_shadow_stale(&av1_resource), "current AV1 shadow was marked stale");
-        ok &= check(!vkvv::av1_visible_export_requires_copy(&av1_resource), "current AV1 shadow forced an unnecessary visible copy");
+        ok &= check(!vkvv::surface_resource_visible_export_requires_copy(&av1_resource), "current visible shadow forced an unnecessary visible copy");
 
         av1_resource.export_resource.predecode_exported = true;
-        ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "AV1 predecode export did not force visible copy");
+        ok &= check(vkvv::surface_resource_visible_export_requires_copy(&av1_resource), "predecode visible export did not force visible copy");
         av1_resource.export_resource.predecode_exported = false;
 
         av1_resource.export_resource.predecode_seeded = true;
-        ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "AV1 seeded predecode export did not force visible copy");
+        ok &= check(vkvv::surface_resource_visible_export_requires_copy(&av1_resource), "seeded predecode visible export did not force visible copy");
         av1_resource.export_resource.predecode_seeded = false;
 
         av1_resource.export_resource.neutral_backing = true;
-        ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "AV1 placeholder export did not force visible copy");
+        ok &= check(vkvv::surface_resource_visible_export_requires_copy(&av1_resource), "placeholder visible export did not force visible copy");
         av1_resource.export_resource.neutral_backing = false;
 
         av1_resource.export_retained_attached = true;
-        ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "AV1 retained export attach did not force visible copy");
+        ok &= check(vkvv::surface_resource_visible_export_requires_copy(&av1_resource), "retained export attach did not force visible copy");
         vkvv::clear_surface_export_attach_state(&av1_resource);
 
         av1_resource.export_import_attached = true;
-        ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "AV1 imported export attach did not force visible copy");
+        ok &= check(vkvv::surface_resource_visible_export_requires_copy(&av1_resource), "imported export attach did not force visible copy");
         vkvv::clear_surface_export_attach_state(&av1_resource);
 
         av1_resource.export_resource.content_generation = 10;
         ok &= check(vkvv::surface_resource_export_shadow_stale(&av1_resource), "stale AV1 shadow generation was not detected");
-        ok &= check(vkvv::av1_visible_export_requires_copy(&av1_resource), "stale AV1 shadow did not force visible copy");
+        ok &= check(vkvv::surface_resource_visible_export_requires_copy(&av1_resource), "stale visible shadow did not force visible copy");
 
         vkvv::SurfaceResource vp9_resource = av1_resource;
         vp9_resource.codec_operation       = codec_vp9;
-        ok &= check(!vkvv::av1_visible_export_requires_copy(&vp9_resource), "non-AV1 stale shadow used the AV1 visible copy policy");
+        vkvv::clear_surface_visible_output_trace(&vp9_resource);
+        ok &= check(!vkvv::surface_resource_visible_export_requires_copy(&vp9_resource), "untraced visible shadow used the visible copy policy");
+        vkvv::set_surface_visible_output_trace(&vp9_resource, visible);
+        ok &= check(vkvv::surface_resource_visible_export_requires_copy(&vp9_resource), "generic visible shadow did not use the visible copy policy");
         return ok;
     }
 
@@ -363,11 +370,15 @@ namespace {
         resource.stream_id          = retained_stream;
         resource.codec_operation    = codec_av1;
         resource.content_generation = 12;
+        vkvv::CodecVisibleOutputTrace visible{};
+        visible.valid          = true;
+        visible.visible_output = true;
+        vkvv::set_surface_visible_output_trace(&resource, visible);
 
         ok &= check(!vkvv::surface_resource_requires_visible_publication(&resource, true), "unexported AV1 resource unexpectedly required visible publication");
         resource.import.external = true;
-        ok &= check(vkvv::surface_resource_requires_visible_publication(&resource, true), "external AV1 visible refresh did not require publication");
-        ok &= check(!vkvv::surface_resource_requires_visible_publication(&resource, false), "AV1 non-display refresh required visible publication");
+        ok &= check(vkvv::surface_resource_requires_visible_publication(&resource, true), "external visible refresh did not require publication");
+        ok &= check(!vkvv::surface_resource_requires_visible_publication(&resource, false), "non-display refresh required visible publication");
         resource.import.external = false;
 
         ok &= check(!vkvv::surface_resource_has_current_export_shadow(&resource), "empty shadow was treated as current");
@@ -447,13 +458,15 @@ namespace {
         resource.av1_visible_frame_to_show_map_idx = 3;
         vkvv::clear_surface_av1_visible_output_trace(&resource);
         ok &= check(!resource.av1_visible_output_trace_valid && !resource.av1_visible_show_frame && !resource.av1_visible_show_existing_frame &&
-                        resource.av1_visible_refresh_frame_flags == 0 && resource.av1_visible_frame_to_show_map_idx == -1,
+                        resource.av1_visible_refresh_frame_flags == 0 && resource.av1_visible_frame_to_show_map_idx == -1 && !resource.visible_output_trace.valid,
                     "AV1 visible output trace state was not fully cleared");
 
         vkvv::SurfaceResource vp9_resource = resource;
         vp9_resource.codec_operation       = codec_vp9;
         vp9_resource.import.external       = true;
-        ok &= check(!vkvv::surface_resource_requires_visible_publication(&vp9_resource, true), "non-AV1 refresh used the AV1 publication invariant");
+        ok &= check(!vkvv::surface_resource_requires_visible_publication(&vp9_resource, true), "untraced resource required visible publication");
+        vkvv::set_surface_visible_output_trace(&vp9_resource, visible);
+        ok &= check(vkvv::surface_resource_requires_visible_publication(&vp9_resource, true), "generic visible trace did not require visible publication");
         return ok;
     }
 
@@ -692,7 +705,7 @@ int main() {
     ok &= check_retained_role_policy();
     ok &= check_stats_and_accounting();
     ok &= check_av1_nondisplay_export_state_policy();
-    ok &= check_av1_visible_export_copy_policy();
+    ok &= check_visible_export_copy_policy();
     ok &= check_visible_output_publication_policy();
     ok &= check_private_decode_shadow_state_policy();
     ok &= check_exported_fd_state_policy();
