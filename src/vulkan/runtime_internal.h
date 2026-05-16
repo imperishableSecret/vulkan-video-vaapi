@@ -55,7 +55,6 @@ namespace vkvv {
         DecodedPixels,
         PixelProvenSeed,
         TransitionHold,
-        DebugPlaceholder,
     };
 
     const char* vkvv_export_role_name(VkvvExportRole role);
