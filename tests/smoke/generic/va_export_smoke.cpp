@@ -55,7 +55,7 @@ namespace {
         }
     }
 
-    [[maybe_unused]] bool descriptor_fds_are_open(const VADRMPRIMESurfaceDescriptor& descriptor, const char* label) {
+    bool descriptor_fds_are_open(const VADRMPRIMESurfaceDescriptor& descriptor, const char* label) {
         for (uint32_t i = 0; i < descriptor.num_objects; i++) {
             if (descriptor.objects[i].fd < 0 || fcntl(descriptor.objects[i].fd, F_GETFD) < 0) {
                 std::fprintf(stderr, "%s exported fd %u is not valid after surface destroy\n", label, i);
@@ -81,7 +81,7 @@ namespace {
         return true;
     }
 
-    [[maybe_unused]] bool export_and_validate(VADisplay display, VASurfaceID surface, VADRMPRIMESurfaceDescriptor* descriptor, const char* label) {
+    bool export_and_validate(VADisplay display, VASurfaceID surface, VADRMPRIMESurfaceDescriptor* descriptor, const char* label) {
         *descriptor = {};
         if (!check_va(vaExportSurfaceHandle(display, surface, VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, descriptor),
                       label)) {
@@ -90,19 +90,6 @@ namespace {
         std::printf("%s: objects=%u layers=%u fd=%d size=%u\n", label, descriptor->num_objects, descriptor->num_layers,
                     descriptor->num_objects > 0 ? descriptor->objects[0].fd : -1, descriptor->num_objects > 0 ? descriptor->objects[0].size : 0);
         return validate_nv12_descriptor(*descriptor, label);
-    }
-
-    bool expect_predecode_sampleable_export_refused(VADisplay display, VASurfaceID surface, const char* label) {
-        VADRMPRIMESurfaceDescriptor descriptor{};
-        VAStatus status =
-            vaExportSurfaceHandle(display, surface, VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2, VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &descriptor);
-        close_descriptor_fds(&descriptor);
-        if (status == VA_STATUS_SUCCESS) {
-            std::fprintf(stderr, "%s unexpectedly returned a sampleable placeholder fd\n", label);
-            return false;
-        }
-        std::printf("%s refused as expected: %s (%d)\n", label, vaErrorStr(status), status);
-        return true;
     }
 
 } // namespace
@@ -160,29 +147,46 @@ int main(void) {
         return 1;
     }
 
-    if (!expect_predecode_sampleable_export_refused(display, surface, "pre-decode export 0") ||
-        !expect_predecode_sampleable_export_refused(display, surface, "pre-decode export 1")) {
+    VADRMPRIMESurfaceDescriptor first_export{};
+    VADRMPRIMESurfaceDescriptor second_export{};
+    if (!export_and_validate(display, surface, &first_export, "pre-decode export 0") || !export_and_validate(display, surface, &second_export, "pre-decode export 1")) {
+        close_descriptor_fds(&first_export);
+        close_descriptor_fds(&second_export);
         cleanup();
         return 1;
     }
 
     if (!check_va(vaDestroySurfaces(display, &surface, 1), "vaDestroySurfaces[0]")) {
+        close_descriptor_fds(&first_export);
+        close_descriptor_fds(&second_export);
         cleanup();
         return 1;
     }
     surface = VA_INVALID_SURFACE;
+
+    if (!descriptor_fds_are_open(first_export, "first export") || !descriptor_fds_are_open(second_export, "second export")) {
+        close_descriptor_fds(&first_export);
+        close_descriptor_fds(&second_export);
+        cleanup();
+        return 1;
+    }
+    close_descriptor_fds(&first_export);
+    close_descriptor_fds(&second_export);
 
     if (!check_va(vaCreateSurfaces(display, VA_RT_FORMAT_YUV420, smoke_width, smoke_height, &surface, 1, nullptr, 0), "vaCreateSurfaces[1]")) {
         cleanup();
         return 1;
     }
 
-    if (!expect_predecode_sampleable_export_refused(display, surface, "recreated surface export")) {
+    VADRMPRIMESurfaceDescriptor recreated_export{};
+    if (!export_and_validate(display, surface, &recreated_export, "recreated surface export")) {
+        close_descriptor_fds(&recreated_export);
         cleanup();
         return 1;
     }
+    close_descriptor_fds(&recreated_export);
 
     cleanup();
-    std::printf("VA sampleable predecode export refusal smoke passed\n");
+    std::printf("VA export lifecycle smoke passed\n");
     return 0;
 }

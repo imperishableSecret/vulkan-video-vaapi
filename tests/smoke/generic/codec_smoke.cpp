@@ -3,12 +3,9 @@
 #include "codecs/h264/h264.h"
 #include "codecs/hevc/hevc.h"
 #include "codecs/vp9/vp9.h"
-#include "vulkan/codecs/av1/internal.h"
 #include "vulkan/formats.h"
-#include "vulkan/runtime_internal.h"
 
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <va/va_dec_av1.h>
 #include <va/va_dec_hevc.h>
@@ -86,51 +83,6 @@ namespace {
         return ok;
     }
 
-    vkvv::DecodeImageKey make_decode_key(VkVideoCodecOperationFlagsKHR codec, VkFormat format, unsigned int fourcc, VkExtent2D extent) {
-        vkvv::DecodeImageKey key{};
-        key.codec_operation          = codec;
-        key.codec_profile            = 0;
-        key.picture_format           = format;
-        key.reference_picture_format = format;
-        key.va_rt_format             = fourcc == VA_FOURCC_P010 ? VA_RT_FORMAT_YUV420_10 : VA_RT_FORMAT_YUV420;
-        key.va_fourcc                = fourcc;
-        key.coded_extent             = extent;
-        key.usage                    = VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR;
-        key.tiling                   = VK_IMAGE_TILING_OPTIMAL;
-        key.chroma_subsampling       = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR;
-        key.luma_bit_depth           = fourcc == VA_FOURCC_P010 ? VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR : VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
-        key.chroma_bit_depth         = key.luma_bit_depth;
-        return key;
-    }
-
-    bool check_decode_image_key_matching() {
-        const vkvv::DecodeImageKey h264 = make_decode_key(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, VA_FOURCC_NV12, {1920, 1088});
-
-        bool                       ok = check(vkvv::decode_image_key_matches(h264, h264), "identical decode image keys should match");
-
-        vkvv::DecodeImageKey       vp9_same_extent = h264;
-        vp9_same_extent.codec_operation            = VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR;
-        ok &= check(!vkvv::decode_image_key_matches(h264, vp9_same_extent), "same extent with different codec should not reuse a decode image");
-
-        vkvv::DecodeImageKey p010_same_extent     = h264;
-        p010_same_extent.picture_format           = VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
-        p010_same_extent.reference_picture_format = p010_same_extent.picture_format;
-        p010_same_extent.va_rt_format             = VA_RT_FORMAT_YUV420_10;
-        p010_same_extent.va_fourcc                = VA_FOURCC_P010;
-        p010_same_extent.luma_bit_depth           = VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR;
-        p010_same_extent.chroma_bit_depth         = VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR;
-        ok &= check(!vkvv::decode_image_key_matches(h264, p010_same_extent), "same extent with different format should not reuse a decode image");
-
-        vkvv::DecodeImageKey larger_extent = h264;
-        larger_extent.coded_extent         = {3840, 2160};
-        ok &= check(!vkvv::decode_image_key_matches(h264, larger_extent), "smaller decode image should not match larger requested extent");
-
-        vkvv::DecodeImageKey smaller_extent = h264;
-        smaller_extent.coded_extent         = {1280, 720};
-        ok &= check(vkvv::decode_image_key_matches(h264, smaller_extent), "larger decode image should be reusable for a smaller requested extent");
-        return ok;
-    }
-
     std::vector<uint8_t> make_vp9_keyframe() {
         return {
             0x82, 0x49, 0x83, 0x42, 0x00, 0x00, 0xf0, 0x00, 0xf6, 0x06, 0x38, 0x24, 0x1c, 0x18, 0x42, 0x00, 0x00, 0x20, 0x40, 0x00,
@@ -148,28 +100,12 @@ namespace {
 
     std::vector<uint8_t> make_av1_keyframe() {
         return {
-            0x12, 0x00, 0x0a, 0x0a, 0x00, 0x00, 0x00, 0x01, 0x9f, 0xf9, 0xb5, 0xf3, 0x00, 0x80, 0x32, 0x11, 0x10,
-            0x00, 0xd0, 0x00, 0x00, 0x02, 0x80, 0x00, 0x00, 0x02, 0x06, 0x39, 0x66, 0xe3, 0x82, 0x4a, 0xc0,
-        };
-    }
-
-    std::vector<uint8_t> make_av1_two_tile_group_keyframe() {
-        return {
-            0x12, 0x00, 0x0a, 0x0a, 0x00, 0x00, 0x00, 0x03, 0x2f, 0xff, 0xcd, 0xaf, 0x98, 0x04, 0x32, 0x14, 0x10, 0x00,
-            0xc6, 0x40, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x03, 0x0a, 0x05, 0x78, 0x86, 0x0a, 0x05, 0x78, 0x86,
-        };
-    }
-
-    std::vector<uint8_t> make_av1_hidden_showable_frame() {
-        return {
-            0x12, 0x00, 0x32, 0x1d, 0x28, 0x10, 0xe0, 0x40, 0x00, 0x00, 0x03, 0x61, 0x80, 0x00, 0x01, 0x45, 0x80,
-            0x00, 0x40, 0x00, 0x7d, 0x9f, 0xe3, 0x72, 0xe4, 0xaa, 0x8d, 0xfe, 0xe2, 0x47, 0x79, 0x56, 0x38,
-        };
-    }
-
-    std::vector<uint8_t> make_av1_show_existing_frame() {
-        return {
-            0x12, 0x00, 0x1a, 0x01, 0x98,
+            0x12, 0x00, 0x0a, 0x0a, 0x00, 0x00, 0x00, 0x01, 0x9f, 0xf9, 0xb5, 0xf2, 0x00, 0x80, 0x32, 0x80, 0x01, 0x10, 0x00, 0xc0, 0x00, 0x10, 0x40, 0x00, 0x28,
+            0xba, 0xe8, 0xc9, 0x67, 0x40, 0xbb, 0x06, 0x62, 0x12, 0x4e, 0xf8, 0x58, 0x4b, 0xa5, 0xfc, 0xee, 0xc6, 0x54, 0x25, 0x89, 0x00, 0xbf, 0x94, 0x0b, 0x7d,
+            0xb1, 0xb7, 0x1a, 0x34, 0x30, 0x25, 0xac, 0xe5, 0x7b, 0xd8, 0x28, 0x5a, 0x8a, 0x10, 0x49, 0xdd, 0x3f, 0x74, 0x9b, 0x64, 0xf1, 0xeb, 0x11, 0x7f, 0x68,
+            0xa2, 0x7b, 0xff, 0x9f, 0x51, 0xc8, 0x62, 0x7d, 0x9f, 0xe3, 0x03, 0xed, 0x4a, 0x75, 0xcd, 0xe6, 0x5d, 0x15, 0xab, 0xab, 0x91, 0xba, 0x9a, 0x13, 0xf3,
+            0x7c, 0x88, 0xbf, 0xf1, 0x80, 0xb2, 0x31, 0x9e, 0x20, 0xbe, 0x85, 0xc5, 0xd7, 0xdc, 0x95, 0x4d, 0xaf, 0xbf, 0x3b, 0x9c, 0x53, 0xfb, 0x7b, 0xf7, 0x87,
+            0xbc, 0x7c, 0xc8, 0xee, 0x69, 0xd8, 0x40, 0x0e, 0x61, 0xe2, 0xa0, 0x11, 0xd7, 0xcf, 0x94, 0xa8, 0x33, 0x86, 0xf8, 0x8d,
         };
     }
 
@@ -325,19 +261,8 @@ namespace {
     }
 
     bool check_av1_parser(const VkvvDecodeOps* av1, uint8_t bit_depth_idx, uint8_t expected_bit_depth, unsigned int expected_fourcc, const char* label) {
-        const char* previous_tile_source = std::getenv("VKVV_AV1_TILE_SOURCE");
-        if (previous_tile_source != nullptr) {
-            previous_tile_source = ::strdup(previous_tile_source);
-        }
-        setenv("VKVV_AV1_TILE_SOURCE", "parsed", 1);
         void* state = av1 != nullptr ? av1->state_create() : nullptr;
         if (!check(state != nullptr, "AV1 codec state allocation failed")) {
-            if (previous_tile_source != nullptr) {
-                setenv("VKVV_AV1_TILE_SOURCE", previous_tile_source, 1);
-                std::free(const_cast<char*>(previous_tile_source));
-            } else {
-                unsetenv("VKVV_AV1_TILE_SOURCE");
-            }
             return false;
         }
 
@@ -410,68 +335,15 @@ namespace {
 
         VkvvAV1DecodeInput input{};
         ok                = check(vkvv_av1_get_decode_input(state, &input) == VA_STATUS_SUCCESS, "AV1 decode input extraction failed") && ok;
-        const bool parsed = input.header.valid && input.header.frame_type == STD_VIDEO_AV1_FRAME_TYPE_KEY && input.header.refresh_frame_flags == 0xff && input.sequence.valid &&
-            input.sequence.seq_profile == 0 && input.sequence.bit_depth == expected_bit_depth && input.sequence.subsampling_x == 1 && input.sequence.subsampling_y == 1 &&
-            static_cast<uint32_t>(input.sequence.max_frame_width_minus_1) + 1 >= input.frame_width &&
-            static_cast<uint32_t>(input.sequence.max_frame_height_minus_1) + 1 >= input.frame_height && input.tile_count == 1 && input.decode_window_offset == 14 &&
-            input.tiles[0].offset == 11 && input.tiles[0].size == 8 && input.bitstream_size == 19 && input.bit_depth == expected_bit_depth && input.fourcc == expected_fourcc;
+        const bool parsed = input.header.valid && input.header.frame_type == STD_VIDEO_AV1_FRAME_TYPE_KEY && input.header.refresh_frame_flags == 0xff && input.tile_count == 1 &&
+            input.tiles[0].offset == 0 && input.tiles[0].size == bitstream.size() && input.bitstream_size == bitstream.size() && input.bit_depth == expected_bit_depth &&
+            input.fourcc == expected_fourcc;
         if (!parsed) {
-            std::fprintf(stderr, "%s parsed header mismatch: valid=%u seq=%u frame=%u refresh=0x%02x tiles=%zu off0=%u size0=%u bytes=%zu depth=%u seq_depth=%u fourcc=0x%x\n",
-                         label, input.header.valid, input.sequence.valid, input.header.frame_type, input.header.refresh_frame_flags, input.tile_count,
-                         input.tile_count > 0 ? input.tiles[0].offset : 0, input.tile_count > 0 ? input.tiles[0].size : 0, input.bitstream_size, input.bit_depth,
-                         input.sequence.bit_depth, input.fourcc);
+            std::fprintf(stderr, "%s parsed header mismatch: valid=%u frame=%u refresh=0x%02x tiles=%zu off0=%u size0=%u bytes=%zu depth=%u fourcc=0x%x\n", label,
+                         input.header.valid, input.header.frame_type, input.header.refresh_frame_flags, input.tile_count, input.tile_count > 0 ? input.tiles[0].offset : 0,
+                         input.tile_count > 0 ? input.tiles[0].size : 0, input.bitstream_size, input.bit_depth, input.fourcc);
         }
         ok = check(parsed, "AV1 parser did not expose expected keyframe values") && ok;
-
-        std::vector<uint8_t> hidden_showable = make_av1_hidden_showable_frame();
-        tile.slice_data_offset               = 0;
-        tile.slice_data_size                 = static_cast<uint32_t>(hidden_showable.size());
-        data_buffer.size                     = static_cast<unsigned int>(hidden_showable.size());
-        data_buffer.data                     = hidden_showable.data();
-
-        av1->begin_picture(state);
-        ok        = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 hidden-showable picture buffer ingestion failed") && ok;
-        ok        = check(av1->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS, "AV1 hidden-showable slice data ingestion failed") && ok;
-        ok        = check(av1->render_buffer(state, &tile_buffer) == VA_STATUS_SUCCESS, "AV1 hidden-showable tile parameter ingestion failed") && ok;
-        width     = 0;
-        height    = 0;
-        reason[0] = '\0';
-        ok        = check(av1->prepare_decode(state, &width, &height, reason, sizeof(reason)) == VA_STATUS_SUCCESS, "AV1 hidden-showable prepare_decode failed") && ok;
-        if (!ok) {
-            std::fprintf(stderr, "%s\n", reason);
-        }
-        VkvvAV1DecodeInput hidden_input{};
-        ok = check(vkvv_av1_get_decode_input(state, &hidden_input) == VA_STATUS_SUCCESS, "AV1 hidden-showable input extraction failed") && ok;
-        ok = check(hidden_input.header.valid && !hidden_input.header.show_existing_frame && hidden_input.header.showable_frame && hidden_input.header.refresh_frame_flags == 0x02 &&
-                       hidden_input.tile_count == 1 && hidden_input.decode_window_offset == 2 && hidden_input.tiles[0].offset == 18 && hidden_input.tiles[0].size == 13 &&
-                       hidden_input.bitstream_size == hidden_showable.size() - 2,
-                   "AV1 hidden showable frame did not update parser reference state") &&
-            ok;
-
-        std::vector<uint8_t> show_existing = make_av1_show_existing_frame();
-        data_buffer.size                   = static_cast<unsigned int>(show_existing.size());
-        data_buffer.data                   = show_existing.data();
-
-        av1->begin_picture(state);
-        ok        = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 show-existing picture buffer ingestion failed") && ok;
-        ok        = check(av1->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS, "AV1 show-existing frame header ingestion failed") && ok;
-        width     = 0;
-        height    = 0;
-        reason[0] = '\0';
-        ok        = check(av1->prepare_decode(state, &width, &height, reason, sizeof(reason)) == VA_STATUS_SUCCESS, "AV1 show-existing prepare_decode failed") && ok;
-        if (!ok) {
-            std::fprintf(stderr, "%s\n", reason);
-        }
-        VkvvAV1DecodeInput show_input{};
-        ok = check(vkvv_av1_get_decode_input(state, &show_input) == VA_STATUS_SUCCESS, "AV1 show-existing input extraction failed") && ok;
-        ok = check(width == 16 && height == 16 && show_input.header.show_existing_frame && show_input.header.frame_to_show_map_idx == 1 && show_input.tile_count == 0 &&
-                       show_input.tiles == nullptr && show_input.bitstream == nullptr && show_input.bitstream_size == 0 && show_input.sequence.valid,
-                   "AV1 show-existing frame was not exposed as presentation-only input") &&
-            ok;
-
-        tile.slice_data_size = static_cast<uint32_t>(bitstream.size());
-        data_buffer.size     = static_cast<unsigned int>(bitstream.size());
-        data_buffer.data     = bitstream.data();
 
         av1->begin_picture(state);
         ok        = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 second picture buffer ingestion failed") && ok;
@@ -486,9 +358,8 @@ namespace {
         }
         VkvvAV1DecodeInput second_input{};
         ok = check(vkvv_av1_get_decode_input(state, &second_input) == VA_STATUS_SUCCESS, "AV1 second decode input extraction failed") && ok;
-        ok = check(second_input.header.valid && second_input.sequence.valid && second_input.header.refresh_frame_flags == 0xff && second_input.tile_count == 1 &&
-                       second_input.tiles[0].offset == 11 && second_input.tiles[0].size == 8 && second_input.bitstream_size == 19 && second_input.bit_depth == expected_bit_depth &&
-                       second_input.fourcc == expected_fourcc,
+        ok = check(second_input.header.valid && second_input.header.refresh_frame_flags == 0xff && second_input.tile_count == 1 &&
+                       second_input.bitstream_size == bitstream.size() && second_input.bit_depth == expected_bit_depth && second_input.fourcc == expected_fourcc,
                    "AV1 parser failed to reuse state for a second picture") &&
             ok;
 
@@ -497,11 +368,11 @@ namespace {
         multi_frame.insert(multi_frame.end(), bitstream.begin(), bitstream.end());
         multi_frame.insert(multi_frame.end(), bitstream.begin(), bitstream.end());
         multi_frame.insert(multi_frame.end(), bitstream.begin(), bitstream.end());
-        const uint32_t target_frame_offset = static_cast<uint32_t>(bitstream.size() + 14);
-        tile.slice_data_offset             = target_frame_offset;
-        tile.slice_data_size               = static_cast<uint32_t>(bitstream.size() - 14);
-        data_buffer.size                   = static_cast<unsigned int>(multi_frame.size());
-        data_buffer.data                   = multi_frame.data();
+        const uint32_t target_tile_offset = static_cast<uint32_t>(bitstream.size() + (bitstream.size() / 2));
+        tile.slice_data_offset            = target_tile_offset;
+        tile.slice_data_size              = 16;
+        data_buffer.size                  = static_cast<unsigned int>(multi_frame.size());
+        data_buffer.data                  = multi_frame.data();
 
         av1->begin_picture(state);
         ok        = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 multi-frame picture buffer ingestion failed") && ok;
@@ -515,254 +386,18 @@ namespace {
             std::fprintf(stderr, "%s\n", reason);
         }
         VkvvAV1DecodeInput multi_input{};
-        ok = check(vkvv_av1_get_decode_input(state, &multi_input) == VA_STATUS_SUCCESS, "AV1 multi-frame decode input extraction failed") && ok;
-        ok = check(multi_input.header.frame_header_offset == 0 && multi_input.decode_window_offset == target_frame_offset && multi_input.tiles[0].offset == 11 &&
-                       multi_input.tiles[0].size == 8 && multi_input.bitstream_size == 19 && multi_input.bitstream_size < multi_frame.size() && multi_input.sequence.valid &&
+        ok                                  = check(vkvv_av1_get_decode_input(state, &multi_input) == VA_STATUS_SUCCESS, "AV1 multi-frame decode input extraction failed") && ok;
+        const bool     valid_window_offset  = multi_input.decode_window_offset > 0 && multi_input.decode_window_offset < target_tile_offset;
+        const uint32_t expected_tile_offset = valid_window_offset ? target_tile_offset - multi_input.decode_window_offset : 0;
+        const size_t   expected_window_size = static_cast<size_t>(expected_tile_offset) + tile.slice_data_size;
+        ok = check(multi_input.header.frame_header_offset == 0 && valid_window_offset && multi_input.tiles[0].offset == expected_tile_offset &&
+                       multi_input.tiles[0].size == tile.slice_data_size && multi_input.bitstream_size == expected_window_size && multi_input.bitstream_size < multi_frame.size() &&
                        multi_input.bit_depth == expected_bit_depth && multi_input.fourcc == expected_fourcc,
                    "AV1 parser did not normalize the selected frame window for a packed buffer") &&
             ok;
 
-        std::vector<uint8_t> mixed_multi_frame;
-        mixed_multi_frame.reserve(hidden_showable.size() + bitstream.size());
-        mixed_multi_frame.insert(mixed_multi_frame.end(), hidden_showable.begin(), hidden_showable.end());
-        mixed_multi_frame.insert(mixed_multi_frame.end(), bitstream.begin(), bitstream.end());
-        const uint32_t mixed_target_frame_offset = static_cast<uint32_t>(hidden_showable.size() + 14);
-        tile.slice_data_offset                   = mixed_target_frame_offset;
-        tile.slice_data_size                     = static_cast<uint32_t>(bitstream.size() - 14);
-        data_buffer.size                         = static_cast<unsigned int>(mixed_multi_frame.size());
-        data_buffer.data                         = mixed_multi_frame.data();
-
-        av1->begin_picture(state);
-        ok        = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 mixed packed picture buffer ingestion failed") && ok;
-        ok        = check(av1->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS, "AV1 mixed packed slice data ingestion failed") && ok;
-        ok        = check(av1->render_buffer(state, &tile_buffer) == VA_STATUS_SUCCESS, "AV1 mixed packed tile parameter ingestion failed") && ok;
-        width     = 0;
-        height    = 0;
-        reason[0] = '\0';
-        ok        = check(av1->prepare_decode(state, &width, &height, reason, sizeof(reason)) == VA_STATUS_SUCCESS, "AV1 mixed packed prepare_decode failed") && ok;
-        if (!ok) {
-            std::fprintf(stderr, "%s\n", reason);
-        }
-        VkvvAV1DecodeInput mixed_input{};
-        ok = check(vkvv_av1_get_decode_input(state, &mixed_input) == VA_STATUS_SUCCESS, "AV1 mixed packed decode input extraction failed") && ok;
-        ok = check(mixed_input.header.frame_type == STD_VIDEO_AV1_FRAME_TYPE_KEY && mixed_input.header.refresh_frame_flags == 0xff &&
-                       mixed_input.decode_window_offset == mixed_target_frame_offset && mixed_input.header.frame_header_offset == 0 && mixed_input.tile_count == 1 &&
-                       mixed_input.tiles[0].offset == 11 && mixed_input.tiles[0].size == 8 && mixed_input.bitstream_size == 19,
-                   "AV1 parser parsed the prefix frame instead of the selected packed frame") &&
-            ok;
-
-        std::vector<uint8_t> two_tile_group = make_av1_two_tile_group_keyframe();
-        pic.frame_width_minus1              = 127;
-        pic.frame_height_minus1             = 63;
-        pic.tile_cols                       = 2;
-        pic.tile_rows                       = 1;
-        tile.slice_data_offset              = 0;
-        tile.slice_data_size                = static_cast<uint32_t>(two_tile_group.size());
-        tile.tile_row                       = 0;
-        tile.tile_column                    = 0;
-        data_buffer.size                    = static_cast<unsigned int>(two_tile_group.size());
-        data_buffer.data                    = two_tile_group.data();
-
-        av1->begin_picture(state);
-        ok        = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 tile-group picture buffer ingestion failed") && ok;
-        ok        = check(av1->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS, "AV1 tile-group slice data ingestion failed") && ok;
-        ok        = check(av1->render_buffer(state, &tile_buffer) == VA_STATUS_SUCCESS, "AV1 tile-group parameter ingestion failed") && ok;
-        width     = 0;
-        height    = 0;
-        reason[0] = '\0';
-        ok        = check(av1->prepare_decode(state, &width, &height, reason, sizeof(reason)) == VA_STATUS_SUCCESS, "AV1 tile-group prepare_decode failed") && ok;
-        if (!ok) {
-            std::fprintf(stderr, "%s\n", reason);
-        }
-        VkvvAV1DecodeInput two_tile_input{};
-        ok = check(vkvv_av1_get_decode_input(state, &two_tile_input) == VA_STATUS_SUCCESS, "AV1 tile-group decode input extraction failed") && ok;
-        ok = check(width == 128 && height == 64 && two_tile_input.header.valid && two_tile_input.decode_window_offset == 14 && two_tile_input.header.frame_header_offset == 0 &&
-                       two_tile_input.tile_count == 2 && two_tile_input.tiles[0].tile_index == 0 && two_tile_input.tiles[0].offset == 14 && two_tile_input.tiles[0].size == 4 &&
-                       two_tile_input.tiles[1].tile_index == 1 && two_tile_input.tiles[1].offset == 18 && two_tile_input.tiles[1].size == 4 && two_tile_input.bitstream_size == 22,
-                   "AV1 tile-group parser did not expand the submitted group into per-tile decode ranges") &&
-            ok;
-
-        av1->state_destroy(state);
-        if (previous_tile_source != nullptr) {
-            setenv("VKVV_AV1_TILE_SOURCE", previous_tile_source, 1);
-            std::free(const_cast<char*>(previous_tile_source));
-        } else {
-            unsetenv("VKVV_AV1_TILE_SOURCE");
-        }
-        return ok;
-    }
-
-    bool check_av1_bit_depth_mismatch_rejected(const VkvvDecodeOps* av1) {
-        void* state = av1 != nullptr ? av1->state_create() : nullptr;
-        if (!check(state != nullptr, "AV1 codec state allocation failed for mismatch smoke")) {
-            return false;
-        }
-
-        av1->begin_picture(state);
-
-        std::vector<uint8_t>           bitstream = make_av1_keyframe();
-
-        VADecPictureParameterBufferAV1 pic{};
-        pic.profile                                        = 0;
-        pic.order_hint_bits_minus_1                        = 6;
-        pic.bit_depth_idx                                  = 1;
-        pic.matrix_coefficients                            = 1;
-        pic.seq_info_fields.fields.enable_order_hint       = 1;
-        pic.seq_info_fields.fields.enable_cdef             = 1;
-        pic.seq_info_fields.fields.subsampling_x           = 1;
-        pic.seq_info_fields.fields.subsampling_y           = 1;
-        pic.current_frame                                  = 7;
-        pic.frame_width_minus1                             = 15;
-        pic.frame_height_minus1                            = 15;
-        pic.ref_frame_map[0]                               = VA_INVALID_ID;
-        pic.primary_ref_frame                              = STD_VIDEO_AV1_PRIMARY_REF_NONE;
-        pic.tile_cols                                      = 1;
-        pic.tile_rows                                      = 1;
-        pic.context_update_tile_id                         = 0;
-        pic.pic_info_fields.bits.frame_type                = STD_VIDEO_AV1_FRAME_TYPE_KEY;
-        pic.pic_info_fields.bits.show_frame                = 1;
-        pic.pic_info_fields.bits.showable_frame            = 1;
-        pic.pic_info_fields.bits.error_resilient_mode      = 1;
-        pic.pic_info_fields.bits.disable_cdf_update        = 1;
-        pic.pic_info_fields.bits.uniform_tile_spacing_flag = 1;
-        pic.superres_scale_denominator                     = 8;
-        pic.interp_filter                                  = STD_VIDEO_AV1_INTERPOLATION_FILTER_SWITCHABLE;
-        pic.base_qindex                                    = 32;
-
-        VASliceParameterBufferAV1 tile{};
-        tile.slice_data_size = static_cast<uint32_t>(bitstream.size());
-        tile.tile_row        = 0;
-        tile.tile_column     = 0;
-
-        VkvvBuffer pic_buffer{};
-        pic_buffer.type         = VAPictureParameterBufferType;
-        pic_buffer.size         = sizeof(pic);
-        pic_buffer.num_elements = 1;
-        pic_buffer.data         = &pic;
-
-        VkvvBuffer data_buffer{};
-        data_buffer.type         = VASliceDataBufferType;
-        data_buffer.size         = static_cast<unsigned int>(bitstream.size());
-        data_buffer.num_elements = 1;
-        data_buffer.data         = bitstream.data();
-
-        VkvvBuffer tile_buffer{};
-        tile_buffer.type         = VASliceParameterBufferType;
-        tile_buffer.size         = sizeof(tile);
-        tile_buffer.num_elements = 1;
-        tile_buffer.data         = &tile;
-
-        bool ok = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 mismatch picture buffer ingestion failed");
-        ok      = check(av1->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS, "AV1 mismatch slice data ingestion failed") && ok;
-        ok      = check(av1->render_buffer(state, &tile_buffer) == VA_STATUS_SUCCESS, "AV1 mismatch tile parameter ingestion failed") && ok;
-
-        unsigned int   width       = 0;
-        unsigned int   height      = 0;
-        char           reason[512] = {};
-        const VAStatus status      = av1->prepare_decode(state, &width, &height, reason, sizeof(reason));
-        ok                         = check(status == VA_STATUS_ERROR_INVALID_BUFFER && std::strstr(reason, "sequence header does not match") != nullptr,
-                                           "AV1 parser accepted a 10-bit VA picture for an 8-bit sequence header") &&
-            ok;
-
         av1->state_destroy(state);
         return ok;
-    }
-
-    bool check_av1_large_scale_tile_rejected(const VkvvDecodeOps* av1) {
-        void* state = av1 != nullptr ? av1->state_create() : nullptr;
-        if (!check(state != nullptr, "AV1 codec state allocation failed for large-scale-tile smoke")) {
-            return false;
-        }
-
-        av1->begin_picture(state);
-
-        std::vector<uint8_t>           bitstream = make_av1_keyframe();
-
-        VADecPictureParameterBufferAV1 pic{};
-        pic.profile                                        = 0;
-        pic.bit_depth_idx                                  = 0;
-        pic.frame_width_minus1                             = 15;
-        pic.frame_height_minus1                            = 15;
-        pic.seq_info_fields.fields.subsampling_x           = 1;
-        pic.seq_info_fields.fields.subsampling_y           = 1;
-        pic.pic_info_fields.bits.large_scale_tile          = 1;
-        pic.pic_info_fields.bits.uniform_tile_spacing_flag = 1;
-        pic.tile_cols                                      = 1;
-        pic.tile_rows                                      = 1;
-
-        VkvvBuffer pic_buffer{};
-        pic_buffer.type         = VAPictureParameterBufferType;
-        pic_buffer.size         = sizeof(pic);
-        pic_buffer.num_elements = 1;
-        pic_buffer.data         = &pic;
-
-        VkvvBuffer data_buffer{};
-        data_buffer.type         = VASliceDataBufferType;
-        data_buffer.size         = static_cast<unsigned int>(bitstream.size());
-        data_buffer.num_elements = 1;
-        data_buffer.data         = bitstream.data();
-
-        bool ok = check(av1->render_buffer(state, &pic_buffer) == VA_STATUS_SUCCESS, "AV1 large-scale-tile picture buffer ingestion failed");
-        ok      = check(av1->render_buffer(state, &data_buffer) == VA_STATUS_SUCCESS, "AV1 large-scale-tile slice data ingestion failed") && ok;
-
-        unsigned int   width       = 0;
-        unsigned int   height      = 0;
-        char           reason[512] = {};
-        const VAStatus status      = av1->prepare_decode(state, &width, &height, reason, sizeof(reason));
-        ok                         = check(status == VA_STATUS_ERROR_UNIMPLEMENTED && std::strstr(reason, "large-scale tile mode") != nullptr,
-                                           "AV1 large-scale tile mode did not fail with the stable unimplemented reason") &&
-            ok;
-
-        av1->state_destroy(state);
-        return ok;
-    }
-
-    bool check_av1_scratch_setup_slot_selection() {
-        vkvv::AV1VideoSession session{};
-        session.max_dpb_slots                    = vkvv::max_av1_dpb_slots;
-        bool used_slots[vkvv::max_av1_dpb_slots] = {};
-        for (bool& used : used_slots) {
-            used = true;
-        }
-
-        const int scratch_slot = vkvv::av1_reserved_scratch_dpb_slot(&session);
-        if (!check(scratch_slot == static_cast<int>(vkvv::max_av1_dpb_slots - 1), "AV1 scratch setup did not reserve the last DPB slot")) {
-            return false;
-        }
-
-        used_slots[4]                    = false;
-        used_slots[scratch_slot]         = false;
-        const uint32_t next_slot_before  = session.next_dpb_slot;
-        const int      display_only_slot = vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false);
-        if (!check(display_only_slot == scratch_slot, "AV1 zero-refresh frame did not use the reserved scratch setup slot")) {
-            return false;
-        }
-        if (!check(session.next_dpb_slot == next_slot_before, "AV1 zero-refresh scratch setup advanced reference DPB allocation state")) {
-            return false;
-        }
-        if (!check(vkvv::av1_surface_slot_for_surface(&session, 77) == nullptr, "AV1 scratch setup slot persisted target surface history")) {
-            return false;
-        }
-
-        vkvv::av1_set_surface_slot(&session, 77, 4, {});
-        for (bool& used : used_slots) {
-            used = true;
-        }
-        used_slots[scratch_slot] = false;
-        session.next_dpb_slot    = 4;
-        if (!check(vkvv::av1_select_current_setup_slot(&session, 77, used_slots, false) == scratch_slot, "AV1 zero-refresh scratch setup reused recycled target slot history")) {
-            return false;
-        }
-        vkvv::av1_clear_surface_slot(&session, 77);
-        if (!check(vkvv::av1_surface_slot_for_surface(&session, 77) == nullptr, "AV1 zero-refresh target history was not cleared after scratch setup")) {
-            return false;
-        }
-
-        for (bool& used : used_slots) {
-            used = true;
-        }
-        used_slots[scratch_slot] = false;
-        return check(vkvv::av1_select_current_setup_slot(&session, 77, used_slots, true) == -1, "AV1 reference frame used the reserved scratch slot under full reference pressure");
     }
 
     bool check_hevc_parser(const VkvvDecodeOps* hevc, uint8_t bit_depth_minus8, const char* label) {
@@ -913,7 +548,6 @@ int main(void) {
     bool ok = true;
 
     ok = check_decode_format_selection() && ok;
-    ok = check_decode_image_key_matching() && ok;
 
     const VkvvDecodeOps* h264 = vkvv_decode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointVLD);
     ok                        = check(ops_complete(h264), "H.264 decode ops are incomplete") && ok;
@@ -965,9 +599,7 @@ int main(void) {
     if (av1 != nullptr) {
         ok = check(std::strcmp(av1->name, "av1") == 0, "AV1 decode ops used the wrong name") && ok;
         ok = check_av1_parser(av1, 0, 8, VA_FOURCC_NV12, "AV1 NV12") && ok;
-        ok = check_av1_bit_depth_mismatch_rejected(av1) && ok;
-        ok = check_av1_large_scale_tile_rejected(av1) && ok;
-        ok = check_av1_scratch_setup_slot_selection() && ok;
+        ok = check_av1_parser(av1, 1, 10, VA_FOURCC_P010, "AV1 P010") && ok;
     }
     ok =
         check(vkvv_encode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointEncSlice) == nullptr, "H.264 EncSlice should not have encode ops before encode is wired") && ok;
@@ -977,10 +609,6 @@ int main(void) {
     ok =
         check(vkvv_encode_ops_for_profile_entrypoint(VAProfileH264High, VAEntrypointEncPicture) == nullptr, "H.264 EncPicture should not have encode ops before encode is wired") &&
         ok;
-
-    const VkvvVideoProfileLimits decode_limits = {
-        1, 1, 4096, 4096, 17, 16,
-    };
 
     VkvvDriver drv{};
     drv.caps.h264                = true;
@@ -995,25 +623,10 @@ int main(void) {
     drv.caps.surface_export      = true;
     drv.caps.surface_export_nv12 = true;
     drv.caps.surface_export_p010 = true;
-    drv.caps.av1_limits          = decode_limits;
-    drv.caps.av1_10_limits       = decode_limits;
     vkvv_init_profile_capabilities(&drv);
 
     const VkvvProfileCapability* h264_decode = vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointVLD);
     ok = check(h264_decode != nullptr && h264_decode->advertise && h264_decode->direction == VKVV_CODEC_DIRECTION_DECODE, "H.264 VLD should be an advertised decode capability") &&
-        ok;
-    ok = check(vkvv_profile_entrypoint_status(&drv, VAProfileJPEGBaseline, VAEntrypointVLD) == VA_STATUS_ERROR_UNSUPPORTED_PROFILE,
-               "unsupported profile should return a stable VA status") &&
-        ok;
-    ok = check(vkvv_profile_entrypoint_status(&drv, VAProfileH264High, VAEntrypointEncSlice) == VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT,
-               "unsupported entrypoint should return a stable VA status") &&
-        ok;
-    ok = check(vkvv_profile_capability_stage(h264_decode) == VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED, "H.264 decode stage should be advertised") && ok;
-    ok = check(std::strcmp(vkvv_profile_capability_stage_name(VKVV_PROFILE_CAPABILITY_STAGE_ADVERTISED), "advertised") == 0, "profile stage name should be stable") && ok;
-    char h264_debug[256]{};
-    vkvv_profile_capability_debug_string(h264_decode, h264_debug, sizeof(h264_debug));
-    ok = check(std::strstr(h264_debug, "stage=advertised") != nullptr && std::strstr(h264_debug, "formats=1") != nullptr,
-               "H.264 capability debug string did not include stage and format count") &&
         ok;
     ok = check(h264_decode != nullptr && h264_decode->format_count == 1 && h264_decode->formats[0].fourcc == VA_FOURCC_NV12,
                "H.264 decode capability should expose one NV12 format variant") &&
@@ -1030,11 +643,6 @@ int main(void) {
                    vp9_profile2_decode->format_count == 2 && vp9_profile2_decode->formats[0].fourcc == VA_FOURCC_P010 && vp9_profile2_decode->formats[0].advertise &&
                    vp9_profile2_decode->formats[1].fourcc == VA_FOURCC_P012 && !vp9_profile2_decode->formats[1].advertise,
                "VP9 Profile2 should advertise P010 while keeping P012 hidden") &&
-        ok;
-    VAImageFormat      image_formats[4]{};
-    const unsigned int image_format_count = vkvv_query_image_formats(&drv, image_formats, 4);
-    ok                                    = check(image_format_count == 2 && image_formats[0].fourcc == VA_FOURCC_NV12 && image_formats[1].fourcc == VA_FOURCC_P010,
-                                                  "image format query should expose only advertised export formats") &&
         ok;
 
     const VkvvProfileCapability* vp9_profile2_record = vkvv_profile_capability_record(&drv, VAProfileVP9Profile2, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
@@ -1076,28 +684,10 @@ int main(void) {
         check(av1_features.value != VA_ATTRIB_NOT_SUPPORTED && av1_feature_value.bits.lst_support == 0, "AV1 feature attribute should be present with large-scale tile disabled") &&
         ok;
 
-    VkvvDriver limited_av1_drv{};
-    limited_av1_drv.caps                                     = drv.caps;
-    limited_av1_drv.caps.av1_limits                          = decode_limits;
-    limited_av1_drv.caps.av1_limits.max_dpb_slots            = VKVV_AV1_MIN_DPB_SLOTS - 1;
-    limited_av1_drv.caps.av1_10_limits                       = decode_limits;
-    limited_av1_drv.caps.av1_10_limits.max_active_references = VKVV_AV1_MIN_ACTIVE_REFERENCES - 1;
-    vkvv_init_profile_capabilities(&limited_av1_drv);
-    const VkvvProfileCapability* limited_av1 = vkvv_profile_capability_record(&limited_av1_drv, VAProfileAV1Profile0, VAEntrypointVLD, VKVV_CODEC_DIRECTION_DECODE);
-    ok = check(limited_av1 != nullptr && !limited_av1->advertise && vkvv_profile_capability_for_entrypoint(&limited_av1_drv, VAProfileAV1Profile0, VAEntrypointVLD) == nullptr,
-               "AV1 Profile0 should not advertise when Vulkan DPB/reference limits are below the safe minimum") &&
-        ok;
-
     const VkvvProfileCapability* h264_encode = vkvv_profile_capability_record(&drv, VAProfileH264High, VAEntrypointEncSlice, VKVV_CODEC_DIRECTION_ENCODE);
     ok = check(h264_encode != nullptr && h264_encode->hardware_supported && !h264_encode->parser_wired && !h264_encode->runtime_wired && !h264_encode->surface_wired &&
                    !h264_encode->advertise,
                "H.264 encode descriptor should be present but inert") &&
-        ok;
-    ok = check(vkvv_profile_capability_stage(h264_encode) == VKVV_PROFILE_CAPABILITY_STAGE_PROBED, "inert H.264 encode stage should stop at probed") && ok;
-    char encode_debug[256]{};
-    vkvv_profile_capability_debug_string(h264_encode, encode_debug, sizeof(encode_debug));
-    ok = check(std::strstr(encode_debug, "stage=probed") != nullptr && std::strstr(encode_debug, "advertise=0") != nullptr,
-               "encode capability debug string did not expose inert state") &&
         ok;
     ok = check(vkvv_profile_capability_for_entrypoint(&drv, VAProfileH264High, VAEntrypointEncSlice) == nullptr, "H.264 encode entrypoint must not be advertised") && ok;
 

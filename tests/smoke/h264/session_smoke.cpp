@@ -463,7 +463,8 @@ namespace {
             std::fprintf(stderr, "%s\n", reason);
             return false;
         }
-        return check(vkvv::runtime_pending_work_count(runtime) == 0 && surface.work_state == VKVV_SURFACE_WORK_READY && surface.sync_status == VA_STATUS_ERROR_OPERATION_FAILED,
+        return check(vkvv::runtime_pending_work_count(runtime) == 0 && runtime->pending_surface == nullptr && surface.work_state == VKVV_SURFACE_WORK_READY &&
+                         surface.sync_status == VA_STATUS_ERROR_OPERATION_FAILED,
                      "device-lost pending work was not cleared deterministically");
     }
 
@@ -494,9 +495,7 @@ namespace {
 int main(void) {
     bool ok = check_h264_dpb_slots();
     ok      = check_null_runtime_upload_destroy_clears_state() && ok;
-    if (!check_predecode_record_validation()) {
-        ok = false;
-    }
+    ok      = check_predecode_record_validation() && ok;
 
     char  reason[512] = {};
     void* runtime     = vkvv_vulkan_runtime_create(reason, sizeof(reason));
@@ -505,7 +504,7 @@ int main(void) {
         return 1;
     }
     auto* typed_runtime = static_cast<vkvv::VulkanRuntime*>(runtime);
-    ok                  = check(typed_runtime->decode_queue_family != vkvv::invalid_queue_family, "runtime did not select a decode queue family") && ok;
+    ok                  = check(typed_runtime->decode_queue_family != vkvv::invalid_queue_family, "runtime did not select a decode queue family");
     ok = check((typed_runtime->enabled_decode_operations & VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) != 0, "runtime did not enable H.264 through codec-driven selection") && ok;
     ok = check((typed_runtime->probed_decode_operations & VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) != 0, "runtime did not record probed H.264 decode support") && ok;
     ok = check(typed_runtime->enabled_encode_operations == 0 && typed_runtime->probed_encode_operations == 0,

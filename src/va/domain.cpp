@@ -24,11 +24,11 @@ namespace {
         drv->active_decode_height          = surface != NULL && surface->height != 0 ? surface->height : vctx->height;
         drv->active_decode_rt_format       = surface != NULL ? surface->rt_format : 0;
         drv->active_decode_fourcc          = surface != NULL ? surface->fourcc : 0;
-        VKVV_TRACE("domain-note", "driver=%llu stream=%llu codec=0x%x width=%u height=%u rt=0x%x fourcc=0x%x surface=%u", (unsigned long long)drv->driver_instance_id,
+        vkvv_trace("domain-note", "driver=%llu stream=%llu codec=0x%x width=%u height=%u rt=0x%x fourcc=0x%x surface=%u", (unsigned long long)drv->driver_instance_id,
                    (unsigned long long)drv->active_decode_stream_id, drv->active_decode_codec_operation, drv->active_decode_width, drv->active_decode_height,
                    drv->active_decode_rt_format, drv->active_decode_fourcc, surface != NULL ? surface->id : VA_INVALID_ID);
         if (codec_transition) {
-            VKVV_TRACE("domain-codec-transition", "driver=%llu prev_stream=%llu prev_codec=0x%x new_stream=%llu new_codec=0x%x surface=%u width=%u height=%u rt=0x%x fourcc=0x%x",
+            vkvv_trace("domain-codec-transition", "driver=%llu prev_stream=%llu prev_codec=0x%x new_stream=%llu new_codec=0x%x surface=%u width=%u height=%u rt=0x%x fourcc=0x%x",
                        (unsigned long long)drv->driver_instance_id, (unsigned long long)previous_stream, previous_codec, (unsigned long long)drv->active_decode_stream_id,
                        drv->active_decode_codec_operation, surface != NULL ? surface->id : VA_INVALID_ID, drv->active_decode_width, drv->active_decode_height,
                        drv->active_decode_rt_format, drv->active_decode_fourcc);
@@ -80,7 +80,7 @@ bool vkvv_driver_apply_active_decode_domain_locked(VkvvDriver* drv, VkvvSurface*
     }
     surface->stream_id       = drv->active_decode_stream_id;
     surface->codec_operation = drv->active_decode_codec_operation;
-    VKVV_TRACE("domain-apply", "driver=%llu surface=%u stream=%llu codec=0x%x width=%u height=%u", (unsigned long long)drv->driver_instance_id, surface->id,
+    vkvv_trace("domain-apply", "driver=%llu surface=%u stream=%llu codec=0x%x width=%u height=%u", (unsigned long long)drv->driver_instance_id, surface->id,
                (unsigned long long)surface->stream_id, surface->codec_operation, surface->width, surface->height);
     return true;
 }

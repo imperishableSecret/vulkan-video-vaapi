@@ -86,7 +86,9 @@ namespace vkvv {
         if (!record_vk_result(runtime, result, "vkBindVideoSessionMemoryKHR", "video session memory bind", reason, reason_size)) {
             return false;
         }
-        VKVV_TRACE("video-session-memory", "bytes=%llu binds=%zu", static_cast<unsigned long long>(session->memory_bytes), binds.size());
+        if (vkvv_perf_enabled()) {
+            perf_update_high_water(runtime->perf.video_session_high_water, static_cast<uint64_t>(session->memory_bytes));
+        }
 
         return true;
     }

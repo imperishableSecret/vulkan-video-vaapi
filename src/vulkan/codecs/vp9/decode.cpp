@@ -75,7 +75,7 @@ VAStatus vkvv_vulkan_decode_vp9(void* runtime_ptr, void* session_ptr, VkvvDriver
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
     if ((session->decode_flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR) == 0) {
-        std::snprintf(reason, reason_size, "VP9 decode requires coincident DPB/output support");
+        std::snprintf(reason, reason_size, "VP9 decode requires coincident DPB/output support in this prototype");
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
 
