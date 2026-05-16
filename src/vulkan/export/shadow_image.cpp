@@ -1013,7 +1013,8 @@ namespace vkvv {
             readback_image_luma_sample(runtime, source->export_resource.image, &source->export_resource.layout, format, source->export_resource.extent, "present pixel proof",
                                        &present_crc, &present_bytes, proof_reason, sizeof(proof_reason));
 
-        const uint64_t order_hint_or_frame_num = surface_resource_uses_av1_decode(source) ? source->av1_order_hint : source->content_generation;
+        const uint64_t order_hint_or_frame_num =
+            surface_resource_has_visible_output_trace(source) ? source->visible_output_trace.display_order : source->content_generation;
         const uint64_t black_crc               = pixel_reference_crc(format, source->coded_extent, true);
         const uint64_t zero_crc                = pixel_reference_crc(format, source->coded_extent, false);
         const bool     decode_black            = decode_ok && black_crc != 0 && decode_crc == black_crc;
@@ -2486,7 +2487,7 @@ namespace vkvv {
         std::unique_lock<std::mutex> export_lock(runtime->export_mutex);
         std::vector<ExportResource*> predecode_seed_targets = collect_predecode_seed_targets_locked(runtime, source);
         const bool                   owner_export_current   = source->content_generation != 0 && source->export_resource.content_generation == source->content_generation;
-        const bool                   force_owner_copy       = av1_visible_export_requires_copy(source);
+        const bool                   force_owner_copy       = surface_resource_visible_export_requires_copy(source);
         if (owner_export_current && predecode_seed_targets.empty() && !force_owner_copy) {
             source->export_seed_generation = source->content_generation;
             remember_export_seed_resource_locked(runtime, source);

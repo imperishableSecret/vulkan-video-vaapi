@@ -259,6 +259,9 @@ def main() -> int:
         "VisiblePublishCadence              visible_publish_cadence{}",
         "set_surface_visible_output_trace",
         "clear_surface_visible_output_trace",
+        "surface_resource_has_visible_output_trace",
+        "surface_resource_visible_output_expected",
+        "surface_resource_visible_export_requires_copy",
     ):
         if token not in runtime_internal_text:
             fail(f"generic visible-output runtime metadata is missing token: {token}")
@@ -268,6 +271,23 @@ def main() -> int:
         fail("AV1 visible-output clear must also clear generic visible-output metadata")
     if "CodecVisibleOutputTrace visible{};" not in av1_text or "set_surface_visible_output_trace(resource, visible);" not in av1_text:
         fail("AV1 decode must populate generic visible-output metadata")
+    for token in (
+        "trace_visible_output_check(",
+        "trace_publication_fingerprint(",
+        "record_visible_publish_cadence(",
+        "resource->visible_output_trace.visible_output",
+        "runtime->visible_publish_cadence",
+    ):
+        if token not in export_text and token not in export_state_text:
+            fail(f"visible publication must use generic metadata helper: {token}")
+    for token in (
+        "trace_av1_visible_output_check",
+        "trace_av1_publication_fingerprint",
+        "record_av1_visible_publish_cadence",
+        "av1_visible_export_requires_copy",
+    ):
+        if token in export_combined_text or token in runtime_internal_text:
+            fail(f"old AV1-specific export publication helper remains: {token}")
     if "predecode_seed_source_structurally_valid" not in shadow_text:
         fail("predecode seed admission must have a structural source-validity helper")
     if "return export_pixel_proof_enabled() && source != nullptr" in shadow_text:

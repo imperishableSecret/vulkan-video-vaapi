@@ -706,7 +706,9 @@ namespace vkvv {
     bool                surface_resource_export_shadow_stale(const SurfaceResource* resource);
     bool                surface_resource_decode_shadow_stale(const SurfaceResource* resource);
     bool                surface_resource_has_current_decode_shadow(const SurfaceResource* resource);
-    bool                av1_visible_export_requires_copy(const SurfaceResource* resource);
+    bool                surface_resource_has_visible_output_trace(const SurfaceResource* resource);
+    bool                surface_resource_visible_output_expected(const SurfaceResource* resource, bool refresh_export);
+    bool                surface_resource_visible_export_requires_copy(const SurfaceResource* resource);
     bool                export_visible_release_satisfied(const ExportResource* resource);
     bool                export_resource_fd_may_be_sampled_by_client(const ExportResource* resource);
     uint64_t            export_resource_fd_content_generation(const ExportResource* resource);
