@@ -244,6 +244,14 @@ def main() -> int:
     export_retained_text = (root / "src" / "vulkan" / "export" / "retained.cpp").read_text(encoding="utf-8")
     resource_text = (root / "src" / "vulkan" / "resources" / "surface.cpp").read_text(encoding="utf-8")
     export_combined_text = export_text + "\n" + shadow_text + "\n" + export_state_text + "\n" + export_retained_text + "\n" + resource_text
+    for forbidden in (
+        "VKVV_ALLOW_PLACEHOLDER_EXPORT",
+        "DebugPlaceholder",
+        '"debug-placeholder-export"',
+        "decision=return-placeholder returned_fd=1",
+    ):
+        if forbidden in export_combined_text:
+            fail(f"unsafe debug placeholder export path remains: {forbidden}")
     if '"av1-visible-output-check"' not in export_text:
         fail("AV1 visible output check trace is missing")
     for event in (
@@ -303,7 +311,6 @@ def main() -> int:
         '"export-role-lifecycle"',
         '"predecode-quarantine-outcome"',
         '"generic-export-summary"',
-        '"debug-placeholder-export"',
         '"external-sync-proof"',
         '"predecode-quarantine-enter"',
         '"predecode-quarantine-exit"',
@@ -586,7 +593,6 @@ def main() -> int:
         "VKVV_TRACE_PIXEL_PROOF",
         "VKVV_TRACE_EXPORT_VALIDITY",
         "VKVV_TRACE_FD_LIFETIME",
-        "VKVV_ALLOW_PLACEHOLDER_EXPORT",
         "VKVV_EXPORT_SYNC_MODE",
     ):
         if toggle not in export_text and toggle not in export_state_text and toggle not in shadow_text and toggle not in telemetry_text:

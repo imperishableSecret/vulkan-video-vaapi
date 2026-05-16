@@ -44,7 +44,6 @@ namespace vkvv {
             case VkvvExportRole::DecodedPixels: return "decoded";
             case VkvvExportRole::PixelProvenSeed: return "pixel-proven-seed";
             case VkvvExportRole::TransitionHold: return "transition-hold";
-            case VkvvExportRole::DebugPlaceholder: return "debug-placeholder";
             default: return "unknown";
         }
     }
