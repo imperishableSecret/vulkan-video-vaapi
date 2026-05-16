@@ -645,7 +645,7 @@ namespace {
                        static_cast<unsigned long long>(resource->import.fd.ino), vkvv_trace_handle(resource->image));
         }
         trace_publication_fingerprint(surface, resource, refresh_export, shadow_published, import_published, published, cadence);
-        clear_surface_av1_visible_output_trace(resource);
+        clear_surface_visible_output_trace(resource);
     }
 
 } // namespace

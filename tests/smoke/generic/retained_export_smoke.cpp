@@ -451,15 +451,9 @@ namespace {
         vkvv::clear_surface_direct_import_present_state(&resource);
         ok &= check(!vkvv::surface_resource_has_direct_import_output(&resource), "cleared direct import state still published");
 
-        resource.av1_visible_output_trace_valid    = true;
-        resource.av1_visible_show_frame            = true;
-        resource.av1_visible_show_existing_frame   = true;
-        resource.av1_visible_refresh_frame_flags   = 0xff;
-        resource.av1_visible_frame_to_show_map_idx = 3;
-        vkvv::clear_surface_av1_visible_output_trace(&resource);
-        ok &= check(!resource.av1_visible_output_trace_valid && !resource.av1_visible_show_frame && !resource.av1_visible_show_existing_frame &&
-                        resource.av1_visible_refresh_frame_flags == 0 && resource.av1_visible_frame_to_show_map_idx == -1 && !resource.visible_output_trace.valid,
-                    "AV1 visible output trace state was not fully cleared");
+        vkvv::set_surface_visible_output_trace(&resource, visible);
+        vkvv::clear_surface_visible_output_trace(&resource);
+        ok &= check(!resource.visible_output_trace.valid, "visible output trace state was not fully cleared");
 
         vkvv::SurfaceResource vp9_resource = resource;
         vp9_resource.codec_operation       = codec_vp9;
