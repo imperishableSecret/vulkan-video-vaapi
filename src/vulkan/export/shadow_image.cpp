@@ -1013,7 +1013,7 @@ namespace vkvv {
             readback_image_luma_sample(runtime, source->export_resource.image, &source->export_resource.layout, format, source->export_resource.extent, "present pixel proof",
                                        &present_crc, &present_bytes, proof_reason, sizeof(proof_reason));
 
-        const uint64_t order_hint_or_frame_num =
+        const uint64_t display_order =
             surface_resource_has_visible_output_trace(source) ? source->visible_output_trace.display_order : source->content_generation;
         const uint64_t black_crc               = pixel_reference_crc(format, source->coded_extent, true);
         const uint64_t zero_crc                = pixel_reference_crc(format, source->coded_extent, false);
@@ -1027,10 +1027,10 @@ namespace vkvv {
         const bool present_black               = present_ok && black_crc != 0 && source->present_pixel_crc == black_crc;
         const bool present_zero                = present_ok && zero_crc != 0 && source->present_pixel_crc == zero_crc;
         VKVV_TRACE_DEEP("decode-pixel-proof",
-                   "surface=%u codec=0x%x stream=%llu content_gen=%llu order_hint_or_frame_num=%llu decode_crc_valid=%u decode_crc=0x%llx black_crc=0x%llx "
+                   "surface=%u codec=0x%x stream=%llu content_gen=%llu display_order=%llu decode_crc_valid=%u decode_crc=0x%llx black_crc=0x%llx "
                    "zero_crc=0x%llx is_black=%u is_zero=%u pixel_proof_valid=%u sample_bytes=%llu",
                    source->surface_id, source->codec_operation, static_cast<unsigned long long>(source->stream_id), static_cast<unsigned long long>(source->content_generation),
-                   static_cast<unsigned long long>(order_hint_or_frame_num), decode_ok ? 1U : 0U, static_cast<unsigned long long>(source->decode_pixel_crc),
+                   static_cast<unsigned long long>(display_order), decode_ok ? 1U : 0U, static_cast<unsigned long long>(source->decode_pixel_crc),
                    static_cast<unsigned long long>(black_crc), static_cast<unsigned long long>(zero_crc), decode_black ? 1U : 0U, decode_zero ? 1U : 0U,
                    decode_ok && !decode_black && !decode_zero ? 1U : 0U, static_cast<unsigned long long>(decode_bytes));
         VKVV_TRACE_DEEP("present-pixel-proof",

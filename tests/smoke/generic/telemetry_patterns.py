@@ -326,15 +326,15 @@ def main() -> int:
     ):
         if forbidden in export_combined_text:
             fail(f"unsafe debug placeholder export path remains: {forbidden}")
-    if '"av1-visible-output-check"' not in export_text:
-        fail("AV1 visible output check trace is missing")
+    if '"visible-output-check"' not in export_text:
+        fail("visible output check trace is missing")
     for event in (
-        '"av1-visible-output-published"',
-        '"av1-visible-output-not-published"',
-        '"av1-visible-frame-cadence"',
-        '"av1-publish-fingerprint"',
-        '"av1-visible-frame-identity"',
-        '"av1-visible-frame-audit"',
+        '"visible-output-published"',
+        '"visible-output-not-published"',
+        '"visible-frame-cadence"',
+        '"visible-publish-fingerprint"',
+        '"visible-frame-identity"',
+        '"visible-frame-audit"',
         '"import-output-copy-enter"',
         '"import-output-copy-done"',
         '"import-output-release-barrier"',
@@ -342,7 +342,18 @@ def main() -> int:
         '"import-output-copy-failed"',
     ):
         if event not in export_text:
-            fail(f"AV1 visible output publication trace is missing event {event}")
+            fail(f"visible output publication trace is missing event {event}")
+    for event in (
+        '"av1-visible-output-check"',
+        '"av1-visible-output-published"',
+        '"av1-visible-output-not-published"',
+        '"av1-visible-frame-cadence"',
+        '"av1-publish-fingerprint"',
+        '"av1-visible-frame-identity"',
+        '"av1-visible-frame-audit"',
+    ):
+        if event in export_text:
+            fail(f"export publication trace must use codec-neutral event name, not {event}")
     for event in (
         '"nondisplay-export-guard"',
         '"nondisplay-export-current-refresh"',
@@ -433,10 +444,13 @@ def main() -> int:
         if f"VKVV_TRACE_DEEP({event}" not in export_combined_text:
             fail(f"high-volume diagnostic trace must be deep-trace gated: {event}")
     for field in (
-        "show_frame=",
-        "show_existing_frame=",
-        "refresh_frame_flags=",
-        "frame_to_show_map_idx=",
+        "frame_sequence=",
+        "display_order=",
+        "visible_output=",
+        "show_existing=",
+        "refresh_flags=",
+        "displayed_reference_index=",
+        "tile_or_slice_source=",
         "refresh_export=",
         "content_gen=",
         "shadow_mem=",
@@ -536,16 +550,16 @@ def main() -> int:
         "fd_dev=",
         "fd_ino=",
         "previous_visible_valid=",
-        "previous_visible_frame_seq=",
-        "previous_visible_order_hint=",
+        "previous_visible_frame_sequence=",
+        "previous_visible_display_order=",
         "previous_visible_content_gen=",
         "previous_visible_fd_dev=",
         "previous_visible_fd_ino=",
         "previous_visible_fd_content_gen=",
         "previous_visible_present_gen=",
         "previous_visible_pixel_crc=",
-        "visible_frame_seq_gap=",
-        "visible_order_hint_delta=",
+        "visible_frame_sequence_gap=",
+        "visible_display_order_delta=",
         "same_fd_as_previous=",
         "same_surface_as_previous=",
         "published-pixel-mismatch",

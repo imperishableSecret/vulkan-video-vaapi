@@ -178,8 +178,8 @@ class StreamStats:
     av1_tile_submit_maps: int = 0
     av1_tile_suspicious: int = 0
     av1_dpb_maps: int = 0
-    av1_visible_audits: int = 0
-    av1_publish_failures: int = 0
+    visible_frame_audits: int = 0
+    visible_publish_failures: int = 0
 
     def remember_identity(self, fields: dict[str, str]) -> None:
         width = parse_int(fields.get("width"))
@@ -297,8 +297,8 @@ class TraceProfile:
         self.av1_tile_submit_maps = 0
         self.av1_tile_suspicious = 0
         self.av1_dpb_maps = 0
-        self.av1_visible_audits = 0
-        self.av1_publish_failures = 0
+        self.visible_frame_audits = 0
+        self.visible_publish_failures = 0
         self.export_copy_publish_skips = 0
         self.browser_dropped_frames_observed = False
         self.surfaces: dict[int, SurfaceInfo] = {}
@@ -549,10 +549,10 @@ class TraceProfile:
                 stream.av1_tile_suspicious += 1
         elif event in ("av1-dpb-map-before-submit", "av1-dpb-map-after-submit", "av1-dpb-map-after-refresh") and stream is not None and fields.get("scope") == "frame":
             stream.av1_dpb_maps += 1
-        elif event == "av1-visible-frame-audit" and stream is not None:
-            stream.av1_visible_audits += 1
+        elif event == "visible-frame-audit" and stream is not None:
+            stream.visible_frame_audits += 1
             if fields.get("failure_stage") not in (None, "", "none"):
-                stream.av1_publish_failures += 1
+                stream.visible_publish_failures += 1
         elif event == "retained-export-add" and stream is not None:
             stream.retained_added += 1
         elif event == "retained-export-prune" and stream is not None:
@@ -740,10 +740,10 @@ class TraceProfile:
                 self.av1_tile_suspicious += 1
         elif event in ("av1-dpb-map-before-submit", "av1-dpb-map-after-submit", "av1-dpb-map-after-refresh") and fields.get("scope") == "frame":
             self.av1_dpb_maps += 1
-        elif event == "av1-visible-frame-audit":
-            self.av1_visible_audits += 1
+        elif event == "visible-frame-audit":
+            self.visible_frame_audits += 1
             if fields.get("failure_stage") not in (None, "", "none"):
-                self.av1_publish_failures += 1
+                self.visible_publish_failures += 1
         elif event == "device-lost":
             self.note_device_lost(fields)
 
@@ -899,8 +899,8 @@ class TraceProfile:
             "av1_tile_submit_maps": self.av1_tile_submit_maps,
             "av1_tile_suspicious": self.av1_tile_suspicious,
             "av1_dpb_maps": self.av1_dpb_maps,
-            "av1_visible_audits": self.av1_visible_audits,
-            "av1_publish_failures": self.av1_publish_failures,
+            "visible_frame_audits": self.visible_frame_audits,
+            "visible_publish_failures": self.visible_publish_failures,
             "export_copy_publish_skips": self.export_copy_publish_skips,
             "device_lost": len(self.device_lost_pids),
             "chrome_vaapi_errors": sum(self.chrome_errors.values()),
@@ -987,8 +987,8 @@ class TraceProfile:
             total["av1_tile_submit_maps"] += stream.av1_tile_submit_maps
             total["av1_tile_suspicious"] += stream.av1_tile_suspicious
             total["av1_dpb_maps"] += stream.av1_dpb_maps
-            total["av1_visible_audits"] += stream.av1_visible_audits
-            total["av1_publish_failures"] += stream.av1_publish_failures
+            total["visible_frame_audits"] += stream.visible_frame_audits
+            total["visible_publish_failures"] += stream.visible_publish_failures
             total["export_copy_publish_skips"] += stream.export_copy_publish_skips
         return codecs
 
@@ -1118,8 +1118,8 @@ def stream_to_json(stream: StreamStats) -> dict[str, Any]:
         "av1_tile_submit_maps": stream.av1_tile_submit_maps,
         "av1_tile_suspicious": stream.av1_tile_suspicious,
         "av1_dpb_maps": stream.av1_dpb_maps,
-        "av1_visible_audits": stream.av1_visible_audits,
-        "av1_publish_failures": stream.av1_publish_failures,
+        "visible_frame_audits": stream.visible_frame_audits,
+        "visible_publish_failures": stream.visible_publish_failures,
         "export_copy_publish_skips": stream.export_copy_publish_skips,
     }
 
@@ -1232,7 +1232,7 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
         f"invalid_visible_present_states={totals['invalid_visible_present_states']} "
         f"invalid_thumbnail_predecode_seeds={totals['invalid_thumbnail_predecode_seeds']} "
         f"av1_tile_submit_maps={totals['av1_tile_submit_maps']} av1_tile_suspicious={totals['av1_tile_suspicious']} "
-        f"av1_dpb_maps={totals['av1_dpb_maps']} av1_visible_audits={totals['av1_visible_audits']} av1_publish_failures={totals['av1_publish_failures']} "
+        f"av1_dpb_maps={totals['av1_dpb_maps']} visible_frame_audits={totals['visible_frame_audits']} visible_publish_failures={totals['visible_publish_failures']} "
         f"export_copy_publish_skips={totals['export_copy_publish_skips']} "
         f"browser_dropped_frames_observed={1 if profile.browser_dropped_frames_observed else 0} "
         f"device_lost={totals['device_lost']} chrome_vaapi_errors={totals['chrome_vaapi_errors']}"
@@ -1290,7 +1290,7 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"invalid_visible_present_states={values['invalid_visible_present_states']} "
             f"invalid_thumbnail_predecode_seeds={values['invalid_thumbnail_predecode_seeds']} "
             f"av1_tile_submit_maps={values['av1_tile_submit_maps']} av1_tile_suspicious={values['av1_tile_suspicious']} "
-            f"av1_dpb_maps={values['av1_dpb_maps']} av1_visible_audits={values['av1_visible_audits']} av1_publish_failures={values['av1_publish_failures']} "
+            f"av1_dpb_maps={values['av1_dpb_maps']} visible_frame_audits={values['visible_frame_audits']} visible_publish_failures={values['visible_publish_failures']} "
             f"export_copy_publish_skips={values['export_copy_publish_skips']}"
         )
     for stream in sorted(profile.streams.values(), key=lambda item: item.key):
@@ -1343,7 +1343,7 @@ def print_text(source: str, profile: TraceProfile, top_events: int) -> None:
             f"invalid_visible_present_states={stream.invalid_visible_present_states} "
             f"invalid_thumbnail_predecode_seeds={stream.invalid_thumbnail_predecode_seeds} "
             f"av1_tile_submit_maps={stream.av1_tile_submit_maps} av1_tile_suspicious={stream.av1_tile_suspicious} "
-            f"av1_dpb_maps={stream.av1_dpb_maps} av1_visible_audits={stream.av1_visible_audits} av1_publish_failures={stream.av1_publish_failures} "
+            f"av1_dpb_maps={stream.av1_dpb_maps} visible_frame_audits={stream.visible_frame_audits} visible_publish_failures={stream.visible_publish_failures} "
             f"export_copy_publish_skips={stream.export_copy_publish_skips}"
         )
     for message, count in profile.chrome_errors.most_common():
