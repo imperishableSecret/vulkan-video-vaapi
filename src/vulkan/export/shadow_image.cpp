@@ -1305,7 +1305,7 @@ namespace vkvv {
             resource->visible_extent     = {surface->width, surface->height};
             resource->import             = surface->import;
             clear_surface_direct_import_present_state(resource);
-            clear_surface_av1_visible_output_trace(resource);
+            clear_surface_visible_output_trace(resource);
             return true;
         }
 
@@ -1334,7 +1334,7 @@ namespace vkvv {
         resource->last_nondisplay_skip_shadow_memory     = VK_NULL_HANDLE;
         resource->last_display_refresh_generation        = 0;
         clear_surface_direct_import_present_state(resource);
-        clear_surface_av1_visible_output_trace(resource);
+        clear_surface_visible_output_trace(resource);
         return true;
     }
 

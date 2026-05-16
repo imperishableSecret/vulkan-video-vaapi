@@ -377,15 +377,10 @@ namespace {
     }
 
     void set_av1_visible_output_trace(SurfaceResource* resource, const VkvvAV1DecodeInput* input, bool refresh_export) {
-        clear_surface_av1_visible_output_trace(resource);
+        clear_surface_visible_output_trace(resource);
         if (resource == nullptr || input == nullptr || !refresh_export) {
             return;
         }
-        resource->av1_visible_output_trace_valid    = true;
-        resource->av1_visible_show_frame            = input->header.show_frame;
-        resource->av1_visible_show_existing_frame   = input->header.show_existing_frame;
-        resource->av1_visible_refresh_frame_flags   = input->header.refresh_frame_flags;
-        resource->av1_visible_frame_to_show_map_idx = input->header.frame_to_show_map_idx;
 
         CodecVisibleOutputTrace visible{};
         visible.valid                     = true;

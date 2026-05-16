@@ -337,11 +337,6 @@ namespace vkvv {
         uint64_t                      import_stream_id                       = 0;
         VkVideoCodecOperationFlagsKHR import_codec_operation                 = 0;
         CodecVisibleOutputTrace       visible_output_trace{};
-        bool                          av1_visible_output_trace_valid         = false;
-        bool                          av1_visible_show_frame                 = false;
-        bool                          av1_visible_show_existing_frame        = false;
-        uint32_t                      av1_visible_refresh_frame_flags        = 0;
-        int32_t                       av1_visible_frame_to_show_map_idx      = -1;
         uint64_t                      av1_frame_sequence                     = 0;
         uint32_t                      av1_order_hint                         = 0;
         uint32_t                      av1_frame_type                         = 0;
@@ -760,7 +755,6 @@ namespace vkvv {
     void                  clear_surface_direct_import_present_state(SurfaceResource* resource);
     void                  set_surface_visible_output_trace(SurfaceResource* resource, const CodecVisibleOutputTrace& trace);
     void                  clear_surface_visible_output_trace(SurfaceResource* resource);
-    void                  clear_surface_av1_visible_output_trace(SurfaceResource* resource);
     VkDeviceSize retained_export_global_cap_bytes(const VkPhysicalDeviceMemoryProperties& properties);
     RetainedExportBudget  retained_export_budget_from_expected(size_t expected_count, VkDeviceSize expected_bytes, VkDeviceSize global_cap_bytes);
     size_t                runtime_retained_export_count(VulkanRuntime* runtime);

@@ -281,8 +281,18 @@ def main() -> int:
         fail("PendingWork must carry generic PendingDecodeTrace instead of AV1 trace directly")
     if "resource->visible_output_trace = trace;" not in export_state_text:
         fail("generic visible-output trace setter must update SurfaceResource metadata")
-    if "clear_surface_visible_output_trace(resource);" not in export_state_text:
-        fail("AV1 visible-output clear must also clear generic visible-output metadata")
+    if "clear_surface_visible_output_trace(resource);" not in export_combined_text and "clear_surface_visible_output_trace(resource);" not in av1_text:
+        fail("visible-output lifecycle must clear generic visible-output metadata")
+    for token in (
+        "av1_visible_output_trace_valid",
+        "av1_visible_show_frame",
+        "av1_visible_show_existing_frame",
+        "av1_visible_refresh_frame_flags",
+        "av1_visible_frame_to_show_map_idx",
+        "clear_surface_av1_visible_output_trace",
+    ):
+        if token in runtime_internal_text or token in export_combined_text or token in av1_text:
+            fail(f"duplicated AV1 visible-output state remains: {token}")
     if "CodecVisibleOutputTrace visible{};" not in av1_text or "set_surface_visible_output_trace(resource, visible);" not in av1_text:
         fail("AV1 decode must populate generic visible-output metadata")
     for token in (

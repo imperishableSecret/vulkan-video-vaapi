@@ -686,16 +686,4 @@ namespace vkvv {
         resource->visible_output_trace = {};
     }
 
-    void clear_surface_av1_visible_output_trace(SurfaceResource* resource) {
-        if (resource == nullptr) {
-            return;
-        }
-        clear_surface_visible_output_trace(resource);
-        resource->av1_visible_output_trace_valid    = false;
-        resource->av1_visible_show_frame            = false;
-        resource->av1_visible_show_existing_frame   = false;
-        resource->av1_visible_refresh_frame_flags   = 0;
-        resource->av1_visible_frame_to_show_map_idx = -1;
-    }
-
 } // namespace vkvv
