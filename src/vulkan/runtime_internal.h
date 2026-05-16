@@ -696,6 +696,9 @@ namespace vkvv {
     void                mark_export_fd_written(ExportResource* resource, uint64_t content_generation, VkvvExportRole role);
     void                mark_export_fd_detached(ExportResource* resource);
     void                mark_export_predecode_nonpresentable(ExportResource* resource);
+    void                mark_export_visible_acquire(const SurfaceResource* owner, ExportResource* resource);
+    void                mark_export_visible_release(const SurfaceResource* owner, ExportResource* resource, VkImageLayout old_layout, VkImageLayout new_layout);
+    void                exit_predecode_quarantine(const SurfaceResource* owner, ExportResource* resource, bool release_done);
     void                pin_export_visible_present(SurfaceResource* owner, ExportResource* resource, VkvvExportPresentSource source);
     ExportResource*     client_present_shadow(SurfaceResource* resource);
     const ExportResource* client_present_shadow(const SurfaceResource* resource);

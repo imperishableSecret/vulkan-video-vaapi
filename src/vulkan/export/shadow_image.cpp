@@ -2346,8 +2346,21 @@ namespace vkvv {
                 trace_export_role_lifecycle(source, target, "seed-proof-failed", true);
                 continue;
             }
+            const bool target_was_quarantined = target->predecode_quarantined;
+            target->content_generation        = source->content_generation;
             mark_export_fd_written(target, source->content_generation, VkvvExportRole::PixelProvenSeed);
+            mark_export_visible_release(source, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
             trace_export_role_lifecycle(source, target, "seed-written", true);
+            if (target_was_quarantined) {
+                exit_predecode_quarantine(nullptr, target, export_visible_release_satisfied(target));
+            }
+            VKVV_TRACE("predecode-seed-release",
+                       "source_surface=%u source_stream=%llu source_codec=0x%x source_gen=%llu target_owner=%u target_mem=0x%llx target_content_gen=%llu "
+                       "fd_content_gen=%llu release_done=%u quarantine_exited=%u export_role=%s",
+                       source->surface_id, static_cast<unsigned long long>(source->stream_id), source->codec_operation,
+                       static_cast<unsigned long long>(source->content_generation), target->owner_surface_id, vkvv_trace_handle(target->memory),
+                       static_cast<unsigned long long>(target->content_generation), static_cast<unsigned long long>(export_resource_fd_content_generation(target)),
+                       export_visible_release_satisfied(target) ? 1U : 0U, target_was_quarantined ? 1U : 0U, vkvv_export_role_name(export_resource_fd_role(target)));
             VKVV_TRACE("export-predecode-seeded",
                        "source_surface=%u source_stream=%llu source_codec=0x%x source_gen=%llu target_owner=%u target_mem=0x%llx target_gen=%llu fd_content_gen=%llu "
                        "target_predecode=%u",

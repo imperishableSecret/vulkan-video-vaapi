@@ -540,20 +540,25 @@ namespace vkvv {
     }
 
     void exit_predecode_quarantine(const SurfaceResource* owner, ExportResource* resource, bool release_done) {
-        if (owner == nullptr || resource == nullptr || !resource->predecode_quarantined) {
+        if (resource == nullptr || !resource->predecode_quarantined) {
             return;
         }
-        const uint64_t fd_dev = resource->predecode_fd_dev;
-        const uint64_t fd_ino = resource->predecode_fd_ino;
+        const VASurfaceID surface_id = owner != nullptr ? owner->surface_id : resource->owner_surface_id;
+        const uint64_t    driver     = owner != nullptr ? owner->driver_instance_id : resource->driver_instance_id;
+        const uint64_t    stream     = owner != nullptr ? owner->stream_id : resource->stream_id;
+        const auto        codec      = owner != nullptr ? owner->codec_operation : resource->codec_operation;
+        const uint64_t    content    = owner != nullptr ? owner->content_generation : resource->content_generation;
+        const uint64_t    fd_dev     = resource->predecode_fd_dev;
+        const uint64_t    fd_ino     = resource->predecode_fd_ino;
         trace_predecode_quarantine_outcome(owner, resource, resource->predecode_seeded ? "seed-exit" : "decoded-exit", "valid-pixels", true);
         trace_export_role_lifecycle(owner, resource, "quarantine-exit", release_done);
-        trace_export_fd_lifetime(owner, resource, "quarantine-exit", resource->content_generation, export_resource_fd_may_be_sampled_by_client(resource));
+        trace_export_fd_lifetime(owner, resource, "quarantine-exit", content, export_resource_fd_may_be_sampled_by_client(resource));
         clear_predecode_quarantine_state(resource);
         VKVV_TRACE("predecode-quarantine-exit",
                    "surface=%u driver=%llu stream=%llu codec=0x%x fd_dev=%llu fd_ino=%llu content_gen=%llu present_gen=%llu release_done=%u predecode_quarantined=0 export_role=%s",
-                   owner->surface_id, static_cast<unsigned long long>(owner->driver_instance_id), static_cast<unsigned long long>(owner->stream_id), owner->codec_operation,
-                   static_cast<unsigned long long>(fd_dev), static_cast<unsigned long long>(fd_ino), static_cast<unsigned long long>(owner->content_generation),
-                   static_cast<unsigned long long>(resource->present_generation), release_done ? 1U : 0U, vkvv_export_role_name(export_resource_fd_role(resource)));
+                   surface_id, static_cast<unsigned long long>(driver), static_cast<unsigned long long>(stream), codec, static_cast<unsigned long long>(fd_dev),
+                   static_cast<unsigned long long>(fd_ino), static_cast<unsigned long long>(content), static_cast<unsigned long long>(resource->present_generation),
+                   release_done ? 1U : 0U, vkvv_export_role_name(export_resource_fd_role(resource)));
     }
 
     void mark_export_visible_acquire(const SurfaceResource* owner, ExportResource* resource) {
